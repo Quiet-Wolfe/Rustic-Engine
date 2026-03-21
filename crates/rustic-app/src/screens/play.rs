@@ -113,12 +113,6 @@ impl PlayScreen {
                     audio.unmute_player_vocals();
                 }
             }
-        } else {
-            // Ghost tap miss
-            self.score.note_miss(scoring::HEALTH_MISS);
-            if let Some(audio) = &mut self.audio {
-                audio.mute_player_vocals();
-            }
         }
     }
 
@@ -223,30 +217,16 @@ impl Screen for PlayScreen {
             }
         }
 
-        // Update note positions, hold progress, and detect misses
+        // Update note positions and detect misses
         for pn in &mut self.notes {
-            // Update hold notes that were hit
-            if pn.data.was_good_hit && pn.data.sustain_length > 0.0 && !pn.data.hold_released {
-                let elapsed = self.conductor.song_position - pn.data.strum_time;
-                if pn.data.must_press {
-                    if self.keys_held[pn.data.lane] {
-                        pn.data.hold_progress = elapsed.min(pn.data.sustain_length);
-                    } else if elapsed > 0.0 {
-                        // Released early — freeze progress
-                        pn.data.hold_released = true;
-                    }
-                } else {
-                    // Opponent holds auto-progress
-                    pn.data.hold_progress = elapsed.min(pn.data.sustain_length);
-                }
-                // Mark fully consumed
-                if pn.data.hold_progress >= pn.data.sustain_length {
-                    pn.data.hold_released = true;
-                }
-                continue;
-            }
-
             if pn.data.was_good_hit || pn.data.too_late {
+                // Keep updating y_pos for hit hold notes so the tail scrolls
+                if pn.data.sustain_length > 0.0 {
+                    pn.y_pos = STRUM_Y
+                        - (SCROLL_SPEED_FACTOR
+                            * (self.conductor.song_position - pn.data.strum_time)
+                            * self.song_speed) as f32;
+                }
                 continue;
             }
 
@@ -299,43 +279,40 @@ impl Screen for PlayScreen {
         }
 
         // Notes
+        let note_size = NOTE_WIDTH - 4.0;
         for pn in &self.notes {
             let x = Self::strum_x(pn.data.lane, pn.data.must_press);
             let color = lane_colors[pn.data.lane];
 
-            // Active hold note being held — draw remaining tail from strum line
-            if pn.data.was_good_hit && pn.data.sustain_length > 0.0 && !pn.data.hold_released {
-                let remaining = pn.data.sustain_length - pn.data.hold_progress;
-                let tail_h = (SCROLL_SPEED_FACTOR * remaining * self.song_speed) as f32;
-                if tail_h > 1.0 {
+            // Sustain tail (draw for both hit and unhit hold notes)
+            if pn.data.sustain_length > 0.0 {
+                let tail_full_h =
+                    (SCROLL_SPEED_FACTOR * pn.data.sustain_length * self.song_speed) as f32;
+                let tail_top = pn.y_pos + note_size;
+                let tail_bot = tail_top + tail_full_h;
+
+                // Clip: only draw the portion below the strum line bottom
+                let clip_y = STRUM_Y + note_size;
+                let visible_top = tail_top.max(clip_y);
+                let visible_h = tail_bot - visible_top;
+
+                if visible_h > 1.0 && visible_top < GAME_H + tail_full_h {
                     let tail_x = x + NOTE_WIDTH * 0.35;
                     let tail_w = NOTE_WIDTH * 0.3;
                     let mut tail_color = color;
                     tail_color[3] = 0.6;
-                    gpu.push_colored_quad(tail_x, STRUM_Y + (NOTE_WIDTH - 4.0), tail_w, tail_h, tail_color);
+                    gpu.push_colored_quad(tail_x, visible_top, tail_w, visible_h, tail_color);
                 }
-                continue;
             }
 
+            // Note head — skip if already hit or missed
             if pn.data.was_good_hit || pn.data.too_late {
                 continue;
             }
             if pn.y_pos < -NOTE_WIDTH || pn.y_pos > GAME_H + NOTE_WIDTH {
                 continue;
             }
-
-            gpu.push_colored_quad(x, pn.y_pos, NOTE_WIDTH - 4.0, NOTE_WIDTH - 4.0, color);
-
-            // Sustain tail
-            if pn.data.sustain_length > 0.0 {
-                let tail_h =
-                    (SCROLL_SPEED_FACTOR * pn.data.sustain_length * self.song_speed) as f32;
-                let tail_x = x + NOTE_WIDTH * 0.35;
-                let tail_w = NOTE_WIDTH * 0.3;
-                let mut tail_color = color;
-                tail_color[3] = 0.6;
-                gpu.push_colored_quad(tail_x, pn.y_pos + (NOTE_WIDTH - 4.0), tail_w, tail_h, tail_color);
-            }
+            gpu.push_colored_quad(x, pn.y_pos, note_size, note_size, color);
         }
 
         // HUD
