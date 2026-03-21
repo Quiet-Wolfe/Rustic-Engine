@@ -48,6 +48,8 @@ pub struct GpuState {
     // Batch
     vertices: Vec<SpriteVertex>,
     indices: Vec<u32>,
+    // Default 1x1 white texture for colored quads
+    white_texture: GpuTexture,
     // Text
     text_system: TextSystem,
     // Logical game resolution
@@ -229,6 +231,33 @@ impl GpuState {
             mapped_at_creation: false,
         });
 
+        // 1x1 white texture for colored quads
+        let white_tex = device.create_texture_with_data(
+            &queue,
+            &wgpu::TextureDescriptor {
+                label: Some("White 1x1"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &[255u8, 255, 255, 255],
+        );
+        let white_view = white_tex.create_view(&Default::default());
+        let white_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("White Texture Bind Group"),
+            layout: &texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&white_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        });
+        let white_texture = GpuTexture { bind_group: white_bind_group, width: 1, height: 1 };
+
         let text_system = TextSystem::new(&device, &queue, format);
 
         Self {
@@ -245,6 +274,7 @@ impl GpuState {
             sampler,
             vertices: Vec::with_capacity(MAX_VERTICES),
             indices: Vec::with_capacity(MAX_INDICES),
+            white_texture,
             text_system,
             game_w,
             game_h,
@@ -380,13 +410,34 @@ impl GpuState {
         self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    /// Draw a solid-colored quad (no texture). Coordinates in game-space pixels.
+    pub fn push_colored_quad(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+        self.push_quad(
+            x, y, w, h,
+            0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0,
+            color,
+        );
+    }
+
+    /// Present using the built-in white texture (for screens that only use colored quads + text).
+    pub fn present_no_texture(&mut self) -> bool {
+        self.present_inner(None)
+    }
+
     /// Queue text to be drawn this frame. Coordinates in game-space pixels.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: [f32; 4]) {
         self.text_system.draw_text(text, x, y, size, color);
     }
 
-    /// Flush the batch and present. Returns false if surface is lost.
+    /// Flush the batch and present with the given texture.
     pub fn present(&mut self, texture: &GpuTexture) -> bool {
+        self.present_inner(Some(texture))
+    }
+
+    fn present_inner(&mut self, texture: Option<&GpuTexture>) -> bool {
+        let tex_bind_group = texture
+            .map(|t| &t.bind_group)
+            .unwrap_or(&self.white_texture.bind_group);
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -440,7 +491,7 @@ impl GpuState {
             if !self.vertices.is_empty() {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.proj_bind_group, &[]);
-                pass.set_bind_group(1, &texture.bind_group, &[]);
+                pass.set_bind_group(1, tex_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);

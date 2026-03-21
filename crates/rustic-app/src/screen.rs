@@ -5,6 +5,7 @@ use winit::keyboard::KeyCode;
 pub trait Screen {
     fn init(&mut self, gpu: &GpuState);
     fn handle_key(&mut self, key: KeyCode);
+    fn handle_key_release(&mut self, _key: KeyCode) {}
     fn update(&mut self, dt: f32);
     fn draw(&mut self, gpu: &mut GpuState);
 }

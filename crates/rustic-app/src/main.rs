@@ -13,7 +13,7 @@ use winit::window::{Window, WindowId};
 use rustic_render::gpu::GpuState;
 
 use crate::screen::Screen;
-use crate::screens::sprite_test::SpriteTestScreen;
+use crate::screens::play::PlayScreen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -68,17 +68,23 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput {
                 event: KeyEvent {
                     physical_key: PhysicalKey::Code(key),
-                    state: ElementState::Pressed,
+                    state,
+                    repeat: false,
                     ..
                 },
                 ..
-            } => {
-                if key == KeyCode::Escape {
-                    event_loop.exit();
-                } else {
-                    self.current_screen.handle_key(key);
+            } => match state {
+                ElementState::Pressed => {
+                    if key == KeyCode::Escape {
+                        event_loop.exit();
+                    } else {
+                        self.current_screen.handle_key(key);
+                    }
                 }
-            }
+                ElementState::Released => {
+                    self.current_screen.handle_key_release(key);
+                }
+            },
 
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -107,6 +113,6 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-    let mut app = App::new(Box::new(SpriteTestScreen::new()));
+    let mut app = App::new(Box::new(PlayScreen::new("bopeebo", "normal")));
     event_loop.run_app(&mut app).unwrap();
 }
