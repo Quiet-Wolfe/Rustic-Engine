@@ -160,12 +160,9 @@ pub fn parse_chart(json_data: &str) -> Result<ParsedChart, ChartError> {
             let sustain_length = sn[2].as_f64().unwrap_or(0.0).max(0.0);
             let kind = NoteKind::from_chart_value(sn.get(3));
 
-            let must_press = if section.must_hit_section {
-                direction < 4
-            } else {
-                direction >= 4
-            };
-
+            // After conversion to psych_v1, directions are absolute:
+            // 0-3 = player (must_press), 4-7 = opponent
+            let must_press = direction < 4;
             let lane = direction % 4;
 
             let mut note = NoteData::new(strum_time, lane, sustain_length, must_press, kind);
@@ -244,9 +241,37 @@ fn parse_events_array(arr: &[serde_json::Value], events: &mut Vec<EventNote>) {
 }
 
 fn convert_to_psych_v1(song: &mut SwagSong) {
+    // Normalize note directions so 0-3 = player, 4-7 = opponent.
+    // Legacy charts store directions relative to mustHitSection:
+    //   if mustHitSection: 0-3 = player, 4-7 = opponent
+    //   if !mustHitSection: 0-3 = opponent, 4-7 = player
+    // We remap so directions are absolute, matching Song.hx lines 113-114:
+    //   gottaHitNote = (note[1] < 4) ? mustHitSection : !mustHitSection
+    //   note[1] = (note[1] % 4) + (gottaHitNote ? 0 : 4)
     for section in &mut song.notes {
         if section.section_beats <= 0.0 {
             section.section_beats = 4.0;
+        }
+
+        for sn in &mut section.section_notes {
+            if sn.len() < 3 {
+                continue;
+            }
+            let dir = match sn[1].as_f64() {
+                Some(d) => d as i32,
+                None => continue,
+            };
+            if dir < 0 || dir > 7 {
+                continue;
+            }
+
+            let is_player = if dir < 4 {
+                section.must_hit_section
+            } else {
+                !section.must_hit_section
+            };
+            let new_dir = (dir % 4) + if is_player { 0 } else { 4 };
+            sn[1] = serde_json::Value::from(new_dir);
         }
     }
     song.format = "psych_v1".to_string();
@@ -325,6 +350,83 @@ mod tests {
         assert_eq!(result.events.len(), 1);
         assert_eq!(result.events[0].name, "Hey!");
         assert_eq!(result.events[0].value1, "BF");
+    }
+
+    #[test]
+    fn test_must_hit_section_does_not_flip_ownership() {
+        // Opponent section (!mustHitSection) with notes at directions 0-3:
+        // In legacy format, dir 0-3 in a !mustHit section = opponent notes.
+        // After conversion: they should become 4-7 (opponent).
+        let json = r#"{
+            "song": {
+                "song": "Test",
+                "bpm": 120.0,
+                "notes": [
+                    {
+                        "sectionNotes": [
+                            [0.0, 0, 0],
+                            [100.0, 1, 0],
+                            [200.0, 6, 0],
+                            [300.0, 7, 0]
+                        ],
+                        "mustHitSection": false,
+                        "sectionBeats": 4.0
+                    }
+                ],
+                "events": []
+            }
+        }"#;
+        let result = parse_chart(json).unwrap();
+        assert_eq!(result.notes.len(), 4);
+
+        // dir 0 in !mustHit → opponent (must_press = false)
+        assert!(!result.notes[0].must_press);
+        assert_eq!(result.notes[0].lane, 0);
+
+        // dir 1 in !mustHit → opponent
+        assert!(!result.notes[1].must_press);
+        assert_eq!(result.notes[1].lane, 1);
+
+        // dir 6 in !mustHit → player (flipped: !mustHit for dir>=4 means player)
+        assert!(result.notes[2].must_press);
+        assert_eq!(result.notes[2].lane, 2);
+
+        // dir 7 in !mustHit → player
+        assert!(result.notes[3].must_press);
+        assert_eq!(result.notes[3].lane, 3);
+    }
+
+    #[test]
+    fn test_psych_v1_skips_conversion() {
+        // psych_v1 format: directions are already absolute (0-3=player, 4-7=opponent)
+        let json = r#"{
+            "song": {
+                "song": "Test",
+                "bpm": 120.0,
+                "format": "psych_v1",
+                "notes": [
+                    {
+                        "sectionNotes": [
+                            [0.0, 2, 0],
+                            [100.0, 5, 0]
+                        ],
+                        "mustHitSection": false,
+                        "sectionBeats": 4.0
+                    }
+                ],
+                "events": []
+            }
+        }"#;
+        let result = parse_chart(json).unwrap();
+        assert_eq!(result.notes.len(), 2);
+
+        // dir 2 = player regardless of mustHitSection
+        assert!(result.notes[0].must_press);
+        assert_eq!(result.notes[0].lane, 2);
+
+        // dir 5 = opponent regardless of mustHitSection
+        assert!(!result.notes[1].must_press);
+        assert_eq!(result.notes[1].lane, 1);
     }
 
     #[test]
