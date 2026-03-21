@@ -1,31 +1,44 @@
-use macroquad::prelude::*;
 use std::collections::HashMap;
+
+/// Simple rectangle (replaces macroquad::Rect).
+#[derive(Debug, Clone, Copy)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
 
 /// A single frame within a sprite atlas.
 #[derive(Debug, Clone)]
 pub struct SpriteFrame {
-    /// Source rectangle on the spritesheet.
     pub src: Rect,
-    /// Frame offset from trimming (frameX/frameY).
     pub offset_x: f32,
     pub offset_y: f32,
-    /// Full frame dimensions before trimming.
     pub frame_w: f32,
     pub frame_h: f32,
-    /// Whether this frame is rotated 90deg CW in the atlas.
     pub rotated: bool,
 }
 
-/// A parsed Sparrow atlas containing named animations mapped to frame sequences.
+/// A raw SubTexture entry from the atlas XML, before animation grouping.
+#[derive(Debug, Clone)]
+struct RawFrame {
+    name: String,
+    frame: SpriteFrame,
+}
+
+/// A parsed Sparrow atlas. Stores raw frames from the XML and named animations
+/// built via prefix matching (like HaxeFlixel's `addByPrefix`).
 #[derive(Debug, Clone)]
 pub struct SpriteAtlas {
+    raw_frames: Vec<RawFrame>,
     pub animations: HashMap<String, Vec<SpriteFrame>>,
 }
 
 impl SpriteAtlas {
     /// Parse a Sparrow XML atlas string.
     pub fn from_xml(xml_data: &str) -> Self {
-        let mut animations: HashMap<String, Vec<(u32, SpriteFrame)>> = HashMap::new();
+        let mut raw_frames = Vec::new();
 
         let mut reader = quick_xml::Reader::from_str(xml_data);
         let mut buf = Vec::new();
@@ -72,21 +85,17 @@ impl SpriteAtlas {
                             fh = if rotated { w } else { h };
                         }
 
-                        let (anim_name, frame_idx) = split_anim_name(&name);
-
-                        let frame = SpriteFrame {
-                            src: Rect::new(x, y, w, h),
-                            offset_x: fx,
-                            offset_y: fy,
-                            frame_w: fw,
-                            frame_h: fh,
-                            rotated,
-                        };
-
-                        animations
-                            .entry(anim_name)
-                            .or_default()
-                            .push((frame_idx, frame));
+                        raw_frames.push(RawFrame {
+                            name,
+                            frame: SpriteFrame {
+                                src: Rect { x, y, w, h },
+                                offset_x: fx,
+                                offset_y: fy,
+                                frame_w: fw,
+                                frame_h: fh,
+                                rotated,
+                            },
+                        });
                     }
                 }
                 Ok(quick_xml::events::Event::Eof) => break,
@@ -96,15 +105,60 @@ impl SpriteAtlas {
             buf.clear();
         }
 
-        let animations = animations
-            .into_iter()
-            .map(|(name, mut frames)| {
-                frames.sort_by_key(|(idx, _)| *idx);
-                (name, frames.into_iter().map(|(_, f)| f).collect())
-            })
+        SpriteAtlas {
+            raw_frames,
+            animations: HashMap::new(),
+        }
+    }
+
+    /// Register an animation by prefix matching (like HaxeFlixel's `addByPrefix`).
+    /// Finds all SubTexture names that start with `prefix`, sorts by trailing number,
+    /// and stores them under `anim_name`.
+    pub fn add_by_prefix(&mut self, anim_name: &str, prefix: &str) {
+        let mut matched: Vec<(u32, SpriteFrame)> = Vec::new();
+
+        for raw in &self.raw_frames {
+            if raw.name.starts_with(prefix) {
+                let suffix = &raw.name[prefix.len()..];
+                let idx: u32 = suffix.parse().unwrap_or(0);
+                matched.push((idx, raw.frame.clone()));
+            }
+        }
+
+        matched.sort_by_key(|(idx, _)| *idx);
+        let frames: Vec<SpriteFrame> = matched.into_iter().map(|(_, f)| f).collect();
+
+        if !frames.is_empty() {
+            self.animations.insert(anim_name.to_string(), frames);
+        }
+    }
+
+    /// Register an animation using specific frame indices from a prefix match.
+    /// Like `addByIndices` in HaxeFlixel.
+    pub fn add_by_indices(&mut self, anim_name: &str, prefix: &str, indices: &[i32]) {
+        // First collect all frames matching the prefix, sorted by their natural index
+        let mut matched: Vec<(u32, SpriteFrame)> = Vec::new();
+
+        for raw in &self.raw_frames {
+            if raw.name.starts_with(prefix) {
+                let suffix = &raw.name[prefix.len()..];
+                let idx: u32 = suffix.parse().unwrap_or(0);
+                matched.push((idx, raw.frame.clone()));
+            }
+        }
+
+        matched.sort_by_key(|(idx, _)| *idx);
+        let all_frames: Vec<SpriteFrame> = matched.into_iter().map(|(_, f)| f).collect();
+
+        // Pick frames by the requested indices
+        let frames: Vec<SpriteFrame> = indices
+            .iter()
+            .filter_map(|&i| all_frames.get(i as usize).cloned())
             .collect();
 
-        SpriteAtlas { animations }
+        if !frames.is_empty() {
+            self.animations.insert(anim_name.to_string(), frames);
+        }
     }
 
     pub fn get_frame(&self, anim: &str, frame: usize) -> Option<&SpriteFrame> {
@@ -125,92 +179,18 @@ impl SpriteAtlas {
         self.animations.contains_key(anim)
     }
 
-    /// List all animation names in this atlas.
     pub fn anim_names(&self) -> Vec<&str> {
         self.animations.keys().map(|s| s.as_str()).collect()
-    }
-}
-
-/// Split "purple0000" -> ("purple", 0), "BF idle dance0003" -> ("BF idle dance", 3)
-fn split_anim_name(name: &str) -> (String, u32) {
-    let digit_start = name
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_ascii_digit())
-        .last()
-        .map(|(i, _)| i);
-
-    match digit_start {
-        Some(i) if i > 0 => {
-            let prefix = name[..i].to_string();
-            let num: u32 = name[i..].parse().unwrap_or(0);
-            (prefix, num)
-        }
-        _ => (name.to_string(), 0),
-    }
-}
-
-/// Draw a sprite frame from an atlas texture at the given position.
-pub fn draw_sprite_frame(
-    texture: &Texture2D,
-    frame: &SpriteFrame,
-    x: f32,
-    y: f32,
-    scale: f32,
-    flip_x: bool,
-    color: Color,
-) {
-    if frame.rotated {
-        let actual_w = frame.src.h;
-        let actual_h = frame.src.w;
-
-        let draw_x = if flip_x {
-            x + (frame.frame_w + frame.offset_x - actual_w) * scale
-        } else {
-            x - frame.offset_x * scale
-        };
-        let draw_y = y - frame.offset_y * scale;
-
-        let params = DrawTextureParams {
-            source: Some(frame.src),
-            dest_size: Some(Vec2::new(actual_w * scale, actual_h * scale)),
-            flip_x,
-            rotation: -std::f32::consts::FRAC_PI_2,
-            pivot: Some(Vec2::new(0.0, 0.0)),
-            ..Default::default()
-        };
-
-        draw_texture_ex(texture, draw_x, draw_y + actual_h * scale, color, params);
-    } else {
-        let params = DrawTextureParams {
-            source: Some(frame.src),
-            dest_size: Some(Vec2::new(frame.src.w * scale, frame.src.h * scale)),
-            flip_x,
-            ..Default::default()
-        };
-
-        let draw_x = if flip_x {
-            x + (frame.frame_w + frame.offset_x - frame.src.w) * scale
-        } else {
-            x - frame.offset_x * scale
-        };
-        let draw_y = y - frame.offset_y * scale;
-
-        draw_texture_ex(texture, draw_x, draw_y, color, params);
     }
 }
 
 /// Animation controller for a sprite atlas.
 pub struct AnimationController {
     pub current_anim: String,
-    /// Current position in the frame sequence (index into `indices` if set, otherwise direct atlas frame).
     pub frame_index: usize,
     pub fps: f32,
     pub looping: bool,
     pub finished: bool,
-    /// When non-empty, maps frame_index -> specific atlas frame indices.
-    /// e.g. [1, 4, 5, 6, 7, 9, 1] means frame_index 0 shows atlas frame 1, etc.
-    pub indices: Vec<usize>,
     timer: f32,
 }
 
@@ -222,14 +202,11 @@ impl AnimationController {
             fps: 24.0,
             looping: false,
             finished: false,
-            indices: Vec::new(),
             timer: 0.0,
         }
     }
 
-    /// Switch to a new animation, resetting the frame counter.
-    /// `indices` selects specific atlas frames; empty = use all frames in order.
-    pub fn play(&mut self, anim: &str, fps: f32, looping: bool, indices: &[i32]) {
+    pub fn play(&mut self, anim: &str, fps: f32, looping: bool) {
         if self.current_anim != anim || self.finished {
             self.current_anim = anim.to_string();
             self.frame_index = 0;
@@ -238,31 +215,10 @@ impl AnimationController {
         }
         self.fps = fps;
         self.looping = looping;
-        self.indices = indices.iter().map(|&i| i as usize).collect();
     }
 
-    /// The total number of frames in the current animation sequence.
-    pub fn sequence_length(&self, atlas_frame_count: usize) -> usize {
-        if self.indices.is_empty() {
-            atlas_frame_count
-        } else {
-            self.indices.len()
-        }
-    }
-
-    /// Get the actual atlas frame index for the current position.
-    pub fn atlas_frame(&self) -> usize {
-        if self.indices.is_empty() {
-            self.frame_index
-        } else {
-            self.indices.get(self.frame_index).copied().unwrap_or(0)
-        }
-    }
-
-    /// Advance the animation timer.
-    pub fn update(&mut self, dt: f32, atlas_frame_count: usize) {
-        let total = self.sequence_length(atlas_frame_count);
-        if self.finished || total == 0 || self.fps <= 0.0 {
+    pub fn update(&mut self, dt: f32, frame_count: usize) {
+        if self.finished || frame_count == 0 || self.fps <= 0.0 {
             return;
         }
 
@@ -273,11 +229,11 @@ impl AnimationController {
             self.timer -= frame_duration;
             self.frame_index += 1;
 
-            if self.frame_index >= total {
+            if self.frame_index >= frame_count {
                 if self.looping {
                     self.frame_index = 0;
                 } else {
-                    self.frame_index = total - 1;
+                    self.frame_index = frame_count - 1;
                     self.finished = true;
                     return;
                 }

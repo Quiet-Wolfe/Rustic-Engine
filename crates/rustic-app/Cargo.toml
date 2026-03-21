@@ -8,5 +8,7 @@ rustic-core = { workspace = true }
 rustic-render = { workspace = true }
 rustic-audio = { workspace = true }
 rustic-gameplay = { workspace = true }
-macroquad = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
 log = { workspace = true }
+env_logger = { workspace = true }
