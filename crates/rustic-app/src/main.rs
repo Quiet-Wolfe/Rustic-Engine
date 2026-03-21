@@ -5,17 +5,47 @@ use rustic_render::camera::GameCamera;
 use rustic_render::sprites::{AnimationController, SpriteAtlas, draw_sprite_frame};
 use std::path::PathBuf;
 
-const SCREEN_W: f32 = 1280.0;
-const SCREEN_H: f32 = 720.0;
+/// Logical game resolution — all game code works in this coordinate space.
+/// Scaled to fit the window with letterboxing, matching HaxeFlixel behavior.
+const GAME_W: f32 = 1280.0;
+const GAME_H: f32 = 720.0;
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "RusticV2 — Phase 1 Test".to_string(),
-        window_width: SCREEN_W as i32,
-        window_height: SCREEN_H as i32,
+        window_title: "RusticV2".to_string(),
+        window_width: GAME_W as i32,
+        window_height: GAME_H as i32,
         window_resizable: true,
         ..Default::default()
     }
+}
+
+/// Calculate letterboxed viewport: scale to fit window, center with black bars.
+fn calc_viewport() -> (f32, f32, f32, f32) {
+    let win_w = screen_width();
+    let win_h = screen_height();
+    let scale = (win_w / GAME_W).min(win_h / GAME_H);
+    let vp_w = GAME_W * scale;
+    let vp_h = GAME_H * scale;
+    let offset_x = (win_w - vp_w) / 2.0;
+    let offset_y = (win_h - vp_h) / 2.0;
+    (offset_x, offset_y, vp_w, vp_h)
+}
+
+/// Set up a macroquad Camera2D that maps GAME_W x GAME_H to the letterboxed viewport.
+fn set_game_camera_viewport() {
+    let win_h = screen_height();
+    let (offset_x, offset_y, vp_w, vp_h) = calc_viewport();
+
+    let mut cam = Camera2D::from_display_rect(Rect::new(0.0, 0.0, GAME_W, GAME_H));
+    // Viewport in pixel coordinates (bottom-left origin for GL)
+    cam.viewport = Some((
+        offset_x as i32,
+        (win_h - offset_y - vp_h) as i32,
+        vp_w as i32,
+        vp_h as i32,
+    ));
+    set_camera(&cam);
 }
 
 #[macroquad::main(window_conf)]
@@ -52,7 +82,7 @@ async fn main() {
 
     // Camera
     let mut camera = GameCamera::new(0.9);
-    camera.snap_to(SCREEN_W / 2.0, SCREEN_H / 2.0);
+    camera.snap_to(GAME_W / 2.0, GAME_H / 2.0);
 
     let mut show_info = true;
 
@@ -107,16 +137,19 @@ async fn main() {
         let frame_count = atlas.frame_count(current_anim_name);
         anim_ctrl.update(dt, frame_count);
 
-        // Draw
+        // Clear the full window to black (letterbox bars)
         clear_background(BLACK);
 
+        // Set up letterboxed viewport — all drawing after this is in GAME_W x GAME_H space
+        set_game_camera_viewport();
+
         // Apply game camera transform
-        let cam_offset_x = SCREEN_W / 2.0 - camera.x * camera.zoom;
-        let cam_offset_y = SCREEN_H / 2.0 - camera.y * camera.zoom;
+        let cam_offset_x = GAME_W / 2.0 - camera.x * camera.zoom;
+        let cam_offset_y = GAME_H / 2.0 - camera.y * camera.zoom;
 
         // Draw character at center of screen
-        let char_x = SCREEN_W / 2.0 - 100.0;
-        let char_y = SCREEN_H / 2.0 - 200.0;
+        let char_x = GAME_W / 2.0 - 100.0;
+        let char_y = GAME_H / 2.0 - 200.0;
         let draw_x = char_x * camera.zoom + cam_offset_x;
         let draw_y = char_y * camera.zoom + cam_offset_y;
 
