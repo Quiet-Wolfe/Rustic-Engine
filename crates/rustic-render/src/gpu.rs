@@ -55,6 +55,10 @@ pub struct GpuState {
     // Logical game resolution
     pub game_w: f32,
     pub game_h: f32,
+    // Per-frame state for multi-batch rendering
+    frame_output: Option<wgpu::SurfaceTexture>,
+    frame_view: Option<wgpu::TextureView>,
+    frame_cleared: bool,
 }
 
 impl GpuState {
@@ -278,6 +282,9 @@ impl GpuState {
             text_system,
             game_w,
             game_h,
+            frame_output: None,
+            frame_view: None,
+            frame_cleared: false,
         }
     }
 
@@ -515,6 +522,154 @@ impl GpuState {
         self.vertices.clear();
         self.indices.clear();
         true
+    }
+
+    fn viewport_rect(&self) -> (f32, f32, f32, f32) {
+        let win_w = self.config.width as f32;
+        let win_h = self.config.height as f32;
+        let scale = (win_w / self.game_w).min(win_h / self.game_h);
+        let vp_w = self.game_w * scale;
+        let vp_h = self.game_h * scale;
+        let vp_x = (win_w - vp_w) / 2.0;
+        let vp_y = (win_h - vp_h) / 2.0;
+        (vp_x, vp_y, vp_w, vp_h)
+    }
+
+    /// Begin a multi-batch frame. Call draw_batch() for each texture layer, then end_frame().
+    pub fn begin_frame(&mut self) -> bool {
+        let output = match self.surface.get_current_texture() {
+            Ok(t) => t,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                self.surface.configure(&self.device, &self.config);
+                return false;
+            }
+            Err(e) => {
+                log::error!("Surface error: {e}");
+                return false;
+            }
+        };
+        let view = output.texture.create_view(&Default::default());
+        self.frame_output = Some(output);
+        self.frame_view = Some(view);
+        self.frame_cleared = false;
+        true
+    }
+
+    /// Draw accumulated vertices with the given texture (or white if None), then clear the batch.
+    pub fn draw_batch(&mut self, texture: Option<&GpuTexture>) {
+        if self.vertices.is_empty() {
+            return;
+        }
+        let view = self.frame_view.as_ref().expect("call begin_frame first");
+        let tex_bind_group = texture
+            .map(|t| &t.bind_group)
+            .unwrap_or(&self.white_texture.bind_group);
+
+        let load_op = if self.frame_cleared {
+            wgpu::LoadOp::Load
+        } else {
+            self.frame_cleared = true;
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+        };
+
+        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+        self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Batch Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+            pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.proj_bind_group, &[]);
+            pass.set_bind_group(1, tex_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        self.vertices.clear();
+        self.indices.clear();
+    }
+
+    /// Finish the multi-batch frame: draw any remaining colored quads, render text, present.
+    pub fn end_frame(&mut self) {
+        let view = self.frame_view.take().expect("call begin_frame first");
+        let output = self.frame_output.take().expect("call begin_frame first");
+
+        let load_op = if self.frame_cleared {
+            wgpu::LoadOp::Load
+        } else {
+            self.frame_cleared = true;
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+        };
+
+        // Upload remaining colored quads before creating render pass
+        if !self.vertices.is_empty() {
+            self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+            self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+        }
+
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Final Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+            pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+
+            if !self.vertices.is_empty() {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.proj_bind_group, &[]);
+                pass.set_bind_group(1, &self.white_texture.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+                self.vertices.clear();
+                self.indices.clear();
+            }
+
+            self.text_system.render(
+                &self.device, &self.queue, &mut pass,
+                self.game_w, self.game_h, vp_w, vp_h,
+            );
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
+
+    /// Draw a sub-region of a texture as a quad. UV coords are in pixels, converted internally.
+    pub fn push_texture_region(
+        &mut self, tex_w: f32, tex_h: f32,
+        src_x: f32, src_y: f32, src_w: f32, src_h: f32,
+        dst_x: f32, dst_y: f32, dst_w: f32, dst_h: f32,
+        color: [f32; 4],
+    ) {
+        let u0 = src_x / tex_w;
+        let v0 = src_y / tex_h;
+        let u1 = (src_x + src_w) / tex_w;
+        let v1 = (src_y + src_h) / tex_h;
+        self.push_quad(
+            dst_x, dst_y, dst_w, dst_h,
+            u0, v0, u1, v0, u1, v1, u0, v1,
+            color,
+        );
     }
 }
 
