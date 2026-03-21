@@ -28,11 +28,26 @@ const LANE_KEYS: [[KeyCode; 2]; 4] = [
     [KeyCode::KeyK, KeyCode::ArrowRight],
 ];
 
+// Health bar layout
+const HEALTH_BAR_W: f32 = 600.0;
+const HEALTH_BAR_H: f32 = 18.0;
+const HEALTH_BAR_Y: f32 = GAME_H - 80.0;
+const HEALTH_BAR_X: f32 = (GAME_W - HEALTH_BAR_W) / 2.0;
+
 /// Runtime note with rendering state.
 struct PlayNote {
     data: NoteData,
     y_pos: f32,
 }
+
+/// A rating popup that fades out.
+struct RatingPopup {
+    text: String,
+    combo: i32,
+    timer: f64,
+}
+
+const RATING_DURATION: f64 = 800.0; // ms
 
 pub struct PlayScreen {
     notes: Vec<PlayNote>,
@@ -40,12 +55,14 @@ pub struct PlayScreen {
     audio: Option<AudioEngine>,
     song_started: bool,
     countdown_timer: f64,
+    countdown_beat: i32,
     score: ScoreState,
     ratings: Vec<Rating>,
     keys_held: [bool; 4],
     song_speed: f64,
     song_name: String,
     difficulty: String,
+    rating_popup: Option<RatingPopup>,
 }
 
 impl PlayScreen {
@@ -56,12 +73,14 @@ impl PlayScreen {
             audio: None,
             song_started: false,
             countdown_timer: 0.0,
+            countdown_beat: -5,
             score: ScoreState::new(),
             ratings: Rating::load_default(),
             keys_held: [false; 4],
             song_speed: 1.0,
             song_name: song_name.to_string(),
             difficulty: difficulty.to_string(),
+            rating_popup: None,
         }
     }
 
@@ -109,6 +128,11 @@ impl PlayScreen {
                     judgment.health_gain,
                     &judgment.name,
                 );
+                self.rating_popup = Some(RatingPopup {
+                    text: judgment.name.to_uppercase(),
+                    combo: self.score.combo,
+                    timer: RATING_DURATION,
+                });
                 if let Some(audio) = &mut self.audio {
                     audio.unmute_player_vocals();
                 }
@@ -197,9 +221,22 @@ impl Screen for PlayScreen {
     fn update(&mut self, dt: f32) {
         let dt_ms = dt as f64 * 1000.0;
 
+        // Tick rating popup
+        if let Some(popup) = &mut self.rating_popup {
+            popup.timer -= dt_ms;
+            if popup.timer <= 0.0 {
+                self.rating_popup = None;
+            }
+        }
+
         if !self.song_started {
             self.conductor.song_position += dt_ms;
             self.countdown_timer -= dt_ms;
+            // Track countdown beats (-4, -3, -2, -1 → "3", "2", "1", "Go!")
+            let beat = (self.conductor.song_position / self.conductor.crochet).floor() as i32;
+            if beat != self.countdown_beat {
+                self.countdown_beat = beat;
+            }
             if self.countdown_timer <= 0.0 {
                 if let Some(audio) = &mut self.audio {
                     audio.play();
@@ -247,6 +284,11 @@ impl Screen for PlayScreen {
                 pn.data.too_late = true;
                 if !pn.data.is_sustain() {
                     self.score.note_miss(scoring::HEALTH_MISS);
+                    self.rating_popup = Some(RatingPopup {
+                        text: "MISS".into(),
+                        combo: 0,
+                        timer: RATING_DURATION,
+                    });
                     if let Some(audio) = &mut self.audio {
                         audio.mute_player_vocals();
                     }
@@ -315,20 +357,57 @@ impl Screen for PlayScreen {
             gpu.push_colored_quad(x, pn.y_pos, note_size, note_size, color);
         }
 
-        // HUD
-        let hud = format!(
-            "Score: {} | Combo: {} | Misses: {} | Acc: {:.1}%\n{}",
-            self.score.score,
-            self.score.combo,
-            self.score.misses,
-            self.score.accuracy(),
-            if !self.song_started {
-                format!("Starting in {:.1}s...", self.countdown_timer / 1000.0)
-            } else {
-                format!("Beat: {} | Step: {}", self.conductor.cur_beat(), self.conductor.cur_step())
-            },
+        // Health bar
+        let health_pct = self.score.health_percent();
+        // Background (red = opponent side)
+        gpu.push_colored_quad(
+            HEALTH_BAR_X - 2.0, HEALTH_BAR_Y - 2.0,
+            HEALTH_BAR_W + 4.0, HEALTH_BAR_H + 4.0,
+            [0.0, 0.0, 0.0, 1.0],
         );
-        gpu.draw_text(&hud, 10.0, GAME_H - 50.0, 16.0, white);
+        // Opponent side (full bar, red)
+        gpu.push_colored_quad(
+            HEALTH_BAR_X, HEALTH_BAR_Y,
+            HEALTH_BAR_W, HEALTH_BAR_H,
+            [0.8, 0.1, 0.1, 1.0],
+        );
+        // Player side (green, from right)
+        let player_w = HEALTH_BAR_W * health_pct;
+        gpu.push_colored_quad(
+            HEALTH_BAR_X + HEALTH_BAR_W - player_w, HEALTH_BAR_Y,
+            player_w, HEALTH_BAR_H,
+            [0.2, 0.8, 0.2, 1.0],
+        );
+
+        // Score text below health bar
+        let grade = self.score.grade();
+        let score_text = format!(
+            "Score: {} | Misses: {} | Acc: {:.2}% [{}]",
+            self.score.score, self.score.misses, self.score.accuracy(), grade,
+        );
+        gpu.draw_text(&score_text, HEALTH_BAR_X, HEALTH_BAR_Y + HEALTH_BAR_H + 6.0, 16.0, white);
+
+        // Rating popup (center screen)
+        if let Some(popup) = &self.rating_popup {
+            let alpha = (popup.timer / RATING_DURATION) as f32;
+            let rating_color = [1.0, 1.0, 1.0, alpha];
+            let popup_text = format!("{}\n{}", popup.text, popup.combo);
+            gpu.draw_text(&popup_text, GAME_W / 2.0 - 40.0, GAME_H / 2.0 - 20.0, 32.0, rating_color);
+        }
+
+        // Countdown text
+        if !self.song_started {
+            let countdown_text = match self.countdown_beat {
+                -4 => Some("3"),
+                -3 => Some("2"),
+                -2 => Some("1"),
+                -1 => Some("Go!"),
+                _ => None,
+            };
+            if let Some(text) = countdown_text {
+                gpu.draw_text(text, GAME_W / 2.0 - 20.0, GAME_H / 2.0 - 30.0, 48.0, white);
+            }
+        }
 
         gpu.present_no_texture();
     }
