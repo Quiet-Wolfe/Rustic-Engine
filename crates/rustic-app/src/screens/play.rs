@@ -54,6 +54,7 @@ pub struct PlayScreen {
     conductor: Conductor,
     audio: Option<AudioEngine>,
     song_started: bool,
+    song_ended: bool,
     countdown_timer: f64,
     countdown_beat: i32,
     score: ScoreState,
@@ -72,6 +73,7 @@ impl PlayScreen {
             conductor: Conductor::new(100.0),
             audio: None,
             song_started: false,
+            song_ended: false,
             countdown_timer: 0.0,
             countdown_beat: -5,
             score: ScoreState::new(),
@@ -295,6 +297,19 @@ impl Screen for PlayScreen {
                 }
             }
         }
+
+        // Song end detection
+        if self.song_started && !self.song_ended {
+            if let Some(audio) = &self.audio {
+                if audio.is_finished() {
+                    self.song_ended = true;
+                    log::info!(
+                        "Song complete! Score: {} | Acc: {:.2}% | Grade: {}",
+                        self.score.score, self.score.accuracy(), self.score.grade()
+                    );
+                }
+            }
+        }
     }
 
     fn draw(&mut self, gpu: &mut GpuState) {
@@ -407,6 +422,39 @@ impl Screen for PlayScreen {
             if let Some(text) = countdown_text {
                 gpu.draw_text(text, GAME_W / 2.0 - 20.0, GAME_H / 2.0 - 30.0, 48.0, white);
             }
+        }
+
+        // Results overlay
+        if self.song_ended {
+            // Semi-transparent background
+            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
+
+            let fc = rating::classify_fc(
+                self.score.sicks, self.score.goods,
+                self.score.bads, self.score.shits, self.score.misses,
+            );
+            let fc_str = match fc {
+                rating::FcClassification::Sfc => " [SFC]",
+                rating::FcClassification::Gfc => " [GFC]",
+                rating::FcClassification::Fc => " [FC]",
+                rating::FcClassification::Sdcb => " [SDCB]",
+                rating::FcClassification::Clear => "",
+            };
+
+            let results = format!(
+                "SONG COMPLETE!\n\n\
+                 Score: {}\n\
+                 Accuracy: {:.2}%{}\n\
+                 Grade: {}\n\n\
+                 Sicks: {} | Goods: {} | Bads: {} | Shits: {}\n\
+                 Combo: {} | Misses: {}",
+                self.score.score,
+                self.score.accuracy(), fc_str,
+                self.score.grade(),
+                self.score.sicks, self.score.goods, self.score.bads, self.score.shits,
+                self.score.max_combo, self.score.misses,
+            );
+            gpu.draw_text(&results, GAME_W / 2.0 - 180.0, 200.0, 24.0, white);
         }
 
         gpu.present_no_texture();
