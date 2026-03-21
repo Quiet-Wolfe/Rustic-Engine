@@ -1,0 +1,12 @@
+[package]
+name = "rustic-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustic-core = { workspace = true }
+rustic-render = { workspace = true }
+rustic-audio = { workspace = true }
+rustic-gameplay = { workspace = true }
+macroquad = { workspace = true }
+log = { workspace = true }

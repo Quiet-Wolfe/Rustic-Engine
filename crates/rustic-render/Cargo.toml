@@ -1,0 +1,10 @@
+[package]
+name = "rustic-render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustic-core = { workspace = true }
+macroquad = { workspace = true }
+quick-xml = { workspace = true }
+log = { workspace = true }
