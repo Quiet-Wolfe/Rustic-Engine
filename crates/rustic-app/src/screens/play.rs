@@ -92,10 +92,6 @@ impl PlayScreen {
             if !pn.data.must_press || pn.data.lane != lane || pn.data.was_good_hit || pn.data.too_late {
                 continue;
             }
-            if pn.data.is_sustain() {
-                continue;
-            }
-
             let diff = (pn.data.strum_time - self.conductor.song_position).abs();
             if diff <= max_window && pn.data.strum_time < best_time {
                 best_time = pn.data.strum_time;
