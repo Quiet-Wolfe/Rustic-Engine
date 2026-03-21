@@ -660,15 +660,17 @@ impl GpuState {
         &mut self, tex_w: f32, tex_h: f32,
         src_x: f32, src_y: f32, src_w: f32, src_h: f32,
         dst_x: f32, dst_y: f32, dst_w: f32, dst_h: f32,
+        flip_x: bool,
         color: [f32; 4],
     ) {
         let u0 = src_x / tex_w;
         let v0 = src_y / tex_h;
         let u1 = (src_x + src_w) / tex_w;
         let v1 = (src_y + src_h) / tex_h;
+        let (ul, ur) = if flip_x { (u1, u0) } else { (u0, u1) };
         self.push_quad(
             dst_x, dst_y, dst_w, dst_h,
-            u0, v0, u1, v0, u1, v1, u0, v1,
+            ul, v0, ur, v0, ur, v1, ul, v1,
             color,
         );
     }

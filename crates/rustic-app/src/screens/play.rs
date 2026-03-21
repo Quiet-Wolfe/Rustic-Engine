@@ -38,7 +38,9 @@ const HEALTH_BAR_X: f32 = (GAME_W - HEALTH_BAR_W) / 2.0;
 const ICON_SIZE: f32 = 75.0;
 
 // Note atlas animation name prefixes per lane (left/down/up/right)
-const NOTE_ANIMS: [&str; 4] = ["purple", "blue", "green", "red"];
+// Use the fully-colored strum arrow frames for scrolling notes too,
+// since the purple/blue/green/red frames are designed for RGB recoloring shader.
+const NOTE_ANIMS: [&str; 4] = ["arrowLEFT", "arrowDOWN", "arrowUP", "arrowRIGHT"];
 const STRUM_ANIMS: [&str; 4] = ["arrowLEFT", "arrowDOWN", "arrowUP", "arrowRIGHT"];
 const PRESS_ANIMS: [&str; 4] = ["left press", "down press", "up press", "right press"];
 const CONFIRM_ANIMS: [&str; 4] = ["left confirm", "down confirm", "up confirm", "right confirm"];
@@ -364,15 +366,7 @@ impl Screen for PlayScreen {
             return;
         }
 
-        // === Batch 1: Note atlas sprites ===
-        // Strum receptors
-        for player in [false, true] {
-            for lane in 0..4 {
-                self.draw_strum(gpu, lane, player);
-            }
-        }
-
-        // Note arrows and hold tails
+        // === Batch 1: Hold tails (colored quads, behind everything) ===
         let note_size = NOTE_WIDTH - 4.0;
         let lane_colors: [[f32; 4]; 4] = [
             [0.7, 0.2, 0.8, 0.6],
@@ -382,10 +376,8 @@ impl Screen for PlayScreen {
         ];
 
         for pn in &self.notes {
-            let x = Self::strum_x(pn.data.lane, pn.data.must_press);
-
-            // Hold tails (colored quads, drawn before note head)
             if pn.data.sustain_length > 0.0 {
+                let x = Self::strum_x(pn.data.lane, pn.data.must_press);
                 let tail_full_h =
                     (SCROLL_SPEED_FACTOR * pn.data.sustain_length * self.song_speed) as f32;
                 let tail_top = pn.y_pos + note_size;
@@ -400,19 +392,27 @@ impl Screen for PlayScreen {
                     gpu.push_colored_quad(tail_x, visible_top, tail_w, visible_h, lane_colors[pn.data.lane]);
                 }
             }
+        }
+        gpu.draw_batch(None); // white texture for colored quads
 
+        // === Batch 2: Note atlas sprites (strum receptors + note heads) ===
+        for player in [false, true] {
+            for lane in 0..4 {
+                self.draw_strum(gpu, lane, player);
+            }
+        }
+
+        for pn in &self.notes {
             if pn.data.was_good_hit || pn.data.too_late {
                 continue;
             }
             if pn.y_pos < -NOTE_WIDTH || pn.y_pos > GAME_H + NOTE_WIDTH {
                 continue;
             }
-
-            // Note head sprite
+            let x = Self::strum_x(pn.data.lane, pn.data.must_press);
             self.draw_note_sprite(gpu, NOTE_ANIMS[pn.data.lane], x, pn.y_pos, NOTE_SCALE);
         }
 
-        // Flush note sprites with the note atlas texture
         if let Some(assets) = &self.note_assets {
             gpu.draw_batch(Some(&assets.texture));
         } else {
@@ -444,32 +444,34 @@ impl Screen for PlayScreen {
 
         gpu.draw_batch(None); // white texture for colored quads
 
-        // === Batch 3: Health bar icons ===
+        // === Batch 3+4: Health bar icons ===
+        // Psych Engine: opponent icon on LEFT, player icon on RIGHT, both at divider
+        // BF icon is flipped horizontally (faces left toward opponent)
         let divider_x = HEALTH_BAR_X + HEALTH_BAR_W * (1.0 - health_pct);
         let icon_y = HEALTH_BAR_Y + HEALTH_BAR_H / 2.0 - ICON_SIZE / 2.0;
         let bf_losing = health_pct < 0.2;
         let dad_losing = health_pct > 0.8;
 
-        // BF icon (player, right side of divider)
-        if let Some(icon) = &self.icon_bf {
-            let src_x = if bf_losing { 150.0 } else { 0.0 };
-            gpu.push_texture_region(
-                icon.width as f32, icon.height as f32,
-                src_x, 0.0, 150.0, 150.0,
-                divider_x - 25.0, icon_y, ICON_SIZE, ICON_SIZE,
-                white,
-            );
-            gpu.draw_batch(Some(icon));
-        }
-
-        // Dad icon (opponent, left side of divider)
+        // Dad icon (opponent, left of divider)
         if let Some(icon) = &self.icon_dad {
             let src_x = if dad_losing { 150.0 } else { 0.0 };
             gpu.push_texture_region(
                 icon.width as f32, icon.height as f32,
                 src_x, 0.0, 150.0, 150.0,
-                divider_x - ICON_SIZE + 25.0, icon_y, ICON_SIZE, ICON_SIZE,
-                white,
+                divider_x - ICON_SIZE + 15.0, icon_y, ICON_SIZE, ICON_SIZE,
+                false, white,
+            );
+            gpu.draw_batch(Some(icon));
+        }
+
+        // BF icon (player, right of divider, flipped)
+        if let Some(icon) = &self.icon_bf {
+            let src_x = if bf_losing { 150.0 } else { 0.0 };
+            gpu.push_texture_region(
+                icon.width as f32, icon.height as f32,
+                src_x, 0.0, 150.0, 150.0,
+                divider_x - 15.0, icon_y, ICON_SIZE, ICON_SIZE,
+                true, white,
             );
             gpu.draw_batch(Some(icon));
         }
