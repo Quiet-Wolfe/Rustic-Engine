@@ -21,7 +21,12 @@ const NOTE_WIDTH: f32 = 112.0; // 160 * 0.7
 const KILL_OFFSET_MS: f64 = 350.0;
 const SCROLL_SPEED_FACTOR: f64 = 0.45;
 
-const LANE_KEYS: [KeyCode; 4] = [KeyCode::KeyD, KeyCode::KeyF, KeyCode::KeyJ, KeyCode::KeyK];
+const LANE_KEYS: [[KeyCode; 2]; 4] = [
+    [KeyCode::KeyD, KeyCode::ArrowLeft],
+    [KeyCode::KeyF, KeyCode::ArrowDown],
+    [KeyCode::KeyJ, KeyCode::ArrowUp],
+    [KeyCode::KeyK, KeyCode::ArrowRight],
+];
 
 /// Runtime note with rendering state.
 struct PlayNote {
@@ -58,6 +63,15 @@ impl PlayScreen {
             song_name: song_name.to_string(),
             difficulty: difficulty.to_string(),
         }
+    }
+
+    fn key_to_lane(key: KeyCode) -> Option<usize> {
+        for (lane, binds) in LANE_KEYS.iter().enumerate() {
+            if binds.contains(&key) {
+                return Some(lane);
+            }
+        }
+        None
     }
 
     fn strum_x(lane: usize, player: bool) -> f32 {
@@ -176,8 +190,8 @@ impl Screen for PlayScreen {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
-        for (lane, &lane_key) in LANE_KEYS.iter().enumerate() {
-            if key == lane_key && !self.keys_held[lane] {
+        if let Some(lane) = Self::key_to_lane(key) {
+            if !self.keys_held[lane] {
                 self.keys_held[lane] = true;
                 self.try_hit_note(lane);
             }
@@ -185,10 +199,8 @@ impl Screen for PlayScreen {
     }
 
     fn handle_key_release(&mut self, key: KeyCode) {
-        for (lane, &lane_key) in LANE_KEYS.iter().enumerate() {
-            if key == lane_key {
-                self.keys_held[lane] = false;
-            }
+        if let Some(lane) = Self::key_to_lane(key) {
+            self.keys_held[lane] = false;
         }
     }
 
