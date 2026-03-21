@@ -48,7 +48,7 @@ async fn main() {
 
     let mut anim_ctrl = AnimationController::new();
     let first_anim = &bf_char.animations[0];
-    anim_ctrl.play(&first_anim.name, first_anim.fps as f32, first_anim.loop_anim);
+    anim_ctrl.play(&first_anim.name, first_anim.fps as f32, first_anim.loop_anim, &first_anim.indices);
 
     // Camera
     let mut camera = GameCamera::new(0.9);
@@ -63,7 +63,7 @@ async fn main() {
         if is_key_pressed(KeyCode::Right) {
             current_anim_idx = (current_anim_idx + 1) % bf_char.animations.len();
             let anim = &bf_char.animations[current_anim_idx];
-            anim_ctrl.play(&anim.name, anim.fps as f32, anim.loop_anim);
+            anim_ctrl.play(&anim.name, anim.fps as f32, anim.loop_anim, &anim.indices);
         }
         if is_key_pressed(KeyCode::Left) {
             current_anim_idx = if current_anim_idx == 0 {
@@ -72,14 +72,14 @@ async fn main() {
                 current_anim_idx - 1
             };
             let anim = &bf_char.animations[current_anim_idx];
-            anim_ctrl.play(&anim.name, anim.fps as f32, anim.loop_anim);
+            anim_ctrl.play(&anim.name, anim.fps as f32, anim.loop_anim, &anim.indices);
         }
 
         // Replay current animation
         if is_key_pressed(KeyCode::Space) {
             let anim = &bf_char.animations[current_anim_idx];
-            anim_ctrl.play("", 0.0, false); // force reset
-            anim_ctrl.play(&anim.name, anim.fps as f32, anim.loop_anim);
+            anim_ctrl.play("", 0.0, false, &[]); // force reset
+            anim_ctrl.play(&anim.name, anim.fps as f32, anim.loop_anim, &anim.indices);
         }
 
         // Toggle info
@@ -123,7 +123,7 @@ async fn main() {
         let anim_offsets = bf_char.animations[current_anim_idx].offsets;
         let scale = bf_char.scale as f32 * camera.zoom;
 
-        if let Some(frame) = atlas.get_frame(current_anim_name, anim_ctrl.frame_index) {
+        if let Some(frame) = atlas.get_frame(current_anim_name, anim_ctrl.atlas_frame()) {
             draw_sprite_frame(
                 &texture,
                 frame,
@@ -140,7 +140,12 @@ async fn main() {
             let info_lines = vec![
                 format!("FPS: {}", get_fps()),
                 format!("Animation: {} ({})", anim_ids[current_anim_idx], current_anim_name),
-                format!("Frame: {} / {}", anim_ctrl.frame_index + 1, frame_count),
+                format!(
+                    "Frame: {} / {} (atlas: {})",
+                    anim_ctrl.frame_index + 1,
+                    anim_ctrl.sequence_length(frame_count),
+                    anim_ctrl.atlas_frame()
+                ),
                 format!("Camera zoom: {:.2}", camera.zoom),
                 format!("Atlas animations: {}", atlas.animations.len()),
                 String::new(),

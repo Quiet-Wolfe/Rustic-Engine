@@ -203,10 +203,14 @@ pub fn draw_sprite_frame(
 /// Animation controller for a sprite atlas.
 pub struct AnimationController {
     pub current_anim: String,
+    /// Current position in the frame sequence (index into `indices` if set, otherwise direct atlas frame).
     pub frame_index: usize,
     pub fps: f32,
     pub looping: bool,
     pub finished: bool,
+    /// When non-empty, maps frame_index -> specific atlas frame indices.
+    /// e.g. [1, 4, 5, 6, 7, 9, 1] means frame_index 0 shows atlas frame 1, etc.
+    pub indices: Vec<usize>,
     timer: f32,
 }
 
@@ -218,12 +222,14 @@ impl AnimationController {
             fps: 24.0,
             looping: false,
             finished: false,
+            indices: Vec::new(),
             timer: 0.0,
         }
     }
 
     /// Switch to a new animation, resetting the frame counter.
-    pub fn play(&mut self, anim: &str, fps: f32, looping: bool) {
+    /// `indices` selects specific atlas frames; empty = use all frames in order.
+    pub fn play(&mut self, anim: &str, fps: f32, looping: bool, indices: &[i32]) {
         if self.current_anim != anim || self.finished {
             self.current_anim = anim.to_string();
             self.frame_index = 0;
@@ -232,11 +238,31 @@ impl AnimationController {
         }
         self.fps = fps;
         self.looping = looping;
+        self.indices = indices.iter().map(|&i| i as usize).collect();
+    }
+
+    /// The total number of frames in the current animation sequence.
+    pub fn sequence_length(&self, atlas_frame_count: usize) -> usize {
+        if self.indices.is_empty() {
+            atlas_frame_count
+        } else {
+            self.indices.len()
+        }
+    }
+
+    /// Get the actual atlas frame index for the current position.
+    pub fn atlas_frame(&self) -> usize {
+        if self.indices.is_empty() {
+            self.frame_index
+        } else {
+            self.indices.get(self.frame_index).copied().unwrap_or(0)
+        }
     }
 
     /// Advance the animation timer.
-    pub fn update(&mut self, dt: f32, frame_count: usize) {
-        if self.finished || frame_count == 0 || self.fps <= 0.0 {
+    pub fn update(&mut self, dt: f32, atlas_frame_count: usize) {
+        let total = self.sequence_length(atlas_frame_count);
+        if self.finished || total == 0 || self.fps <= 0.0 {
             return;
         }
 
@@ -247,11 +273,11 @@ impl AnimationController {
             self.timer -= frame_duration;
             self.frame_index += 1;
 
-            if self.frame_index >= frame_count {
+            if self.frame_index >= total {
                 if self.looping {
                     self.frame_index = 0;
                 } else {
-                    self.frame_index = frame_count - 1;
+                    self.frame_index = total - 1;
                     self.finished = true;
                     return;
                 }
