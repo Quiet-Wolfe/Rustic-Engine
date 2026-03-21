@@ -223,8 +223,29 @@ impl Screen for PlayScreen {
             }
         }
 
-        // Update note positions and detect misses
+        // Update note positions, hold progress, and detect misses
         for pn in &mut self.notes {
+            // Update hold notes that were hit
+            if pn.data.was_good_hit && pn.data.sustain_length > 0.0 && !pn.data.hold_released {
+                let elapsed = self.conductor.song_position - pn.data.strum_time;
+                if pn.data.must_press {
+                    if self.keys_held[pn.data.lane] {
+                        pn.data.hold_progress = elapsed.min(pn.data.sustain_length);
+                    } else if elapsed > 0.0 {
+                        // Released early — freeze progress
+                        pn.data.hold_released = true;
+                    }
+                } else {
+                    // Opponent holds auto-progress
+                    pn.data.hold_progress = elapsed.min(pn.data.sustain_length);
+                }
+                // Mark fully consumed
+                if pn.data.hold_progress >= pn.data.sustain_length {
+                    pn.data.hold_released = true;
+                }
+                continue;
+            }
+
             if pn.data.was_good_hit || pn.data.too_late {
                 continue;
             }
@@ -279,6 +300,23 @@ impl Screen for PlayScreen {
 
         // Notes
         for pn in &self.notes {
+            let x = Self::strum_x(pn.data.lane, pn.data.must_press);
+            let color = lane_colors[pn.data.lane];
+
+            // Active hold note being held — draw remaining tail from strum line
+            if pn.data.was_good_hit && pn.data.sustain_length > 0.0 && !pn.data.hold_released {
+                let remaining = pn.data.sustain_length - pn.data.hold_progress;
+                let tail_h = (SCROLL_SPEED_FACTOR * remaining * self.song_speed) as f32;
+                if tail_h > 1.0 {
+                    let tail_x = x + NOTE_WIDTH * 0.35;
+                    let tail_w = NOTE_WIDTH * 0.3;
+                    let mut tail_color = color;
+                    tail_color[3] = 0.6;
+                    gpu.push_colored_quad(tail_x, STRUM_Y + (NOTE_WIDTH - 4.0), tail_w, tail_h, tail_color);
+                }
+                continue;
+            }
+
             if pn.data.was_good_hit || pn.data.too_late {
                 continue;
             }
@@ -286,8 +324,6 @@ impl Screen for PlayScreen {
                 continue;
             }
 
-            let x = Self::strum_x(pn.data.lane, pn.data.must_press);
-            let color = lane_colors[pn.data.lane];
             gpu.push_colored_quad(x, pn.y_pos, NOTE_WIDTH - 4.0, NOTE_WIDTH - 4.0, color);
 
             // Sustain tail
