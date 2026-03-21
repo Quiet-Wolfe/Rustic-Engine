@@ -119,7 +119,7 @@ pub fn parse_chart(json_data: &str) -> Result<ParsedChart, ChartError> {
     let mut song: SwagSong =
         serde_json::from_value(song_value).map_err(|e| ChartError::Parse(e.to_string()))?;
 
-    if song.format.is_empty() || song.format != "psych_v1" {
+    if !song.format.starts_with("psych_v1") {
         convert_to_psych_v1(&mut song);
     }
 
@@ -427,6 +427,39 @@ mod tests {
         // dir 5 = opponent regardless of mustHitSection
         assert!(!result.notes[1].must_press);
         assert_eq!(result.notes[1].lane, 1);
+    }
+
+    #[test]
+    fn test_psych_v1_convert_skips_conversion() {
+        // psych_v1_convert: already normalized by Psych Engine, must NOT double-convert
+        let json = r#"{
+            "song": {
+                "song": "Test",
+                "bpm": 120.0,
+                "format": "psych_v1_convert",
+                "notes": [
+                    {
+                        "sectionNotes": [
+                            [0.0, 6, 0],
+                            [100.0, 2, 0]
+                        ],
+                        "mustHitSection": false,
+                        "sectionBeats": 4.0
+                    }
+                ],
+                "events": []
+            }
+        }"#;
+        let result = parse_chart(json).unwrap();
+        assert_eq!(result.notes.len(), 2);
+
+        // dir 6 = opponent (already normalized, no conversion)
+        assert!(!result.notes[0].must_press);
+        assert_eq!(result.notes[0].lane, 2);
+
+        // dir 2 = player (already normalized, no conversion)
+        assert!(result.notes[1].must_press);
+        assert_eq!(result.notes[1].lane, 2);
     }
 
     #[test]

@@ -302,7 +302,7 @@ impl Screen for PlayScreen {
                 let tail_w = NOTE_WIDTH * 0.3;
                 let mut tail_color = color;
                 tail_color[3] = 0.6;
-                gpu.push_colored_quad(tail_x, pn.y_pos - tail_h, tail_w, tail_h, tail_color);
+                gpu.push_colored_quad(tail_x, pn.y_pos + (NOTE_WIDTH - 4.0), tail_w, tail_h, tail_color);
             }
         }
 
