@@ -12,6 +12,8 @@ pub struct AudioEngine {
     vocals_player: Option<StaticSoundHandle>,
     vocals_opponent: Option<StaticSoundHandle>,
     playing: bool,
+    miss_sounds: Vec<StaticSoundData>,
+    miss_index: usize,
 }
 
 impl AudioEngine {
@@ -24,6 +26,8 @@ impl AudioEngine {
             vocals_player: None,
             vocals_opponent: None,
             playing: false,
+            miss_sounds: Vec::new(),
+            miss_index: 0,
         }
     }
 
@@ -130,6 +134,28 @@ impl AudioEngine {
         if let Some(h) = &mut self.vocals_player {
             h.set_volume(1.0, Tween::default());
         }
+    }
+
+    /// Load miss sound effects (missnote1.ogg, missnote2.ogg, missnote3.ogg).
+    pub fn load_miss_sounds(&mut self, dir: &Path) {
+        for i in 1..=3 {
+            let path = dir.join(format!("missnote{i}.ogg"));
+            if path.exists() {
+                if let Ok(data) = StaticSoundData::from_file(&path) {
+                    self.miss_sounds.push(data);
+                }
+            }
+        }
+    }
+
+    /// Play a random miss sound effect.
+    pub fn play_miss_sound(&mut self) {
+        if self.miss_sounds.is_empty() {
+            return;
+        }
+        let data = self.miss_sounds[self.miss_index].clone();
+        self.miss_index = (self.miss_index + 1) % self.miss_sounds.len();
+        let _ = self.manager.play(data);
     }
 
     /// Seek all tracks to a position in milliseconds.

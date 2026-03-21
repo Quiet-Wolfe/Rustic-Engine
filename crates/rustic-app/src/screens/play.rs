@@ -249,6 +249,7 @@ impl Screen for PlayScreen {
         audio.load_inst(&PathBuf::from(format!("{}/Inst.ogg", song_dir)));
         audio.load_vocals(&PathBuf::from(format!("{}/Voices-Player.ogg", song_dir)));
         audio.load_opponent_vocals(&PathBuf::from(format!("{}/Voices-Opponent.ogg", song_dir)));
+        audio.load_miss_sounds(Path::new("references/FNF-PsychEngine/assets/shared/sounds"));
         self.audio = Some(audio);
 
         self.conductor.song_position = -self.conductor.crochet * 5.0;
@@ -341,6 +342,7 @@ impl Screen for PlayScreen {
                     });
                     if let Some(audio) = &mut self.audio {
                         audio.mute_player_vocals();
+                        audio.play_miss_sound();
                     }
                 }
             }
