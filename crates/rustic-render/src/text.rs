@@ -3,13 +3,11 @@ use glyphon::{
     TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
 };
 
-/// Queued text draw call.
+/// Queued text draw call (game-space coordinates).
 struct TextDraw {
     buffer: Buffer,
     x: f32,
     y: f32,
-    bounds_w: f32,
-    bounds_h: f32,
 }
 
 /// Text rendering system backed by glyphon.
@@ -71,52 +69,54 @@ impl TextSystem {
             Shaping::Basic,
             None,
         );
+        // Layout width in game-space — will be scaled to pixels during render
         buffer.set_size(&mut self.font_system, Some(1280.0), None);
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        self.pending.push(TextDraw {
-            buffer,
-            x,
-            y,
-            bounds_w: 1280.0,
-            bounds_h: 720.0,
-        });
+        self.pending.push(TextDraw { buffer, x, y });
     }
 
     /// Prepare and render all queued text into the given render pass.
+    /// `vp_w`/`vp_h` are the actual pixel dimensions of the letterboxed viewport.
     pub fn render<'a>(
         &'a mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'a>,
         game_w: f32,
-        game_h: f32,
+        _game_h: f32,
+        vp_w: f32,
+        vp_h: f32,
     ) {
         if self.pending.is_empty() {
             return;
         }
 
+        // Tell glyphon the actual pixel resolution so glyphs are rasterized sharply
         self.viewport.update(
             queue,
             Resolution {
-                width: game_w as u32,
-                height: game_h as u32,
+                width: vp_w as u32,
+                height: vp_h as u32,
             },
         );
+
+        // Scale factor from game-space to viewport pixels
+        let scale = vp_w / game_w;
 
         let text_areas: Vec<TextArea> = self
             .pending
             .iter()
             .map(|td| TextArea {
                 buffer: &td.buffer,
-                left: td.x,
-                top: td.y,
-                scale: 1.0,
+                left: td.x * scale,
+                top: td.y * scale,
+                scale,
                 bounds: TextBounds {
                     left: 0,
                     top: 0,
-                    right: td.bounds_w as i32,
-                    bottom: td.bounds_h as i32,
+                    right: vp_w as i32,
+                    bottom: vp_h as i32,
                 },
                 default_color: Color::rgb(255, 255, 255),
                 custom_glyphs: &[],

@@ -446,13 +446,15 @@ impl GpuState {
                 pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
             }
 
-            // Text on top of sprites
+            // Text on top of sprites — rendered at native viewport resolution
             self.text_system.render(
                 &self.device,
                 &self.queue,
                 &mut pass,
                 self.game_w,
                 self.game_h,
+                vp_w,
+                vp_h,
             );
         }
 
