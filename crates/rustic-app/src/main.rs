@@ -13,7 +13,7 @@ fn window_conf() -> Conf {
         window_title: "RusticV2 — Phase 1 Test".to_string(),
         window_width: SCREEN_W as i32,
         window_height: SCREEN_H as i32,
-        window_resizable: false,
+        window_resizable: true,
         ..Default::default()
     }
 }
@@ -108,7 +108,7 @@ async fn main() {
         anim_ctrl.update(dt, frame_count);
 
         // Draw
-        clear_background(Color::new(0.15, 0.15, 0.20, 1.0));
+        clear_background(BLACK);
 
         // Apply game camera transform
         let cam_offset_x = SCREEN_W / 2.0 - camera.x * camera.zoom;
