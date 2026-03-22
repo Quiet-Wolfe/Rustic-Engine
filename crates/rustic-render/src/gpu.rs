@@ -206,7 +206,7 @@ impl GpuState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -298,9 +298,16 @@ impl GpuState {
     }
 
     pub fn load_texture_from_path(&self, path: &Path) -> GpuTexture {
-        let img = image::open(path)
+        let mut img = image::open(path)
             .unwrap_or_else(|e| panic!("Failed to load image {:?}: {}", path, e))
             .to_rgba8();
+        // Premultiply alpha to eliminate white fringing on transparent edges
+        for pixel in img.pixels_mut() {
+            let a = pixel[3] as f32 / 255.0;
+            pixel[0] = (pixel[0] as f32 * a + 0.5) as u8;
+            pixel[1] = (pixel[1] as f32 * a + 0.5) as u8;
+            pixel[2] = (pixel[2] as f32 * a + 0.5) as u8;
+        }
         let (width, height) = img.dimensions();
 
         let texture = self.device.create_texture_with_data(

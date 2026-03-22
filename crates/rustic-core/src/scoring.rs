@@ -106,7 +106,7 @@ impl Default for ScoreState {
 }
 
 pub const HEALTH_MISS: f32 = 0.0475;
-pub const HEALTH_HOLD_TICK: f32 = 0.01;
+pub const HEALTH_HOLD_TICK: f32 = 0.023;
 pub const HEALTH_HOLD_DROP: f32 = 0.08;
 
 #[cfg(test)]
