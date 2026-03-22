@@ -7,7 +7,8 @@ pub struct GameCamera {
     pub target_x: f32,
     pub target_y: f32,
     pub target_zoom: f32,
-    pub follow_lerp: f32,
+    /// Stage-defined camera speed multiplier (default 1.0).
+    pub camera_speed: f32,
 }
 
 impl GameCamera {
@@ -19,13 +20,14 @@ impl GameCamera {
             target_x: 0.0,
             target_y: 0.0,
             target_zoom: zoom,
-            follow_lerp: 0.04,
+            camera_speed: 1.0,
         }
     }
 
-    /// Smoothly interpolate toward target using frame-rate independent lerp.
+    /// Smoothly interpolate toward target using Psych Engine's exact formula:
+    /// `lerp = 1 - exp(-dt * 2.4 * cameraSpeed)`
     pub fn update(&mut self, dt_secs: f32) {
-        let lerp = 1.0 - (1.0 - self.follow_lerp).powf(dt_secs * 60.0);
+        let lerp = 1.0 - (-dt_secs * 2.4 * self.camera_speed).exp();
         self.x += (self.target_x - self.x) * lerp;
         self.y += (self.target_y - self.y) * lerp;
         self.zoom += (self.target_zoom - self.zoom) * lerp;

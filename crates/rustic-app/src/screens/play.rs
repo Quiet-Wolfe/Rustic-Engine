@@ -420,6 +420,7 @@ impl Screen for PlayScreen {
         };
 
         self.camera = GameCamera::new(stage.default_zoom as f32);
+        self.camera.camera_speed = stage.camera_speed as f32;
 
         // Load stage background sprites (default stage: week1)
         let stage_img_dir = if stage.directory.is_empty() {
@@ -505,22 +506,23 @@ impl Screen for PlayScreen {
             }
         }
 
-        // Camera target positions (character center + camera_position from JSON)
-        // In Psych Engine: camera follows getMidpoint() + cameraPosition
-        // getMidpoint() is roughly (x + frameWidth/2, y + frameHeight/2)
-        // For simplicity, use stage position + rough character center
+        // Camera targets: Psych Engine uses getMidpoint() + offset + cameraPosition
+        // Opponent: midpoint.x + 150, midpoint.y - 100
+        // Player:   midpoint.x - 100, midpoint.y - 100
         if let Some(bf) = &self.char_bf {
+            let (mx, my) = bf.midpoint();
             self.cam_bf = [
-                bf.x + 150.0 + stage.camera_boyfriend[0] as f32,
-                bf.y + 150.0 + stage.camera_boyfriend[1] as f32,
+                mx - 100.0 + stage.camera_boyfriend[0] as f32,
+                my - 100.0 + stage.camera_boyfriend[1] as f32,
             ];
             let c = bf.healthbar_colors;
             self.hb_color_bf = [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0];
         }
         if let Some(dad) = &self.char_dad {
+            let (mx, my) = dad.midpoint();
             self.cam_dad = [
-                dad.x + 150.0 + stage.camera_opponent[0] as f32,
-                dad.y + 200.0 + stage.camera_opponent[1] as f32,
+                mx + 150.0 + stage.camera_opponent[0] as f32,
+                my - 100.0 + stage.camera_opponent[1] as f32,
             ];
             let c = dad.healthbar_colors;
             self.hb_color_dad = [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0];
@@ -717,7 +719,7 @@ impl Screen for PlayScreen {
         }
 
         // Update character animations
-        let dt_secs = dt as f32;
+        let dt_secs = dt;
 
         // Opponent sing→idle transition based on singDuration
         if let Some(dad) = &mut self.char_dad {

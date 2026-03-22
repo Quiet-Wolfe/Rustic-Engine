@@ -135,6 +135,16 @@ impl CharacterSprite {
         self.anim.update(dt, count);
     }
 
+    /// Get the character's midpoint (center of sprite in world coords).
+    /// Uses the current animation's first frame dimensions.
+    pub fn midpoint(&self) -> (f32, f32) {
+        let anim_name = if self.has_dance_idle { "danceLeft" } else { "idle" };
+        let (fw, fh) = self.atlas.get_frame(anim_name, 0)
+            .map(|f| (f.frame_w, f.frame_h))
+            .unwrap_or((300.0, 400.0));
+        (self.x + fw * self.scale / 2.0, self.y + fh * self.scale / 2.0)
+    }
+
     fn current_offset(&self) -> (f32, f32) {
         if let Some(off) = self.offsets.get(&self.anim.current_anim) {
             (off[0] as f32, off[1] as f32)
@@ -206,10 +216,12 @@ impl StageBgSprite {
     }
 
     pub fn draw(&self, gpu: &mut GpuState, cam: &GameCamera) {
-        let parallax_x = cam.x * self.scroll_x;
-        let parallax_y = cam.y * self.scroll_y;
-        let sx = (self.x - parallax_x) * cam.zoom + GAME_W / 2.0;
-        let sy = (self.y - parallax_y) * cam.zoom + GAME_H / 2.0;
+        // HaxeFlixel parallax: screen_pos = (sprite.x - scroll * scrollFactor) * zoom
+        // where scroll = cam_center - screen_half / zoom
+        let scroll_x = cam.x - GAME_W / (2.0 * cam.zoom);
+        let scroll_y = cam.y - GAME_H / (2.0 * cam.zoom);
+        let sx = (self.x - scroll_x * self.scroll_x) * cam.zoom;
+        let sy = (self.y - scroll_y * self.scroll_y) * cam.zoom;
         let scale = self.scale * cam.zoom;
         let w = self.tex_w * scale;
         let h = self.tex_h * scale;
