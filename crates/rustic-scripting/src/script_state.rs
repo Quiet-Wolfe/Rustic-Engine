@@ -41,6 +41,18 @@ pub struct ScriptState {
 
     /// Sprites pending removal (tag list).
     pub sprites_to_remove: Vec<String>,
+
+    /// Current song position in milliseconds (updated each frame by the game).
+    pub song_position: f64,
+
+    /// Current camera zoom (updated each frame by the game, used for tween start values).
+    pub camera_zoom: f32,
+
+    /// Pending camera target changes: "dad"/"bf"/"gf".
+    pub camera_target_requests: Vec<String>,
+
+    /// Pending triggered events: (name, v1, v2).
+    pub triggered_events: Vec<(String, String, String)>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -174,6 +186,10 @@ impl ScriptState {
             tweens: TweenManager::new(),
             strum_props: [StrumProps { x: 0.0, y: 0.0, alpha: 1.0, angle: 0.0, custom: false }; 8],
             sprites_to_remove: Vec::new(),
+            song_position: 0.0,
+            camera_zoom: 1.0,
+            camera_target_requests: Vec::new(),
+            triggered_events: Vec::new(),
         }
     }
 }

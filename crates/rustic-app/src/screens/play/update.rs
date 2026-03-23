@@ -64,6 +64,10 @@ impl PlayScreen {
             self.countdown_alpha -= dt / (self.game.conductor.crochet as f32 / 1000.0);
         }
 
+        // Sync game state to Lua before callbacks
+        self.scripts.state.song_position = self.game.conductor.song_position;
+        self.scripts.state.camera_zoom = self.camera.zoom;
+
         // Lua: onUpdate (before gameplay logic)
         if self.scripts.has_scripts() {
             self.scripts.call_with_elapsed("onUpdate", dt as f64);
@@ -317,6 +321,47 @@ impl PlayScreen {
 
         // Process game-level property writes from Lua scripts
         self.process_property_writes();
+
+        // Process camera target requests from Lua (cameraSetTarget)
+        let cam_targets: Vec<String> = self.scripts.state.camera_target_requests.drain(..).collect();
+        for target in cam_targets {
+            match target.trim().to_lowercase().as_str() {
+                "dad" | "opponent" => {
+                    self.recompute_camera_targets();
+                    self.camera.follow(self.cam_dad[0], self.cam_dad[1]);
+                }
+                "gf" | "girlfriend" => {
+                    // GF camera: use GF midpoint if available, otherwise dad position
+                    if let Some(gf) = &self.char_gf {
+                        let (mx, my) = gf.midpoint();
+                        self.camera.follow(mx, my);
+                    }
+                }
+                _ => {
+                    // Default = boyfriend
+                    self.recompute_camera_targets();
+                    self.camera.follow(self.cam_bf[0], self.cam_bf[1]);
+                }
+            }
+        }
+
+        // Process triggered events from Lua (triggerEvent)
+        let events: Vec<(String, String, String)> = self.scripts.state.triggered_events.drain(..).collect();
+        for (name, v1, v2) in events {
+            match name.as_str() {
+                "Add Camera Zoom" => {
+                    let game_zoom: f32 = v1.parse().unwrap_or(0.015);
+                    let hud_zoom: f32 = v2.parse().unwrap_or(0.03);
+                    if !self.disable_zooming && self.camera.zoom < 1.35 {
+                        self.camera.zoom += game_zoom;
+                        self.hud_zoom += hud_zoom;
+                    }
+                }
+                _ => {
+                    log::debug!("Unhandled triggerEvent: {} ({}, {})", name, v1, v2);
+                }
+            }
+        }
 
         // Visual: Lua sprite animation advancement
         for (tag, sprite) in self.scripts.state.lua_sprites.iter_mut() {

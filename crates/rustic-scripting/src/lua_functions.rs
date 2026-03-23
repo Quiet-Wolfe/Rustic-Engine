@@ -649,18 +649,48 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         Ok(LuaNil)
     })?)?;
 
-    // getSongPosition()
-    globals.set("getSongPosition", lua.create_function(|_lua, ()| -> LuaResult<f64> {
-        Ok(0.0) // TODO: wire to conductor
+    // getSongPosition() — reads from Lua global kept in sync by the game
+    globals.set("getSongPosition", lua.create_function(|lua, ()| -> LuaResult<f64> {
+        let g = lua.globals();
+        Ok(g.get::<f64>("__songPosition").unwrap_or(0.0))
     })?)?;
 
-    // cameraSetTarget(target)
-    globals.set("cameraSetTarget", lua.create_function(|_lua, _target: String| {
+    // cameraSetTarget(target) — queues camera target switch
+    globals.set("cameraSetTarget", lua.create_function(|lua, target: String| {
+        let g = lua.globals();
+        let pending: LuaTable = g.get::<LuaTable>("__pending_cam_targets")
+            .unwrap_or_else(|_| lua.create_table().unwrap());
+        let len = pending.len().unwrap_or(0);
+        pending.set(len + 1, target)?;
+        g.set("__pending_cam_targets", pending)?;
         Ok(())
     })?)?;
 
-    // triggerEvent(name, v1, v2)
-    globals.set("triggerEvent", lua.create_function(|_lua, (_name, _v1, _v2): (String, Option<String>, Option<String>)| {
+    // triggerEvent(name, v1, v2) — queues event for game processing
+    globals.set("triggerEvent", lua.create_function(|lua, (name, v1, v2): (String, Option<mlua::Value>, Option<mlua::Value>)| {
+        let g = lua.globals();
+        let pending: LuaTable = g.get::<LuaTable>("__pending_events")
+            .unwrap_or_else(|_| lua.create_table().unwrap());
+        let entry = lua.create_table()?;
+        entry.set("name", name)?;
+        // Convert values to strings (Psych Engine accepts both numbers and strings)
+        let v1_str = match v1 {
+            Some(mlua::Value::String(s)) => s.to_string_lossy().to_string(),
+            Some(mlua::Value::Number(n)) => n.to_string(),
+            Some(mlua::Value::Integer(n)) => n.to_string(),
+            _ => String::new(),
+        };
+        let v2_str = match v2 {
+            Some(mlua::Value::String(s)) => s.to_string_lossy().to_string(),
+            Some(mlua::Value::Number(n)) => n.to_string(),
+            Some(mlua::Value::Integer(n)) => n.to_string(),
+            _ => String::new(),
+        };
+        entry.set("v1", v1_str)?;
+        entry.set("v2", v2_str)?;
+        let len = pending.len().unwrap_or(0);
+        pending.set(len + 1, entry)?;
+        g.set("__pending_events", pending)?;
         Ok(())
     })?)?;
 

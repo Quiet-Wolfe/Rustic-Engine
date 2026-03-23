@@ -87,6 +87,7 @@ impl LuaScript {
         globals.set("curBeat", state.cur_beat).ok();
         globals.set("curStep", state.cur_step).ok();
         globals.set("curSection", state.cur_section).ok();
+        globals.set("__songPosition", state.song_position).ok();
 
         // Check if the callback exists
         let func: Option<LuaFunction> = globals.get(name).ok();
@@ -271,7 +272,7 @@ impl LuaScript {
                             crate::tweens::TweenProperty::Y => state.lua_sprites.get(&target).map(|s| s.y).unwrap_or(0.0),
                             crate::tweens::TweenProperty::Alpha => state.lua_sprites.get(&target).map(|s| s.alpha).unwrap_or(1.0),
                             crate::tweens::TweenProperty::Angle => state.lua_sprites.get(&target).map(|s| s.angle).unwrap_or(0.0),
-                            crate::tweens::TweenProperty::Zoom => 0.0, // Game will set this
+                            crate::tweens::TweenProperty::Zoom => state.camera_zoom,
                             crate::tweens::TweenProperty::ScaleX => state.lua_sprites.get(&target).map(|s| s.scale_x).unwrap_or(1.0),
                             crate::tweens::TweenProperty::ScaleY => state.lua_sprites.get(&target).map(|s| s.scale_y).unwrap_or(1.0),
                         };
@@ -374,6 +375,38 @@ impl LuaScript {
             }
             if let Ok(new_tbl) = self.lua.create_table() {
                 globals.set("__pending_removes", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_cam_targets
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_cam_targets") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(target) = pending.get::<String>(i) {
+                    state.camera_target_requests.push(target);
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_cam_targets", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_events (triggerEvent calls)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_events") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(name), Ok(v1), Ok(v2)) = (
+                        tbl.get::<String>("name"),
+                        tbl.get::<String>("v1"),
+                        tbl.get::<String>("v2"),
+                    ) {
+                        state.triggered_events.push((name, v1, v2));
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_events", new_tbl).ok();
             }
         }
 
