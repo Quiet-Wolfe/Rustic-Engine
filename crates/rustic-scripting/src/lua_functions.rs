@@ -2,6 +2,46 @@ use std::io::Read as _;
 
 use mlua::prelude::*;
 
+/// Resolve a Psych Engine object path to our internal tween target name.
+/// "strumLineNotes.members[N]" → "__strum_opponent_N" or "__strum_player_N"
+/// "opponentStrums.members[N]" or "playerStrums.members[N]" → same
+/// Otherwise returns the target as-is (Lua sprite tag).
+fn resolve_strum_target(target: &str) -> String {
+    // strumLineNotes.members[N] — N is 0-7 (0-3 opponent, 4-7 player)
+    if let Some(idx_str) = target.strip_prefix("strumLineNotes.members[")
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        // May have sub-property like .colorTransform — strip it
+        let idx_part = idx_str.split('.').next().unwrap_or(idx_str);
+        if let Ok(idx) = idx_part.parse::<usize>() {
+            return if idx < 4 {
+                format!("__strum_opponent_{}", idx)
+            } else {
+                format!("__strum_player_{}", idx - 4)
+            };
+        }
+    }
+    // opponentStrums.members[N]
+    if let Some(idx_str) = target.strip_prefix("opponentStrums.members[")
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        let idx_part = idx_str.split('.').next().unwrap_or(idx_str);
+        if let Ok(idx) = idx_part.parse::<usize>() {
+            return format!("__strum_opponent_{}", idx);
+        }
+    }
+    // playerStrums.members[N]
+    if let Some(idx_str) = target.strip_prefix("playerStrums.members[")
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        let idx_part = idx_str.split('.').next().unwrap_or(idx_str);
+        if let Ok(idx) = idx_part.parse::<usize>() {
+            return format!("__strum_player_{}", idx);
+        }
+    }
+    target.to_string()
+}
+
 /// Read width and height from a PNG file's IHDR chunk (first 24 bytes).
 fn read_png_dimensions(path: &std::path::Path) -> Option<(u32, u32)> {
     let mut f = std::fs::File::open(path).ok()?;
@@ -799,9 +839,14 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         })?)?;
     }
 
-    // getMidpointX/Y — returns center of sprite (x + width/2)
+    // getMidpointX/Y — returns center of sprite or game character
     globals.set("getMidpointX", lua.create_function(|lua, tag: String| -> LuaResult<f64> {
-        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        let g = lua.globals();
+        // Check game characters first (synced from PlayScreen)
+        let char_key = format!("__midX_{}", tag);
+        if let Ok(v) = g.get::<f64>(char_key) { return Ok(v); }
+        // Fall back to Lua sprite
+        let sprite_data: LuaTable = g.get("__sprite_data")?;
         if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
             let x: f64 = tbl.get("x").unwrap_or(0.0);
             let tw: f64 = tbl.get("tex_w").unwrap_or(0.0);
@@ -811,7 +856,10 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         Ok(0.0)
     })?)?;
     globals.set("getMidpointY", lua.create_function(|lua, tag: String| -> LuaResult<f64> {
-        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        let g = lua.globals();
+        let char_key = format!("__midY_{}", tag);
+        if let Ok(v) = g.get::<f64>(char_key) { return Ok(v); }
+        let sprite_data: LuaTable = g.get("__sprite_data")?;
         if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
             let y: f64 = tbl.get("y").unwrap_or(0.0);
             let th: f64 = tbl.get("tex_h").unwrap_or(0.0);
@@ -939,8 +987,69 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // startTween — the generic tween function (rarely used directly in mods)
-    globals.set("startTween", lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<()> {
+    // startTween(tag, target, values_table, duration, options)
+    // Generic tween function — tweens multiple properties on a game object.
+    // target can be: "strumLineNotes.members[N]", a Lua sprite tag, or a game object path.
+    globals.set("startTween", lua.create_function(|lua, (tag, target, values, duration, options): (String, String, LuaTable, f64, Option<mlua::Value>)| {
+        let g = lua.globals();
+        // Parse ease from options (string or table with ease key)
+        let ease = match &options {
+            Some(mlua::Value::String(s)) => s.to_string_lossy().to_string(),
+            Some(mlua::Value::Table(tbl)) => {
+                tbl.get::<mlua::prelude::LuaString>("ease")
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "linear".to_string())
+            }
+            _ => "linear".to_string(),
+        };
+        // Parse onComplete callback name from options
+        let on_complete = match &options {
+            Some(mlua::Value::Table(tbl)) => {
+                tbl.get::<mlua::prelude::LuaString>("onComplete")
+                    .map(|s| s.to_string_lossy().to_string())
+                    .ok()
+            }
+            _ => None,
+        };
+
+        // Resolve target: strumLineNotes.members[N] → __strum_opponent_N / __strum_player_N
+        // Also handle: opponentStrums, playerStrums
+        let resolved_target = resolve_strum_target(&target);
+
+        let pending: LuaTable = g.get("__pending_tweens")?;
+        // Create one tween per property in the values table
+        for pair in values.pairs::<String, f64>() {
+            let Ok((prop_name, end_val)) = pair else { continue };
+            let prop = match prop_name.as_str() {
+                "x" => "x",
+                "y" => "y",
+                "alpha" => "alpha",
+                "angle" => "angle",
+                "scale.x" | "scaleX" => "x", // For strum scale, map to x for now
+                "scale.y" | "scaleY" => "y",
+                _ => {
+                    log::debug!("startTween: ignoring unknown property '{}' on '{}'", prop_name, target);
+                    continue;
+                }
+            };
+            let tween_tag = if values.len().unwrap_or(0) > 1 {
+                format!("{}_{}", tag, prop_name)
+            } else {
+                tag.clone()
+            };
+            let tbl = lua.create_table()?;
+            tbl.set("tag", tween_tag)?;
+            tbl.set("target", resolved_target.as_str())?;
+            tbl.set("property", prop)?;
+            tbl.set("value", end_val)?;
+            tbl.set("duration", duration)?;
+            tbl.set("ease", ease.as_str())?;
+            if let Some(ref cb) = on_complete {
+                tbl.set("onComplete", cb.as_str())?;
+            }
+            let len = pending.len()? as i64;
+            pending.set(len + 1, tbl)?;
+        }
         Ok(())
     })?)?;
 

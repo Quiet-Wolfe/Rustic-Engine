@@ -369,6 +369,30 @@ impl PlayScreen {
             self.scripts.state.strum_props[lane + 4].y = STRUM_Y;
         }
 
+        // Set default strum position globals on all scripts (Psych Engine's setOnScripts)
+        // These are used everywhere in modcharts: _G['defaultPlayerStrumX0'], etc.
+        for lane in 0..4usize {
+            let opp_x = Self::strum_x(lane, false) as f64;
+            let plr_x = Self::strum_x(lane, true) as f64;
+            self.scripts.set_on_all(&format!("defaultOpponentStrumX{lane}"), opp_x);
+            self.scripts.set_on_all(&format!("defaultOpponentStrumY{lane}"), STRUM_Y as f64);
+            self.scripts.set_on_all(&format!("defaultPlayerStrumX{lane}"), plr_x);
+            self.scripts.set_on_all(&format!("defaultPlayerStrumY{lane}"), STRUM_Y as f64);
+        }
+        // Also set the non-indexed variants (defaultOpponentStrumY0 style is already covered,
+        // but some scripts use just defaultOpponentStrumY0 / defaultPlayerStrumY0)
+        self.scripts.set_on_all("defaultOpponentStrumY0", STRUM_Y as f64);
+        self.scripts.set_on_all("defaultPlayerStrumY0", STRUM_Y as f64);
+
+        // Set crochet/stepCrochet globals
+        self.scripts.set_on_all("crochet", self.game.conductor.crochet);
+        self.scripts.set_on_all("stepCrochet", self.game.conductor.step_crochet);
+
+        // Set misc globals scripts expect
+        self.scripts.set_bool_on_all("flashingLights", true);
+        self.scripts.set_bool_on_all("modcharts", true);
+        self.scripts.set_bool_on_all("mustHitSection", false);
+
         // Initialize countdown
         self.game.conductor.song_position = -self.game.conductor.crochet * 5.0;
         self.game.countdown_timer = self.game.conductor.crochet * 5.0;

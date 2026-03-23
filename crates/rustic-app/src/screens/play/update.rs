@@ -91,6 +91,22 @@ impl PlayScreen {
         self.scripts.state.custom_vars.insert("crochet".into(), SLV::Float(self.game.conductor.crochet));
         self.scripts.state.custom_vars.insert("stepCrochet".into(), SLV::Float(self.game.conductor.step_crochet));
 
+        // Character midpoints for getMidpointX/Y('dad'), getMidpointX/Y('boyfriend')
+        if let Some(dad) = &self.char_dad {
+            let (mx, my) = dad.midpoint();
+            self.scripts.set_on_all("__midX_dad", mx as f64);
+            self.scripts.set_on_all("__midY_dad", my as f64);
+            self.scripts.set_on_all("__midX_opponent", mx as f64);
+            self.scripts.set_on_all("__midY_opponent", my as f64);
+        }
+        if let Some(bf) = &self.char_bf {
+            let (mx, my) = bf.midpoint();
+            self.scripts.set_on_all("__midX_boyfriend", mx as f64);
+            self.scripts.set_on_all("__midY_boyfriend", my as f64);
+            self.scripts.set_on_all("__midX_bf", mx as f64);
+            self.scripts.set_on_all("__midY_bf", my as f64);
+        }
+
         // Lua: onUpdate (before gameplay logic)
         if self.scripts.has_scripts() {
             self.scripts.call_with_elapsed("onUpdate", dt as f64);
@@ -234,9 +250,13 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::SectionChange { must_hit, .. } => {
-                    self.recompute_camera_targets();
-                    let target = if must_hit { self.cam_bf } else { self.cam_dad };
-                    self.camera.follow(target[0], target[1]);
+                    // Update mustHitSection global for scripts
+                    self.scripts.set_bool_on_all("mustHitSection", must_hit);
+                    if !self.camera_forced_pos {
+                        self.recompute_camera_targets();
+                        let target = if must_hit { self.cam_bf } else { self.cam_dad };
+                        self.camera.follow(target[0], target[1]);
+                    }
                     if self.cam_zooming && !self.disable_zooming && self.camera.zoom < 1.35 {
                         self.camera.zoom += 0.015;
                         self.hud_zoom += 0.03;

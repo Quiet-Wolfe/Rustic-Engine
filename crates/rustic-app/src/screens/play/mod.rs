@@ -168,6 +168,8 @@ pub struct PlayScreen {
     pub(super) default_cam_zoom: f32,
     pub(super) cam_zooming: bool,
     pub(super) disable_zooming: bool,
+    /// When true, camera follows camFollow position instead of character targets.
+    pub(super) camera_forced_pos: bool,
 
     // Death
     pub(super) death: Option<DeathState>,
@@ -226,6 +228,7 @@ impl PlayScreen {
             default_cam_zoom: 0.9,
             cam_zooming: false,
             disable_zooming: false,
+            camera_forced_pos: false,
             death: None,
             death_char_preloaded: None,
             scripts: ScriptManager::new(),
@@ -315,6 +318,43 @@ impl PlayScreen {
                     if let Some(v) = as_f32 {
                         self.game.score.health = v.clamp(0.0, 2.0);
                     }
+                }
+                "isCameraOnForcedPos" => {
+                    if let LuaValue::Bool(b) = &val {
+                        self.camera_forced_pos = *b;
+                    }
+                }
+                "camFollow.x" | "camFollowPos.x" => {
+                    if let Some(v) = as_f32 {
+                        if self.camera_forced_pos {
+                            self.camera.follow(v, self.camera.y);
+                        }
+                    }
+                }
+                "camFollow.y" | "camFollowPos.y" => {
+                    if let Some(v) = as_f32 {
+                        if self.camera_forced_pos {
+                            self.camera.follow(self.camera.x, v);
+                        }
+                    }
+                }
+                "camZooming" => {
+                    if let LuaValue::Bool(b) = &val {
+                        self.cam_zooming = *b;
+                    }
+                }
+                "camGame.zoom" => {
+                    if let Some(v) = as_f32 {
+                        self.camera.zoom = v;
+                    }
+                }
+                "camHUD.zoom" => {
+                    if let Some(v) = as_f32 {
+                        self.hud_zoom = v;
+                    }
+                }
+                "camGame.visible" => {
+                    // TODO: toggle game camera visibility
                 }
                 _ => {
                     log::debug!("Unhandled property write: {} = {:?}", prop, val);

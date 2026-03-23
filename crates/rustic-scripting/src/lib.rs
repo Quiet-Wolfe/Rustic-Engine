@@ -128,6 +128,20 @@ impl ScriptManager {
     pub fn has_scripts(&self) -> bool {
         !self.scripts.is_empty()
     }
+
+    /// Set a numeric global on all loaded scripts (like Psych Engine's setOnScripts).
+    pub fn set_on_all(&mut self, name: &str, value: f64) {
+        for script in &mut self.scripts {
+            script.set_global_number(name, value);
+        }
+    }
+
+    /// Set a boolean global on all loaded scripts.
+    pub fn set_bool_on_all(&mut self, name: &str, value: bool) {
+        for script in &mut self.scripts {
+            script.set_global_bool(name, value);
+        }
+    }
 }
 
 impl Default for ScriptManager {

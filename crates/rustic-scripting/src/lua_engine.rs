@@ -5,6 +5,17 @@ use mlua::prelude::*;
 use crate::lua_functions;
 use crate::script_state::ScriptState;
 
+/// Parse a strum target name like "__strum_opponent_2" or "__strum_player_1" to an index 0-7.
+fn parse_strum_index(target: &str) -> Option<usize> {
+    if let Some(n) = target.strip_prefix("__strum_opponent_") {
+        n.parse::<usize>().ok().filter(|&i| i < 4)
+    } else if let Some(n) = target.strip_prefix("__strum_player_") {
+        n.parse::<usize>().ok().filter(|&i| i < 4).map(|i| i + 4)
+    } else {
+        None
+    }
+}
+
 /// A single Lua script instance.
 pub struct LuaScript {
     lua: Lua,
@@ -74,9 +85,16 @@ impl LuaScript {
         Ok(Self { lua, closed: false })
     }
 
-    /// Call a Lua callback function if it exists.
-    /// Updates shared variables (curBeat, curStep) before calling.
-    /// `args` are passed as float arguments to the Lua function.
+    /// Set a numeric global variable on this script's Lua VM.
+    pub fn set_global_number(&self, name: &str, value: f64) {
+        self.lua.globals().set(name, value).ok();
+    }
+
+    /// Set a boolean global variable on this script's Lua VM.
+    pub fn set_global_bool(&self, name: &str, value: bool) {
+        self.lua.globals().set(name, value).ok();
+    }
+
     /// Sync shared game state from Rust into this Lua VM before a callback.
     /// Ensures all scripts see consistent strum positions, camera state, etc.
     fn sync_shared_state(&self, state: &ScriptState) {
@@ -299,14 +317,26 @@ impl LuaScript {
                             _ => continue,
                         };
                         // Get current value as start value
-                        let start = match &prop {
-                            crate::tweens::TweenProperty::X => state.lua_sprites.get(&target).map(|s| s.x).unwrap_or(0.0),
-                            crate::tweens::TweenProperty::Y => state.lua_sprites.get(&target).map(|s| s.y).unwrap_or(0.0),
-                            crate::tweens::TweenProperty::Alpha => state.lua_sprites.get(&target).map(|s| s.alpha).unwrap_or(1.0),
-                            crate::tweens::TweenProperty::Angle => state.lua_sprites.get(&target).map(|s| s.angle).unwrap_or(0.0),
-                            crate::tweens::TweenProperty::Zoom => state.camera_zoom,
-                            crate::tweens::TweenProperty::ScaleX => state.lua_sprites.get(&target).map(|s| s.scale_x).unwrap_or(1.0),
-                            crate::tweens::TweenProperty::ScaleY => state.lua_sprites.get(&target).map(|s| s.scale_y).unwrap_or(1.0),
+                        let start = if let Some(si) = parse_strum_index(&target) {
+                            // Strum target — read from strum_props
+                            let sp = &state.strum_props[si];
+                            match &prop {
+                                crate::tweens::TweenProperty::X => sp.x,
+                                crate::tweens::TweenProperty::Y => sp.y,
+                                crate::tweens::TweenProperty::Alpha => sp.alpha,
+                                crate::tweens::TweenProperty::Angle => sp.angle,
+                                _ => 0.0,
+                            }
+                        } else {
+                            match &prop {
+                                crate::tweens::TweenProperty::X => state.lua_sprites.get(&target).map(|s| s.x).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::Y => state.lua_sprites.get(&target).map(|s| s.y).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::Alpha => state.lua_sprites.get(&target).map(|s| s.alpha).unwrap_or(1.0),
+                                crate::tweens::TweenProperty::Angle => state.lua_sprites.get(&target).map(|s| s.angle).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::Zoom => state.camera_zoom,
+                                crate::tweens::TweenProperty::ScaleX => state.lua_sprites.get(&target).map(|s| s.scale_x).unwrap_or(1.0),
+                                crate::tweens::TweenProperty::ScaleY => state.lua_sprites.get(&target).map(|s| s.scale_y).unwrap_or(1.0),
+                            }
                         };
                         let tween = crate::tweens::Tween {
                             tag: tag.clone(),
