@@ -311,6 +311,11 @@ impl PlayScreen {
                         self.camera.zoom = v;
                     }
                 }
+                "health" => {
+                    if let Some(v) = as_f32 {
+                        self.game.score.health = v.clamp(0.0, 2.0);
+                    }
+                }
                 _ => {
                     log::debug!("Unhandled property write: {} = {:?}", prop, val);
                 }

@@ -54,11 +54,19 @@ pub struct ScriptState {
     /// Camera speed multiplier (synced across all scripts).
     pub camera_speed: f32,
 
+    /// Current health value (0..2, synced from game).
+    pub health: f32,
+
     /// Pending camera target changes: "dad"/"bf"/"gf".
     pub camera_target_requests: Vec<String>,
 
     /// Pending triggered events: (name, v1, v2).
     pub triggered_events: Vec<(String, String, String)>,
+
+    /// Shared custom variables set by scripts (cross-script communication).
+    /// When any script calls setProperty('foo', 123), it's stored here so
+    /// other scripts can read it back via getProperty('foo').
+    pub custom_vars: HashMap<String, LuaValue>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -196,8 +204,10 @@ impl ScriptState {
             camera_zoom: 1.0,
             default_cam_zoom: 1.0,
             camera_speed: 1.0,
+            health: 1.0,
             camera_target_requests: Vec::new(),
             triggered_events: Vec::new(),
+            custom_vars: HashMap::new(),
         }
     }
 }

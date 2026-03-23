@@ -87,6 +87,20 @@ impl LuaScript {
         globals.set("__songPosition", state.song_position).ok();
         globals.set("defaultCamZoom", state.default_cam_zoom as f64).ok();
         globals.set("cameraSpeed", state.camera_speed as f64).ok();
+        globals.set("__health", state.health as f64).ok();
+
+        // Sync shared custom variables so all scripts see each other's setProperty values
+        if let Ok(custom) = globals.get::<LuaTable>("__custom_vars") {
+            for (key, val) in &state.custom_vars {
+                match val {
+                    crate::script_state::LuaValue::Float(n) => { custom.set(key.as_str(), *n).ok(); }
+                    crate::script_state::LuaValue::Int(n) => { custom.set(key.as_str(), *n).ok(); }
+                    crate::script_state::LuaValue::Bool(b) => { custom.set(key.as_str(), *b).ok(); }
+                    crate::script_state::LuaValue::String(s) => { custom.set(key.as_str(), s.as_str()).ok(); }
+                    _ => {}
+                }
+            }
+        }
 
         // Sync strum properties so all scripts see current positions
         if let Ok(strum_tbl) = globals.get::<LuaTable>("__strum_props") {
@@ -440,6 +454,22 @@ impl LuaScript {
                         state.strum_props[i].angle = tbl.get::<f64>("angle").unwrap_or(0.0) as f32;
                         state.strum_props[i].custom = true;
                     }
+                }
+            }
+        }
+
+        // Sync custom variables from this script's __custom_vars to shared state
+        if let Ok(custom) = globals.get::<LuaTable>("__custom_vars") {
+            for pair in custom.pairs::<String, LuaValue>() {
+                if let Ok((key, val)) = pair {
+                    let lua_val = match val {
+                        LuaValue::Number(n) => crate::script_state::LuaValue::Float(n),
+                        LuaValue::Integer(n) => crate::script_state::LuaValue::Int(n),
+                        LuaValue::Boolean(b) => crate::script_state::LuaValue::Bool(b),
+                        LuaValue::String(s) => crate::script_state::LuaValue::String(s.to_string_lossy().to_string()),
+                        _ => continue,
+                    };
+                    state.custom_vars.insert(key, lua_val);
                 }
             }
         }

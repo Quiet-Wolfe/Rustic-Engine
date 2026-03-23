@@ -5,7 +5,7 @@ use rustic_gameplay::events::GameEvent;
 use super::{
     PlayScreen, RatingPopup, DeathState, DeathPhase, NoteSplash,
     RATING_ACCEL, RATING_VEL_Y, RATING_FADE_SECS,
-    SPLASH_FPS, SPLASH_FRAMES,
+    SPLASH_FPS, SPLASH_FRAMES, GAME_W,
 };
 
 impl PlayScreen {
@@ -69,6 +69,27 @@ impl PlayScreen {
         self.scripts.state.camera_zoom = self.camera.zoom;
         self.scripts.state.default_cam_zoom = self.default_cam_zoom;
         self.scripts.state.camera_speed = self.camera.camera_speed;
+        self.scripts.state.health = self.game.score.health;
+
+        // Push game object properties that scripts commonly read
+        use rustic_scripting::LuaValue as SLV;
+        let health_pct = self.game.score.health / 2.0;
+        let hbx = (GAME_W - 601.0) / 2.0;
+        let hbw = 601.0;
+        let divider_x = hbx + hbw * (1.0 - health_pct as f32);
+        // iconP1 = player icon (BF), iconP2 = opponent icon
+        self.scripts.state.custom_vars.insert("iconP1.x".into(), SLV::Float((divider_x - 15.0) as f64));
+        self.scripts.state.custom_vars.insert("iconP2.x".into(), SLV::Float((divider_x - 150.0 * 0.75 + 15.0) as f64));
+        self.scripts.state.custom_vars.insert("iconP1.alpha".into(), SLV::Float(1.0));
+        self.scripts.state.custom_vars.insert("iconP2.alpha".into(), SLV::Float(1.0));
+        // Camera follow position
+        self.scripts.state.custom_vars.insert("camFollow.x".into(), SLV::Float(self.camera.x as f64));
+        self.scripts.state.custom_vars.insert("camFollow.y".into(), SLV::Float(self.camera.y as f64));
+        // Unspawn notes length (approximate — total notes remaining)
+        self.scripts.state.custom_vars.insert("unspawnNotes.length".into(), SLV::Int(self.game.notes.len() as i64));
+        // Conductor timing
+        self.scripts.state.custom_vars.insert("crochet".into(), SLV::Float(self.game.conductor.crochet));
+        self.scripts.state.custom_vars.insert("stepCrochet".into(), SLV::Float(self.game.conductor.step_crochet));
 
         // Lua: onUpdate (before gameplay logic)
         if self.scripts.has_scripts() {

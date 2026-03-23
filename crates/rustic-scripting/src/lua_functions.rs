@@ -476,14 +476,25 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
             }
         }
 
-        // Update Lua global if it's a known property (so getProperty reads back the latest value)
+        let g = lua.globals();
+
+        // Update Lua global if it's a known game property
         match prop.as_str() {
-            "defaultCamZoom" | "cameraSpeed" => { lua.globals().set(prop.as_str(), value.clone()).ok(); }
-            _ => {}
+            "defaultCamZoom" | "cameraSpeed" | "camZooming" | "camZoomingMult"
+            | "camZoomingDecay" | "gameZoomingDecay" | "crochet" | "stepCrochet" => {
+                g.set(prop.as_str(), value.clone()).ok();
+            }
+            _ => {
+                // Store in custom vars so getProperty can read it back
+                // (both for cross-script communication and for script-local state)
+                if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                    custom.set(prop.as_str(), value.clone()).ok();
+                }
+            }
         }
 
-        // Queue as a game property write
-        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        // Queue as a game property write (engine processes known ones like defaultCamZoom)
+        let pending: LuaTable = g.get("__pending_props")?;
         let tbl = lua.create_table()?;
         tbl.set("prop", prop)?;
         tbl.set("value", value)?;
@@ -527,13 +538,36 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
             }
         }
         // Known game properties — read from globals (which Lua scripts may have set)
+        let g = lua.globals();
         match prop.as_str() {
-            "defaultCamZoom" => Ok(lua.globals().get::<LuaValue>("defaultCamZoom").unwrap_or(LuaValue::Number(0.9))),
-            "cameraSpeed" => Ok(lua.globals().get::<LuaValue>("cameraSpeed").unwrap_or(LuaValue::Number(1.0))),
+            "defaultCamZoom" => Ok(g.get::<LuaValue>("defaultCamZoom").unwrap_or(LuaValue::Number(0.9))),
+            "cameraSpeed" => Ok(g.get::<LuaValue>("cameraSpeed").unwrap_or(LuaValue::Number(1.0))),
+            "camZooming" | "camZoomingMult" | "camZoomingDecay" | "gameZoomingDecay" => {
+                Ok(g.get::<LuaValue>(prop.as_str()).unwrap_or(LuaValue::Number(1.0)))
+            }
             "healthGainMult" => Ok(LuaValue::Number(1.0)),
             "healthLossMult" => Ok(LuaValue::Number(1.0)),
             "playbackRate" => Ok(LuaValue::Number(1.0)),
-            _ => Ok(LuaNil),
+            "songLength" => Ok(LuaValue::Number(0.0)),
+            "crochet" => Ok(g.get::<LuaValue>("crochet").unwrap_or(LuaValue::Number(500.0))),
+            "stepCrochet" => Ok(g.get::<LuaValue>("stepCrochet").unwrap_or(LuaValue::Number(125.0))),
+            _ => {
+                // Check custom variables table (set via setProperty for unknown properties)
+                let custom: LuaTable = g.get::<LuaTable>("__custom_vars").unwrap_or(lua.create_table().unwrap());
+                let val = custom.get::<LuaValue>(prop.as_str()).unwrap_or(LuaNil);
+                if val != LuaNil {
+                    return Ok(val);
+                }
+                // Check game object property paths stored as globals
+                let val = g.get::<LuaValue>(format!("__gprop_{prop}")).unwrap_or(LuaNil);
+                if val != LuaNil {
+                    return Ok(val);
+                }
+                // Default: return 0 instead of nil to prevent arithmetic errors
+                // (Psych Engine returns 0/false for missing properties via Reflect)
+                log::debug!("getProperty: unknown property '{}', returning 0", prop);
+                Ok(LuaValue::Number(0.0))
+            }
         }
     })?)?;
 
@@ -822,10 +856,34 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // Health/score control
-    globals.set("getHealth", lua.create_function(|_lua, ()| -> LuaResult<f64> { Ok(1.0) })?)?;
-    globals.set("setHealth", lua.create_function(|_lua, _v: f64| { Ok(()) })?)?;
-    globals.set("addHealth", lua.create_function(|_lua, _v: f64| { Ok(()) })?)?;
+    // Health/score control — use __health global synced from game
+    globals.set("__health", 1.0)?;
+    globals.set("getHealth", lua.create_function(|lua, ()| -> LuaResult<f64> {
+        Ok(lua.globals().get::<f64>("__health").unwrap_or(1.0))
+    })?)?;
+    globals.set("setHealth", lua.create_function(|lua, v: f64| {
+        let g = lua.globals();
+        g.set("__health", v)?;
+        let pending: LuaTable = g.get("__pending_props")?;
+        let tbl = lua.create_table()?;
+        tbl.set("prop", "health")?;
+        tbl.set("value", v)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+    globals.set("addHealth", lua.create_function(|lua, v: f64| {
+        let g = lua.globals();
+        let cur = g.get::<f64>("__health").unwrap_or(1.0);
+        g.set("__health", cur + v)?;
+        let pending: LuaTable = g.get("__pending_props")?;
+        let tbl = lua.create_table()?;
+        tbl.set("prop", "health")?;
+        tbl.set("value", cur + v)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
     globals.set("addScore", lua.create_function(|_lua, _v: i32| { Ok(()) })?)?;
     globals.set("setScore", lua.create_function(|_lua, _v: i32| { Ok(()) })?)?;
     globals.set("addMisses", lua.create_function(|_lua, _v: i32| { Ok(()) })?)?;
@@ -1053,7 +1111,7 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         "setShaderSampler2D",
         // Misc
         "getColorFromString", "getColorFromName",
-        "setHudVisible", "runTimer", "cancelTimer",
+        "setHudVisible",
         "startVideo",
         "setSubtitle", "addShake", "customFlash", "customFade",
         // Timers
