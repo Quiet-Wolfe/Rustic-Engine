@@ -1,0 +1,488 @@
+use std::path::Path;
+
+use mlua::prelude::*;
+
+use crate::lua_functions;
+use crate::script_state::ScriptState;
+
+/// A single Lua script instance.
+pub struct LuaScript {
+    lua: Lua,
+    /// Whether this script has been closed (via close() from Lua).
+    closed: bool,
+}
+
+impl LuaScript {
+    /// Load and execute a Lua script file.
+    /// Sets up built-in variables and functions, then executes the file.
+    pub fn load(path: &Path, state: &mut ScriptState) -> Result<Self, String> {
+        let lua = Lua::new();
+
+        // Set built-in global variables
+        {
+            let globals = lua.globals();
+            globals.set("songName", state.song_name.clone())
+                .map_err(|e| format!("Failed to set songName: {}", e))?;
+            globals.set("isStoryMode", state.is_story_mode)
+                .map_err(|e| format!("Failed to set isStoryMode: {}", e))?;
+            globals.set("screenWidth", state.screen_width as i32)
+                .map_err(|e| format!("Failed to set screenWidth: {}", e))?;
+            globals.set("screenHeight", state.screen_height as i32)
+                .map_err(|e| format!("Failed to set screenHeight: {}", e))?;
+            globals.set("curBeat", 0)
+                .map_err(|e| format!("Failed to set curBeat: {}", e))?;
+            globals.set("curStep", 0)
+                .map_err(|e| format!("Failed to set curStep: {}", e))?;
+            globals.set("curSection", 0)
+                .map_err(|e| format!("Failed to set curSection: {}", e))?;
+            // Psych Engine compatibility
+            globals.set("modcharts", true)
+                .map_err(|e| format!("Failed to set modcharts: {}", e))?;
+            globals.set("difficulty", 1) // normal = 1
+                .map_err(|e| format!("Failed to set difficulty: {}", e))?;
+        }
+
+        // Store image search roots so Lua functions can resolve image paths
+        {
+            let roots_table = lua.create_table()
+                .map_err(|e| format!("Failed to create roots table: {}", e))?;
+            for (i, root) in state.image_roots.iter().enumerate() {
+                roots_table.set(i + 1, root.to_string_lossy().to_string())
+                    .map_err(|e| format!("Failed to set root: {}", e))?;
+            }
+            lua.globals().set("__image_roots", roots_table)
+                .map_err(|e| format!("Failed to set __image_roots: {}", e))?;
+        }
+
+        // Register Lua functions
+        lua_functions::register_all(&lua)
+            .map_err(|e| format!("Failed to register Lua functions: {}", e))?;
+
+        // Execute the script file
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
+
+        let script_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        lua.load(&source)
+            .set_name(script_name)
+            .exec()
+            .map_err(|e| format!("Lua exec error in {:?}: {}", path, e))?;
+
+        Ok(Self { lua, closed: false })
+    }
+
+    /// Call a Lua callback function if it exists.
+    /// Updates shared variables (curBeat, curStep) before calling.
+    /// `args` are passed as float arguments to the Lua function.
+    pub fn call_callback(&mut self, name: &str, state: &mut ScriptState, args: &[f64]) -> Result<(), String> {
+        if self.closed {
+            return Ok(());
+        }
+
+        // Sync shared variables Lua → Rust
+        let globals = self.lua.globals();
+        globals.set("curBeat", state.cur_beat).ok();
+        globals.set("curStep", state.cur_step).ok();
+        globals.set("curSection", state.cur_section).ok();
+
+        // Check if the callback exists
+        let func: Option<LuaFunction> = globals.get(name).ok();
+        let func = match func {
+            Some(f) => f,
+            None => return Ok(()), // callback doesn't exist, that's fine
+        };
+
+        // Build MultiValue from args
+        let mut multi = mlua::MultiValue::new();
+        for &v in args {
+            multi.push_back(mlua::Value::Number(v));
+        }
+
+        func.call::<()>(multi)
+            .map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
+
+        // Check if script was closed
+        if let Ok(closed) = globals.get::<bool>("__script_closed") {
+            if closed {
+                self.closed = true;
+            }
+        }
+
+        // Drain pending sprite operations from Lua registry
+        self.drain_sprite_ops(state);
+
+        // Sync sprite properties from Lua tables to Rust structs
+        self.sync_sprite_data(state);
+
+        Ok(())
+    }
+
+    /// Call a Lua callback with string arguments (for onTweenCompleted etc.).
+    pub fn call_callback_str(&mut self, name: &str, state: &mut ScriptState, str_args: &[&str]) -> Result<(), String> {
+        if self.closed { return Ok(()); }
+        let globals = self.lua.globals();
+        globals.set("curBeat", state.cur_beat).ok();
+        globals.set("curStep", state.cur_step).ok();
+
+        let func: Option<LuaFunction> = globals.get(name).ok();
+        let func = match func {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+
+        let mut multi = mlua::MultiValue::new();
+        for &s in str_args {
+            multi.push_back(mlua::Value::String(self.lua.create_string(s).map_err(|e| e.to_string())?));
+        }
+        func.call::<()>(multi).map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
+
+        if let Ok(closed) = globals.get::<bool>("__script_closed") {
+            if closed { self.closed = true; }
+        }
+        self.drain_sprite_ops(state);
+        self.sync_sprite_data(state);
+        Ok(())
+    }
+
+    /// Call a Lua callback with mixed args: (string, int, int) for onTimerCompleted.
+    pub fn call_callback_with_mixed(&mut self, name: &str, state: &mut ScriptState, tag: &str, loops: i32, left: i32) -> Result<(), String> {
+        if self.closed { return Ok(()); }
+        let globals = self.lua.globals();
+        globals.set("curBeat", state.cur_beat).ok();
+        globals.set("curStep", state.cur_step).ok();
+
+        let func: Option<LuaFunction> = globals.get(name).ok();
+        let func = match func {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+
+        let mut multi = mlua::MultiValue::new();
+        multi.push_back(mlua::Value::String(self.lua.create_string(tag).map_err(|e| e.to_string())?));
+        multi.push_back(mlua::Value::Integer(loops as i64));
+        multi.push_back(mlua::Value::Integer(left as i64));
+        func.call::<()>(multi).map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
+
+        if let Ok(closed) = globals.get::<bool>("__script_closed") {
+            if closed { self.closed = true; }
+        }
+        self.drain_sprite_ops(state);
+        self.sync_sprite_data(state);
+        Ok(())
+    }
+
+    /// Transfer sprite creation/property data from Lua's internal tables to ScriptState.
+    fn drain_sprite_ops(&self, state: &mut ScriptState) {
+        let globals = self.lua.globals();
+
+        // Drain __pending_sprites
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_sprites") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(kind), Ok(x), Ok(y)) = (
+                        tbl.get::<String>("tag"),
+                        tbl.get::<String>("kind"),
+                        tbl.get::<f32>("x"),
+                        tbl.get::<f32>("y"),
+                    ) {
+                        let sprite_kind = match kind.as_str() {
+                            "image" => {
+                                let image: String = tbl.get("image").unwrap_or_default();
+                                crate::script_state::LuaSpriteKind::Image(image)
+                            }
+                            "graphic" => {
+                                let w: i32 = tbl.get("width").unwrap_or(1);
+                                let h: i32 = tbl.get("height").unwrap_or(1);
+                                let color: String = tbl.get("color").unwrap_or_else(|_| "FFFFFF".to_string());
+                                crate::script_state::LuaSpriteKind::Graphic { width: w, height: h, color }
+                            }
+                            "animated" => {
+                                let image: String = tbl.get("image").unwrap_or_default();
+                                crate::script_state::LuaSpriteKind::Animated(image)
+                            }
+                            _ => continue,
+                        };
+                        let mut sprite = crate::script_state::LuaSprite::new(&tag, sprite_kind, x, y);
+                        // Apply any properties set before addLuaSprite
+                        if let Ok(sx) = tbl.get::<f32>("scale_x") { sprite.scale_x = sx; }
+                        if let Ok(sy) = tbl.get::<f32>("scale_y") { sprite.scale_y = sy; }
+                        if let Ok(sfx) = tbl.get::<f32>("scroll_x") { sprite.scroll_x = sfx; }
+                        if let Ok(sfy) = tbl.get::<f32>("scroll_y") { sprite.scroll_y = sfy; }
+                        if let Ok(a) = tbl.get::<f32>("alpha") { sprite.alpha = a; }
+                        if let Ok(v) = tbl.get::<bool>("visible") { sprite.visible = v; }
+                        if let Ok(f) = tbl.get::<bool>("flip_x") { sprite.flip_x = f; }
+                        if let Ok(aa) = tbl.get::<bool>("antialiasing") { sprite.antialiasing = aa; }
+                        state.lua_sprites.insert(tag, sprite);
+                    }
+                }
+            }
+            // Clear pending
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_sprites", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_adds
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_adds") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(in_front)) = (
+                        tbl.get::<String>("tag"),
+                        tbl.get::<bool>("in_front"),
+                    ) {
+                        state.sprites_to_add.push((tag, in_front));
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_adds", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_tweens
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_tweens") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(target), Ok(property), Ok(value), Ok(duration), Ok(ease)) = (
+                        tbl.get::<String>("tag"),
+                        tbl.get::<String>("target"),
+                        tbl.get::<String>("property"),
+                        tbl.get::<f64>("value"),
+                        tbl.get::<f64>("duration"),
+                        tbl.get::<String>("ease"),
+                    ) {
+                        let prop = match property.as_str() {
+                            "x" => crate::tweens::TweenProperty::X,
+                            "y" => crate::tweens::TweenProperty::Y,
+                            "alpha" => crate::tweens::TweenProperty::Alpha,
+                            "angle" => crate::tweens::TweenProperty::Angle,
+                            "zoom" => crate::tweens::TweenProperty::Zoom,
+                            _ => continue,
+                        };
+                        // Get current value as start value
+                        let start = match &prop {
+                            crate::tweens::TweenProperty::X => state.lua_sprites.get(&target).map(|s| s.x).unwrap_or(0.0),
+                            crate::tweens::TweenProperty::Y => state.lua_sprites.get(&target).map(|s| s.y).unwrap_or(0.0),
+                            crate::tweens::TweenProperty::Alpha => state.lua_sprites.get(&target).map(|s| s.alpha).unwrap_or(1.0),
+                            crate::tweens::TweenProperty::Angle => state.lua_sprites.get(&target).map(|s| s.angle).unwrap_or(0.0),
+                            crate::tweens::TweenProperty::Zoom => 0.0, // Game will set this
+                            crate::tweens::TweenProperty::ScaleX => state.lua_sprites.get(&target).map(|s| s.scale_x).unwrap_or(1.0),
+                            crate::tweens::TweenProperty::ScaleY => state.lua_sprites.get(&target).map(|s| s.scale_y).unwrap_or(1.0),
+                        };
+                        let tween = crate::tweens::Tween {
+                            tag: tag.clone(),
+                            target,
+                            property: prop,
+                            start_value: start,
+                            end_value: value as f32,
+                            duration: duration as f32,
+                            elapsed: 0.0,
+                            ease: crate::tweens::EaseFunc::from_string(&ease),
+                            finished: false,
+                        };
+                        state.tweens.add_tween(tween);
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_tweens", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_tween_cancels
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_tween_cancels") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tag) = pending.get::<String>(i) {
+                    state.tweens.cancel_tween(&tag);
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_tween_cancels", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_timers
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_timers") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(duration), Ok(loops)) = (
+                        tbl.get::<String>("tag"),
+                        tbl.get::<f64>("duration"),
+                        tbl.get::<i32>("loops"),
+                    ) {
+                        let timer = crate::tweens::LuaTimer {
+                            tag: tag.clone(),
+                            duration: duration as f32,
+                            elapsed: 0.0,
+                            loops_total: loops,
+                            loops_done: 0,
+                            finished: false,
+                        };
+                        state.tweens.add_timer(timer);
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_timers", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_timer_cancels
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_timer_cancels") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tag) = pending.get::<String>(i) {
+                    state.tweens.cancel_timer(&tag);
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_timer_cancels", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_prop_writes (game-level property writes, not sprite properties)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_props") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let Ok(prop) = tbl.get::<String>("prop") {
+                        let val = tbl_to_lua_value(&tbl, "value");
+                        state.property_writes.push((prop, val));
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_props", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_removes
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_removes") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tag) = pending.get::<String>(i) {
+                    state.sprites_to_remove.push(tag);
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_removes", new_tbl).ok();
+            }
+        }
+
+        // Sync __strum_props table to Rust state
+        if let Ok(strum_tbl) = globals.get::<LuaTable>("__strum_props") {
+            for i in 0..8 {
+                if let Ok(tbl) = strum_tbl.get::<LuaTable>(i as i64 + 1) {
+                    let custom: bool = tbl.get("custom").unwrap_or(false);
+                    if custom {
+                        state.strum_props[i].x = tbl.get::<f64>("x").unwrap_or(0.0) as f32;
+                        state.strum_props[i].y = tbl.get::<f64>("y").unwrap_or(0.0) as f32;
+                        state.strum_props[i].alpha = tbl.get::<f64>("alpha").unwrap_or(1.0) as f32;
+                        state.strum_props[i].angle = tbl.get::<f64>("angle").unwrap_or(0.0) as f32;
+                        state.strum_props[i].custom = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sync all sprite properties from Lua `__sprite_data` tables to Rust `LuaSprite` structs.
+    /// Called after each callback so that `setProperty` changes are reflected in rendering.
+    fn sync_sprite_data(&self, state: &mut ScriptState) {
+        let globals = self.lua.globals();
+        let Ok(sprite_data) = globals.get::<LuaTable>("__sprite_data") else { return };
+
+        for pair in sprite_data.pairs::<String, LuaTable>() {
+            let Ok((tag, tbl)) = pair else { continue };
+            let Some(sprite) = state.lua_sprites.get_mut(&tag) else { continue };
+
+            if let Ok(x) = tbl.get::<f32>("x") { sprite.x = x; }
+            if let Ok(y) = tbl.get::<f32>("y") { sprite.y = y; }
+            if let Ok(a) = tbl.get::<f32>("alpha") { sprite.alpha = a; }
+            if let Ok(v) = tbl.get::<bool>("visible") { sprite.visible = v; }
+            if let Ok(sx) = tbl.get::<f32>("scale_x") { sprite.scale_x = sx; }
+            if let Ok(sy) = tbl.get::<f32>("scale_y") { sprite.scale_y = sy; }
+            if let Ok(sfx) = tbl.get::<f32>("scroll_x") { sprite.scroll_x = sfx; }
+            if let Ok(sfy) = tbl.get::<f32>("scroll_y") { sprite.scroll_y = sfy; }
+            if let Ok(f) = tbl.get::<bool>("flip_x") { sprite.flip_x = f; }
+            if let Ok(f) = tbl.get::<bool>("flip_y") { sprite.flip_y = f; }
+            if let Ok(aa) = tbl.get::<bool>("antialiasing") { sprite.antialiasing = aa; }
+
+            // Sync animation definitions from __anims subtable
+            if let Ok(anims) = tbl.get::<LuaTable>("__anims") {
+                for anim_pair in anims.pairs::<String, LuaTable>() {
+                    let Ok((name, def)) = anim_pair else { continue };
+                    if sprite.animations.contains_key(&name) { continue; }
+                    let prefix: String = def.get("prefix").unwrap_or_default();
+                    let fps: f32 = def.get::<f64>("fps").unwrap_or(24.0) as f32;
+                    let looping: bool = def.get("looping").unwrap_or(true);
+                    let mut indices = Vec::new();
+                    if let Ok(idx_tbl) = def.get::<LuaTable>("indices") {
+                        let len = idx_tbl.len().unwrap_or(0);
+                        for i in 1..=len {
+                            if let Ok(v) = idx_tbl.get::<i32>(i) {
+                                indices.push(v);
+                            }
+                        }
+                    }
+                    sprite.animations.insert(name, crate::script_state::LuaAnimDef {
+                        prefix, fps, looping, indices,
+                    });
+                }
+            }
+
+            // Sync animation offsets from __offsets subtable
+            if let Ok(offsets) = tbl.get::<LuaTable>("__offsets") {
+                for off_pair in offsets.pairs::<String, LuaTable>() {
+                    let Ok((name, off)) = off_pair else { continue };
+                    let x: f32 = off.get::<f64>("x").unwrap_or(0.0) as f32;
+                    let y: f32 = off.get::<f64>("y").unwrap_or(0.0) as f32;
+                    sprite.anim_offsets.insert(name, (x, y));
+                }
+            }
+
+            // Process pending animation play commands
+            if let Ok(pending) = tbl.get::<LuaTable>("__pending_anim") {
+                let anim: String = pending.get("anim").unwrap_or_default();
+                let forced: bool = pending.get("forced").unwrap_or(false);
+                if !anim.is_empty() {
+                    if forced || sprite.current_anim != anim || sprite.anim_finished {
+                        sprite.current_anim = anim;
+                        sprite.anim_frame = 0;
+                        sprite.anim_timer = 0.0;
+                        sprite.anim_finished = false;
+                        if let Some(def) = sprite.animations.get(&sprite.current_anim) {
+                            sprite.anim_fps = def.fps;
+                            sprite.anim_looping = def.looping;
+                        }
+                    }
+                }
+                tbl.set("__pending_anim", mlua::Value::Nil).ok();
+            }
+        }
+    }
+}
+
+fn tbl_to_lua_value(tbl: &LuaTable, key: &str) -> crate::script_state::LuaValue {
+    if let Ok(b) = tbl.get::<bool>(key) {
+        return crate::script_state::LuaValue::Bool(b);
+    }
+    if let Ok(n) = tbl.get::<i64>(key) {
+        return crate::script_state::LuaValue::Int(n);
+    }
+    if let Ok(n) = tbl.get::<f64>(key) {
+        return crate::script_state::LuaValue::Float(n);
+    }
+    if let Ok(s) = tbl.get::<String>(key) {
+        return crate::script_state::LuaValue::String(s);
+    }
+    crate::script_state::LuaValue::Nil
+}

@@ -1,9 +1,11 @@
 mod lua_engine;
 mod lua_functions;
 mod script_state;
+pub mod tweens;
 
 pub use lua_engine::LuaScript;
-pub use script_state::{ScriptState, LuaSprite, LuaSpriteKind, LuaValue};
+pub use script_state::{ScriptState, LuaSprite, LuaSpriteKind, LuaValue, StrumProps};
+pub use tweens::{TweenManager, Tween, TweenProperty, EaseFunc, LuaTimer};
 
 use std::path::{Path, PathBuf};
 
@@ -74,6 +76,53 @@ impl ScriptManager {
     pub fn call_step(&mut self, callback: &str, step: i32) {
         self.state.cur_step = step;
         self.call(callback);
+    }
+
+    /// Update tweens/timers and fire completion callbacks.
+    pub fn update_tweens(&mut self, dt: f32) {
+        self.state.tweens.update(dt);
+
+        // Apply tween values to sprites and strums
+        let game_tweens = self.state.tweens.apply_to_sprites(&mut self.state.lua_sprites, &mut self.state.strum_props);
+
+        // Convert game tweens to property writes so PlayScreen can process them
+        for (target, prop, val) in game_tweens {
+            let prop_name = match prop {
+                TweenProperty::Zoom => {
+                    if target == "camGame" { "camera.zoom" }
+                    else if target == "camHUD" { "hud.zoom" }
+                    else { continue; }
+                }
+                TweenProperty::X | TweenProperty::Y | TweenProperty::Alpha
+                | TweenProperty::Angle | TweenProperty::ScaleX | TweenProperty::ScaleY => continue,
+            };
+            self.state.property_writes.push((
+                prop_name.to_string(),
+                LuaValue::Float(val as f64),
+            ));
+        }
+
+        // Fire onTweenCompleted callbacks
+        let completed: Vec<(String, String)> = self.state.tweens.completed_tweens.drain(..).collect();
+        for (tag, vars) in completed {
+            for script in &mut self.scripts {
+                if let Err(e) = script.call_callback_str("onTweenCompleted", &mut self.state, &[&tag, &vars]) {
+                    log::error!("onTweenCompleted error: {}", e);
+                }
+            }
+        }
+
+        // Fire onTimerCompleted callbacks
+        let timer_completed: Vec<(String, i32, i32)> = self.state.tweens.completed_timers.drain(..).collect();
+        for (tag, loops_done, loops_left) in timer_completed {
+            for script in &mut self.scripts {
+                if let Err(e) = script.call_callback_with_mixed(
+                    "onTimerCompleted", &mut self.state, &tag, loops_done, loops_left,
+                ) {
+                    log::error!("onTimerCompleted error: {}", e);
+                }
+            }
+        }
     }
 
     pub fn has_scripts(&self) -> bool {

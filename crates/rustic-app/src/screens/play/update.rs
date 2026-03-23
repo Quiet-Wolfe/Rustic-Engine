@@ -310,6 +310,11 @@ impl PlayScreen {
             self.scripts.call_with_elapsed("onUpdatePost", dt as f64);
         }
 
+        // Update tweens/timers and fire completion callbacks
+        if self.scripts.has_scripts() {
+            self.scripts.update_tweens(dt);
+        }
+
         // Process game-level property writes from Lua scripts
         self.process_property_writes();
 

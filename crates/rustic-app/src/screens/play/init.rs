@@ -8,7 +8,7 @@ use rustic_render::gpu::GpuState;
 use rustic_render::sprites::SpriteAtlas;
 
 use super::{
-    PlayScreen, NoteAssets, RatingAssets, DrawLayer,
+    PlayScreen, NoteAssets, RatingAssets, DrawLayer, STRUM_Y,
     NOTE_ANIMS, NOTE_PREFIXES, STRUM_ANIMS, PRESS_ANIMS, CONFIRM_ANIMS,
     HOLD_PIECE_ANIMS, HOLD_END_ANIMS, SPLASH_PREFIXES,
 };
@@ -358,6 +358,16 @@ impl PlayScreen {
             audio.load_miss_sounds(&sounds_dir);
         }
         self.audio = Some(audio);
+
+        // Initialize strum default positions for modchart property access
+        for lane in 0..4 {
+            let opp_x = Self::strum_x(lane, false);
+            let plr_x = Self::strum_x(lane, true);
+            self.scripts.state.strum_props[lane].x = opp_x;
+            self.scripts.state.strum_props[lane].y = STRUM_Y;
+            self.scripts.state.strum_props[lane + 4].x = plr_x;
+            self.scripts.state.strum_props[lane + 4].y = STRUM_Y;
+        }
 
         // Initialize countdown
         self.game.conductor.song_position = -self.game.conductor.crochet * 5.0;

@@ -34,9 +34,22 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__pending_sprites", lua.create_table()?)?;
     g.set("__pending_adds", lua.create_table()?)?;
     g.set("__pending_props", lua.create_table()?)?;
+    g.set("__pending_removes", lua.create_table()?)?;
     g.set("__sprite_data", lua.create_table()?)?;
     g.set("__script_closed", false)?;
     g.set("__custom_vars", lua.create_table()?)?;
+    // Initialize strum properties table (8 strums: opponent 0-3, player 4-7)
+    let strum_props = lua.create_table()?;
+    for i in 0..8 {
+        let tbl = lua.create_table()?;
+        tbl.set("x", 0.0)?;
+        tbl.set("y", 0.0)?;
+        tbl.set("alpha", 1.0)?;
+        tbl.set("angle", 0.0)?;
+        tbl.set("custom", false)?;
+        strum_props.set(i + 1, tbl)?;
+    }
+    g.set("__strum_props", strum_props)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -201,7 +214,16 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // removeLuaSprite(tag, destroy)
-    globals.set("removeLuaSprite", lua.create_function(|_lua, (_tag, _destroy): (String, Option<bool>)| {
+    globals.set("removeLuaSprite", lua.create_function(|lua, (tag, _destroy): (String, Option<bool>)| {
+        // Mark sprite as invisible so it stops rendering
+        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
+            tbl.set("visible", false)?;
+        }
+        // Queue for removal by the game engine
+        let pending: LuaTable = lua.globals().get("__pending_removes")?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tag)?;
         Ok(())
     })?)?;
 
@@ -516,12 +538,54 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // getPropertyFromGroup(group, index, field)
-    globals.set("getPropertyFromGroup", lua.create_function(|_lua, (_group, _idx, _field): (String, i32, String)| -> LuaResult<LuaValue> {
+    globals.set("getPropertyFromGroup", lua.create_function(|lua, (group, idx, field): (String, i32, String)| -> LuaResult<LuaValue> {
+        // Handle strum groups
+        let strum_idx = match group.as_str() {
+            "opponentStrums" => Some(idx as usize),          // 0-3
+            "playerStrums" => Some((idx + 4) as usize),      // 4-7
+            "strumLineNotes" => Some(idx as usize),           // 0-7 direct
+            _ => None,
+        };
+        if let Some(si) = strum_idx {
+            if si < 8 {
+                let props: LuaTable = lua.globals().get("__strum_props")?;
+                if let Ok(tbl) = props.get::<LuaTable>(si as i64 + 1) {
+                    return match field.as_str() {
+                        "x" => Ok(tbl.get::<LuaValue>("x").unwrap_or(LuaValue::Number(0.0))),
+                        "y" => Ok(tbl.get::<LuaValue>("y").unwrap_or(LuaValue::Number(0.0))),
+                        "alpha" => Ok(tbl.get::<LuaValue>("alpha").unwrap_or(LuaValue::Number(1.0))),
+                        "angle" => Ok(tbl.get::<LuaValue>("angle").unwrap_or(LuaValue::Number(0.0))),
+                        _ => Ok(LuaNil),
+                    };
+                }
+            }
+        }
         Ok(LuaNil)
     })?)?;
 
     // setPropertyFromGroup(group, index, field, value)
-    globals.set("setPropertyFromGroup", lua.create_function(|_lua, (_group, _idx, _field, _value): (String, i32, String, LuaValue)| {
+    globals.set("setPropertyFromGroup", lua.create_function(|lua, (group, idx, field, value): (String, i32, String, LuaValue)| {
+        let strum_idx = match group.as_str() {
+            "opponentStrums" => Some(idx as usize),
+            "playerStrums" => Some((idx + 4) as usize),
+            "strumLineNotes" => Some(idx as usize),
+            _ => None,
+        };
+        if let Some(si) = strum_idx {
+            if si < 8 {
+                let props: LuaTable = lua.globals().get("__strum_props")?;
+                if let Ok(tbl) = props.get::<LuaTable>(si as i64 + 1) {
+                    match field.as_str() {
+                        "x" => tbl.set("x", value)?,
+                        "y" => tbl.set("y", value)?,
+                        "alpha" => tbl.set("alpha", value)?,
+                        "angle" => tbl.set("angle", value)?,
+                        _ => {}
+                    }
+                    tbl.set("custom", true)?;
+                }
+            }
+        }
         Ok(())
     })?)?;
 
@@ -749,26 +813,113 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
 fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
-    for name in [
-        "doTweenX", "doTweenY", "doTweenAlpha", "doTweenAngle",
-        "doTweenZoom", "doTweenColor", "startTween",
-    ] {
-        globals.set(name, lua.create_function(move |_lua, _args: LuaMultiValue| {
-            Ok(())
-        })?)?;
-    }
+    // Pending tweens: list of { tag, target, property, value, duration, ease }
+    globals.set("__pending_tweens", lua.create_table()?)?;
+    globals.set("__pending_tween_cancels", lua.create_table()?)?;
+    globals.set("__pending_timers", lua.create_table()?)?;
+    globals.set("__pending_timer_cancels", lua.create_table()?)?;
 
+    // doTweenX(tag, target, value, duration, ease)
+    globals.set("doTweenX", lua.create_function(|lua, (tag, target, value, duration, ease): (String, String, f64, f64, Option<String>)| {
+        push_tween(lua, &tag, &target, "x", value, duration, ease.as_deref())
+    })?)?;
+
+    globals.set("doTweenY", lua.create_function(|lua, (tag, target, value, duration, ease): (String, String, f64, f64, Option<String>)| {
+        push_tween(lua, &tag, &target, "y", value, duration, ease.as_deref())
+    })?)?;
+
+    globals.set("doTweenAlpha", lua.create_function(|lua, (tag, target, value, duration, ease): (String, String, f64, f64, Option<String>)| {
+        push_tween(lua, &tag, &target, "alpha", value, duration, ease.as_deref())
+    })?)?;
+
+    globals.set("doTweenAngle", lua.create_function(|lua, (tag, target, value, duration, ease): (String, String, f64, f64, Option<String>)| {
+        push_tween(lua, &tag, &target, "angle", value, duration, ease.as_deref())
+    })?)?;
+
+    globals.set("doTweenZoom", lua.create_function(|lua, (tag, camera, value, duration, ease): (String, String, f64, f64, Option<String>)| {
+        // Normalize camera name
+        let cam = match camera.to_lowercase().as_str() {
+            "camgame" | "game" | "game.camgame" => "camGame",
+            "camhud" | "hud" | "game.camhud" => "camHUD",
+            _ => "camGame",
+        };
+        push_tween(lua, &tag, cam, "zoom", value, duration, ease.as_deref())
+    })?)?;
+
+    // doTweenColor — simplified: just tween alpha for now, full color tween is complex
+    globals.set("doTweenColor", lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<()> {
+        Ok(())
+    })?)?;
+
+    // startTween — the generic tween function (rarely used directly in mods)
+    globals.set("startTween", lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<()> {
+        Ok(())
+    })?)?;
+
+    // noteTweenX/Y/Alpha/Angle/Direction — tween strum note properties
     for name in [
         "noteTweenX", "noteTweenY", "noteTweenAlpha",
         "noteTweenAngle", "noteTweenDirection",
     ] {
-        globals.set(name, lua.create_function(move |_lua, _args: LuaMultiValue| {
-            Ok(())
+        let prop = match name {
+            "noteTweenX" => "x",
+            "noteTweenY" => "y",
+            "noteTweenAlpha" => "alpha",
+            "noteTweenAngle" => "angle",
+            _ => "x", // direction maps to x for now
+        };
+        let prop_owned = prop.to_string();
+        globals.set(name, lua.create_function(move |lua, (tag, note, value, duration, ease): (String, i32, f64, f64, Option<String>)| {
+            // note index: 0-3 = opponent, 4-7 = player
+            let strum_tag = if note < 4 {
+                format!("__strum_opponent_{}", note)
+            } else {
+                format!("__strum_player_{}", note - 4)
+            };
+            push_tween(lua, &tag, &strum_tag, &prop_owned, value, duration, ease.as_deref())
         })?)?;
     }
 
-    globals.set("cancelTween", lua.create_function(|_lua, _tag: String| { Ok(()) })?)?;
+    globals.set("cancelTween", lua.create_function(|lua, tag: String| {
+        let cancels: LuaTable = lua.globals().get("__pending_tween_cancels")?;
+        let len = cancels.len()? as i64;
+        cancels.set(len + 1, tag)?;
+        Ok(())
+    })?)?;
 
+    // runTimer(tag, duration, loops)
+    globals.set("runTimer", lua.create_function(|lua, (tag, duration, loops): (String, f64, Option<i32>)| {
+        let timers: LuaTable = lua.globals().get("__pending_timers")?;
+        let tbl = lua.create_table()?;
+        tbl.set("tag", tag)?;
+        tbl.set("duration", duration)?;
+        tbl.set("loops", loops.unwrap_or(1))?;
+        let len = timers.len()? as i64;
+        timers.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    globals.set("cancelTimer", lua.create_function(|lua, tag: String| {
+        let cancels: LuaTable = lua.globals().get("__pending_timer_cancels")?;
+        let len = cancels.len()? as i64;
+        cancels.set(len + 1, tag)?;
+        Ok(())
+    })?)?;
+
+    Ok(())
+}
+
+fn push_tween(lua: &Lua, tag: &str, target: &str, property: &str, value: f64, duration: f64, ease: Option<&str>) -> LuaResult<()> {
+    let tweens: LuaTable = lua.globals().get("__pending_tweens")?;
+    let tbl = lua.create_table()?;
+    tbl.set("tag", tag.to_string())?;
+    tbl.set("target", target.to_string())?;
+    tbl.set("property", property.to_string())?;
+    tbl.set("value", value)?;
+    tbl.set("duration", duration)?;
+    tbl.set("ease", ease.unwrap_or("linear").to_string())?;
+    let len = tweens.len()? as i64;
+    tweens.set(len + 1, tbl)?;
     Ok(())
 }
 

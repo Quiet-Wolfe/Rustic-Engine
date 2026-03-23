@@ -254,6 +254,17 @@ impl PlayScreen {
         if player { base + GAME_W / 2.0 } else { base }
     }
 
+    /// Get strum position/alpha from modchart state. Falls back to defaults.
+    pub(super) fn strum_pos(&self, lane: usize, player: bool) -> (f32, f32, f32) {
+        let idx = if player { lane + 4 } else { lane };
+        let sp = &self.scripts.state.strum_props[idx];
+        if sp.custom {
+            (sp.x, sp.y, sp.alpha)
+        } else {
+            (Self::strum_x(lane, player), STRUM_Y, 1.0)
+        }
+    }
+
     /// Recompute camera targets from current character positions (called at section changes).
     /// Matches Psych Engine's moveCamera() which reads character midpoints dynamically.
     pub(super) fn recompute_camera_targets(&mut self) {
@@ -384,6 +395,16 @@ impl PlayScreen {
             } else {
                 self.lua_behind.push(tag);
             }
+        }
+
+        // Process sprite removals
+        let removes: Vec<String> = self.scripts.state.sprites_to_remove.drain(..).collect();
+        for tag in &removes {
+            self.lua_textures.remove(tag);
+            self.lua_atlases.remove(tag);
+            self.lua_behind.retain(|t| t != tag);
+            self.lua_front.retain(|t| t != tag);
+            self.scripts.state.lua_sprites.remove(tag);
         }
 
         // Register any new animations on existing atlases (for late addAnimationByPrefix calls)
