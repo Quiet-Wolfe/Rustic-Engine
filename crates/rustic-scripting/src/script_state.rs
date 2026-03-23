@@ -48,6 +48,12 @@ pub struct ScriptState {
     /// Current camera zoom (updated each frame by the game, used for tween start values).
     pub camera_zoom: f32,
 
+    /// Default camera zoom (target zoom, synced across all scripts).
+    pub default_cam_zoom: f32,
+
+    /// Camera speed multiplier (synced across all scripts).
+    pub camera_speed: f32,
+
     /// Pending camera target changes: "dad"/"bf"/"gf".
     pub camera_target_requests: Vec<String>,
 
@@ -188,6 +194,8 @@ impl ScriptState {
             sprites_to_remove: Vec::new(),
             song_position: 0.0,
             camera_zoom: 1.0,
+            default_cam_zoom: 1.0,
+            camera_speed: 1.0,
             camera_target_requests: Vec::new(),
             triggered_events: Vec::new(),
         }

@@ -64,9 +64,11 @@ impl PlayScreen {
             self.countdown_alpha -= dt / (self.game.conductor.crochet as f32 / 1000.0);
         }
 
-        // Sync game state to Lua before callbacks
+        // Sync game state to scripting layer before callbacks
         self.scripts.state.song_position = self.game.conductor.song_position;
         self.scripts.state.camera_zoom = self.camera.zoom;
+        self.scripts.state.default_cam_zoom = self.default_cam_zoom;
+        self.scripts.state.camera_speed = self.camera.camera_speed;
 
         // Lua: onUpdate (before gameplay logic)
         if self.scripts.has_scripts() {

@@ -77,17 +77,39 @@ impl LuaScript {
     /// Call a Lua callback function if it exists.
     /// Updates shared variables (curBeat, curStep) before calling.
     /// `args` are passed as float arguments to the Lua function.
-    pub fn call_callback(&mut self, name: &str, state: &mut ScriptState, args: &[f64]) -> Result<(), String> {
-        if self.closed {
-            return Ok(());
-        }
-
-        // Sync shared variables Lua → Rust
+    /// Sync shared game state from Rust into this Lua VM before a callback.
+    /// Ensures all scripts see consistent strum positions, camera state, etc.
+    fn sync_shared_state(&self, state: &ScriptState) {
         let globals = self.lua.globals();
         globals.set("curBeat", state.cur_beat).ok();
         globals.set("curStep", state.cur_step).ok();
         globals.set("curSection", state.cur_section).ok();
         globals.set("__songPosition", state.song_position).ok();
+        globals.set("defaultCamZoom", state.default_cam_zoom as f64).ok();
+        globals.set("cameraSpeed", state.camera_speed as f64).ok();
+
+        // Sync strum properties so all scripts see current positions
+        if let Ok(strum_tbl) = globals.get::<LuaTable>("__strum_props") {
+            for i in 0..8 {
+                if let Ok(tbl) = strum_tbl.get::<LuaTable>(i as i64 + 1) {
+                    let sp = &state.strum_props[i];
+                    tbl.set("x", sp.x as f64).ok();
+                    tbl.set("y", sp.y as f64).ok();
+                    tbl.set("alpha", sp.alpha as f64).ok();
+                    tbl.set("angle", sp.angle as f64).ok();
+                    tbl.set("custom", sp.custom).ok();
+                }
+            }
+        }
+    }
+
+    pub fn call_callback(&mut self, name: &str, state: &mut ScriptState, args: &[f64]) -> Result<(), String> {
+        if self.closed {
+            return Ok(());
+        }
+
+        self.sync_shared_state(state);
+        let globals = self.lua.globals();
 
         // Check if the callback exists
         let func: Option<LuaFunction> = globals.get(name).ok();
@@ -124,11 +146,9 @@ impl LuaScript {
     /// Call a Lua callback with string arguments (for onTweenCompleted etc.).
     pub fn call_callback_str(&mut self, name: &str, state: &mut ScriptState, str_args: &[&str]) -> Result<(), String> {
         if self.closed { return Ok(()); }
-        let globals = self.lua.globals();
-        globals.set("curBeat", state.cur_beat).ok();
-        globals.set("curStep", state.cur_step).ok();
+        self.sync_shared_state(state);
 
-        let func: Option<LuaFunction> = globals.get(name).ok();
+        let func: Option<LuaFunction> = self.lua.globals().get(name).ok();
         let func = match func {
             Some(f) => f,
             None => return Ok(()),
@@ -140,7 +160,7 @@ impl LuaScript {
         }
         func.call::<()>(multi).map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
 
-        if let Ok(closed) = globals.get::<bool>("__script_closed") {
+        if let Ok(closed) = self.lua.globals().get::<bool>("__script_closed") {
             if closed { self.closed = true; }
         }
         self.drain_sprite_ops(state);
@@ -151,11 +171,9 @@ impl LuaScript {
     /// Call a Lua callback with mixed args: (string, int, int) for onTimerCompleted.
     pub fn call_callback_with_mixed(&mut self, name: &str, state: &mut ScriptState, tag: &str, loops: i32, left: i32) -> Result<(), String> {
         if self.closed { return Ok(()); }
-        let globals = self.lua.globals();
-        globals.set("curBeat", state.cur_beat).ok();
-        globals.set("curStep", state.cur_step).ok();
+        self.sync_shared_state(state);
 
-        let func: Option<LuaFunction> = globals.get(name).ok();
+        let func: Option<LuaFunction> = self.lua.globals().get(name).ok();
         let func = match func {
             Some(f) => f,
             None => return Ok(()),
@@ -167,7 +185,7 @@ impl LuaScript {
         multi.push_back(mlua::Value::Integer(left as i64));
         func.call::<()>(multi).map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
 
-        if let Ok(closed) = globals.get::<bool>("__script_closed") {
+        if let Ok(closed) = self.lua.globals().get::<bool>("__script_closed") {
             if closed { self.closed = true; }
         }
         self.drain_sprite_ops(state);
