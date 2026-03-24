@@ -133,27 +133,22 @@ impl SpriteAtlas {
         }
     }
 
-    /// Register an animation using specific frame indices from a prefix match.
-    /// Like `addByIndices` in HaxeFlixel.
+    /// Register an animation using specific frame indices.
+    /// Matches HaxeFlixel's `addByIndices`: constructs exact frame names
+    /// as `prefix + zero_padded(index)` and looks them up by name.
     pub fn add_by_indices(&mut self, anim_name: &str, prefix: &str, indices: &[i32]) {
-        // First collect all frames matching the prefix, sorted by their natural index
-        let mut matched: Vec<(u32, SpriteFrame)> = Vec::new();
+        // Build a lookup map from raw frame names
+        let name_map: HashMap<String, SpriteFrame> = self.raw_frames.iter()
+            .map(|r| (r.name.clone(), r.frame.clone()))
+            .collect();
 
-        for raw in &self.raw_frames {
-            if raw.name.starts_with(prefix) {
-                let suffix = &raw.name[prefix.len()..];
-                let idx: u32 = suffix.parse().unwrap_or(0);
-                matched.push((idx, raw.frame.clone()));
-            }
-        }
-
-        matched.sort_by_key(|(idx, _)| *idx);
-        let all_frames: Vec<SpriteFrame> = matched.into_iter().map(|(_, f)| f).collect();
-
-        // Pick frames by the requested indices
         let frames: Vec<SpriteFrame> = indices
             .iter()
-            .filter_map(|&i| all_frames.get(i as usize).cloned())
+            .filter_map(|&i| {
+                // HaxeFlixel zero-pads to 4 digits
+                let frame_name = format!("{}{:04}", prefix, i);
+                name_map.get(&frame_name).cloned()
+            })
             .collect();
 
         if !frames.is_empty() {
@@ -213,6 +208,16 @@ impl AnimationController {
             self.timer = 0.0;
             self.finished = false;
         }
+        self.fps = fps;
+        self.looping = looping;
+    }
+
+    /// Force restart animation even if already playing.
+    pub fn force_play(&mut self, anim: &str, fps: f32, looping: bool) {
+        self.current_anim = anim.to_string();
+        self.frame_index = 0;
+        self.timer = 0.0;
+        self.finished = false;
         self.fps = fps;
         self.looping = looping;
     }

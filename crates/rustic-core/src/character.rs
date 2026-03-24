@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Character definition loaded from `characters/{name}.json`.
@@ -5,7 +7,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterFile {
     pub animations: Vec<AnimArray>,
+    #[serde(default)]
     pub image: String,
+    /// Multi-atlas character: maps sheet names to image paths (e.g. "baseSheet" → "characters/BOYFRIEND").
+    /// Used when `image` is empty — the "baseSheet" entry is the primary atlas.
+    #[serde(default)]
+    pub images: HashMap<String, String>,
     #[serde(default = "default_scale")]
     pub scale: f64,
     #[serde(default = "default_sing_duration")]
@@ -26,6 +33,20 @@ pub struct CharacterFile {
     pub healthbar_colors: [u8; 3],
     #[serde(default)]
     pub vocals_file: String,
+
+    /// Custom note skin (e.g. "notes/Notes_Ace"). Overrides default NOTE_assets.
+    #[serde(default)]
+    pub skin: String,
+    /// Custom health bar image (e.g. "dozirc"). References healthBars/{name}/bar.png.
+    #[serde(default, rename = "healthBarImg")]
+    pub health_bar_img: String,
+
+    /// Per-stage scale overrides (e.g. "nightflaid" → 0.774).
+    #[serde(default)]
+    pub stage_scale: HashMap<String, f64>,
+    /// Per-stage camera offset overrides.
+    #[serde(default)]
+    pub stage_camera: HashMap<String, [f64; 2]>,
 }
 
 fn default_scale() -> f64 {
@@ -69,6 +90,17 @@ pub const MISS_DIRECTIONS: [&str; 4] = [
 impl CharacterFile {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
+    }
+
+    /// Get the effective image path. If `image` is empty, falls back to `images["baseSheet"]`.
+    pub fn effective_image(&self) -> &str {
+        if !self.image.is_empty() {
+            return &self.image;
+        }
+        if let Some(base) = self.images.get("baseSheet") {
+            return base;
+        }
+        ""
     }
 
     pub fn find_anim(&self, anim_name: &str) -> Option<&AnimArray> {

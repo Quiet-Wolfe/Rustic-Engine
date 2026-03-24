@@ -129,6 +129,11 @@ impl LuaScript {
                     tbl.set("y", sp.y as f64).ok();
                     tbl.set("alpha", sp.alpha as f64).ok();
                     tbl.set("angle", sp.angle as f64).ok();
+                    tbl.set("scale_x", sp.scale_x as f64).ok();
+                    tbl.set("scale_y", sp.scale_y as f64).ok();
+                    if let Some(ds) = sp.down_scroll {
+                        tbl.set("downScroll", ds).ok();
+                    }
                     tbl.set("custom", sp.custom).ok();
                 }
             }
@@ -223,6 +228,27 @@ impl LuaScript {
         self.drain_sprite_ops(state);
         self.sync_sprite_data(state);
         Ok(())
+    }
+
+    /// Populate __note_read_data Lua table with basic note info for modchart access.
+    /// Each tuple is (strum_time, lane, must_press, sustain_length).
+    pub fn populate_note_data(&self, notes: &[(f64, usize, bool, f64)]) {
+        let globals = self.lua.globals();
+        if let Ok(tbl) = self.lua.create_table() {
+            for (i, &(strum_time, lane, must_press, sustain_length)) in notes.iter().enumerate() {
+                if let Ok(entry) = self.lua.create_table() {
+                    entry.set("strumTime", strum_time).ok();
+                    entry.set("lane", lane as i64).ok();
+                    entry.set("mustPress", must_press).ok();
+                    entry.set("isSustainNote", sustain_length > 0.0).ok();
+                    entry.set("sustainLength", sustain_length).ok();
+                    tbl.set(i as i64 + 1, entry).ok();
+                }
+            }
+            globals.set("__note_read_data", tbl).ok();
+        }
+        // Set the note count as a global for getProperty('unspawnNotes.length')
+        globals.set("__unspawnNotesLength", notes.len() as i64).ok();
     }
 
     /// Transfer sprite creation/property data from Lua's internal tables to ScriptState.
@@ -482,9 +508,39 @@ impl LuaScript {
                         state.strum_props[i].y = tbl.get::<f64>("y").unwrap_or(0.0) as f32;
                         state.strum_props[i].alpha = tbl.get::<f64>("alpha").unwrap_or(1.0) as f32;
                         state.strum_props[i].angle = tbl.get::<f64>("angle").unwrap_or(0.0) as f32;
+                        state.strum_props[i].scale_x = tbl.get::<f64>("scale_x").unwrap_or(0.7) as f32;
+                        state.strum_props[i].scale_y = tbl.get::<f64>("scale_y").unwrap_or(0.7) as f32;
+                        state.strum_props[i].down_scroll = tbl.get::<bool>("downScroll").ok();
                         state.strum_props[i].custom = true;
                     }
                 }
+            }
+        }
+
+        // Drain __dirty_notes and sync note overrides to ScriptState
+        if let Ok(dirty) = globals.get::<LuaTable>("__dirty_notes") {
+            if let Ok(overrides) = globals.get::<LuaTable>("__note_overrides") {
+                for pair in dirty.pairs::<i64, bool>() {
+                    let Ok((lua_idx, true)) = pair else { continue };
+                    let note_idx = (lua_idx - 1) as usize;
+                    if let Ok(note_tbl) = overrides.get::<LuaTable>(lua_idx) {
+                        let entry = state.note_overrides.entry(note_idx).or_insert_with(std::collections::HashMap::new);
+                        for field_pair in note_tbl.pairs::<String, LuaValue>() {
+                            let Ok((field, val)) = field_pair else { continue };
+                            let num = match &val {
+                                LuaValue::Number(n) => *n,
+                                LuaValue::Integer(n) => *n as f64,
+                                LuaValue::Boolean(b) => if *b { 1.0 } else { 0.0 },
+                                _ => continue,
+                            };
+                            entry.insert(field, num);
+                        }
+                    }
+                }
+            }
+            // Clear dirty set
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__dirty_notes", new_tbl).ok();
             }
         }
 

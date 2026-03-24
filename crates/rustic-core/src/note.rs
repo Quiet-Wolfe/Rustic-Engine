@@ -71,6 +71,19 @@ pub struct NoteData {
     pub rating_disabled: bool,
     pub gf_note: bool,
     pub alt_note: bool,
+
+    // === Visual overrides (set by Lua modcharts) ===
+    pub visible: bool,
+    pub alpha: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub angle: f32,
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub flip_y: bool,
+    pub color_r_offset: f32,
+    pub color_g_offset: f32,
+    pub color_b_offset: f32,
 }
 
 impl NoteData {
@@ -96,6 +109,17 @@ impl NoteData {
             rating_disabled: false,
             gf_note: false,
             alt_note: false,
+            visible: true,
+            alpha: 1.0,
+            scale_x: 0.7,
+            scale_y: 0.7,
+            angle: 0.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            flip_y: false,
+            color_r_offset: 0.0,
+            color_g_offset: 0.0,
+            color_b_offset: 0.0,
         }
     }
 

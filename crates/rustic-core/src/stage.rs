@@ -31,6 +31,14 @@ pub struct StageFile {
     #[serde(default = "default_one")]
     pub camera_speed: f64,
 
+    /// Initial camera position (used instead of default opponent focus).
+    #[serde(default)]
+    pub camera_start: Option<[f64; 2]>,
+
+    /// If true, disable camera zoom on beats.
+    #[serde(default, rename = "disableZooming")]
+    pub disable_zooming: bool,
+
     #[serde(default)]
     pub objects: Vec<StageObjectDef>,
 }
@@ -141,6 +149,8 @@ impl StageFile {
             camera_opponent: [0.0, 0.0],
             camera_girlfriend: [0.0, 0.0],
             camera_speed: 1.0,
+            camera_start: None,
+            disable_zooming: false,
             objects: Vec::new(),
         }
     }

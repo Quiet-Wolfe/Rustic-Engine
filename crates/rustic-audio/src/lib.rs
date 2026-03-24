@@ -14,6 +14,8 @@ pub struct AudioEngine {
     playing: bool,
     miss_sounds: Vec<StaticSoundData>,
     miss_index: usize,
+    /// Looping music handle (e.g. gameOver.ogg).
+    loop_music: Option<StaticSoundHandle>,
 }
 
 impl AudioEngine {
@@ -28,6 +30,7 @@ impl AudioEngine {
             playing: false,
             miss_sounds: Vec::new(),
             miss_index: 0,
+            loop_music: None,
         }
     }
 
@@ -156,6 +159,44 @@ impl AudioEngine {
         let data = self.miss_sounds[self.miss_index].clone();
         self.miss_index = (self.miss_index + 1) % self.miss_sounds.len();
         let _ = self.manager.play(data);
+    }
+
+    /// Play a one-shot sound effect from a file path.
+    pub fn play_sound(&mut self, path: &Path, volume: f64) {
+        if !path.exists() {
+            return;
+        }
+        if let Ok(data) = StaticSoundData::from_file(path) {
+            if let Ok(mut handle) = self.manager.play(data) {
+                handle.set_volume(volume, Tween::default());
+            }
+        }
+    }
+
+    /// Play a looping music track (e.g. gameOver.ogg). Stops any previous loop.
+    pub fn play_loop_music(&mut self, path: &Path) {
+        self.play_loop_music_vol(path, 1.0);
+    }
+
+    /// Play a looping music track at a given volume.
+    pub fn play_loop_music_vol(&mut self, path: &Path, volume: f64) {
+        self.stop_loop_music();
+        if !path.exists() { return; }
+        if let Ok(data) = StaticSoundData::from_file(path) {
+            let data = data.loop_region(..);
+            if let Ok(mut handle) = self.manager.play(data) {
+                handle.set_volume(volume, Tween::default());
+                self.loop_music = Some(handle);
+            }
+        }
+    }
+
+    /// Stop the looping music track.
+    pub fn stop_loop_music(&mut self) {
+        if let Some(h) = &mut self.loop_music {
+            h.stop(Tween::default());
+        }
+        self.loop_music = None;
     }
 
     /// Seek all tracks to a position in milliseconds.

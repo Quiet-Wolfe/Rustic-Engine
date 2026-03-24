@@ -3,13 +3,26 @@ use rustic_core::rating;
 use rustic_render::gpu::GpuState;
 
 use super::{
-    PlayScreen, DrawLayer,
+    PlayScreen, DrawLayer, NoteAssets,
     GAME_W, GAME_H, STRUM_Y, NOTE_WIDTH, NOTE_SCALE,
     NOTE_ANIMS, STRUM_ANIMS, PRESS_ANIMS, CONFIRM_ANIMS,
     HOLD_PIECE_ANIMS, HOLD_END_ANIMS, SPLASH_PREFIXES,
     HEALTH_BAR_W, HEALTH_BAR_H, HEALTH_BAR_Y, HEALTH_BAR_X,
     RATING_SCALE,
 };
+
+/// Compute RGBA color for a note with color transform offsets applied.
+fn note_color(nd: &NoteData, alpha: f32) -> [f32; 4] {
+    if nd.color_r_offset == 0.0 && nd.color_g_offset == 0.0 && nd.color_b_offset == 0.0 {
+        [alpha, alpha, alpha, alpha]
+    } else {
+        // Color offsets are -255..255 range, normalize to 0..1
+        let r = (1.0 + nd.color_r_offset / 255.0).clamp(0.0, 1.0) * alpha;
+        let g = (1.0 + nd.color_g_offset / 255.0).clamp(0.0, 1.0) * alpha;
+        let b = (1.0 + nd.color_b_offset / 255.0).clamp(0.0, 1.0) * alpha;
+        [r, g, b, alpha]
+    }
+}
 
 impl PlayScreen {
     pub(super) fn draw_inner(&mut self, gpu: &mut GpuState) {
@@ -80,61 +93,106 @@ impl PlayScreen {
 
         // === Note batch: held tails → strums → unheld tails → note heads ===
 
-        // Compute note Y positions for rendering
+        // Compute note Y positions for rendering — use actual strum Y (modcharts move them)
         let note_positions: Vec<(usize, f32)> = (0..self.game.notes.len())
-            .map(|i| (i, self.game.note_y(self.game.notes[i].strum_time, STRUM_Y)))
+            .map(|i| {
+                let nd = &self.game.notes[i];
+                let (_sx, sy, _sa, _ang) = self.strum_pos(nd.lane, nd.must_press);
+                (i, self.game.note_y(nd.strum_time, sy))
+            })
             .collect();
 
-        // Pass 1: Hold tails that are actively held (behind strums)
+        // === Opponent side: holds (behind) → strums → holds (front) → note heads ===
         for &(i, y_pos) in &note_positions {
             let nd = &self.game.notes[i];
+            if nd.must_press { continue; }
             if nd.sustain_length > 0.0 && !nd.too_late && self.is_hold_active(nd) {
                 self.draw_hold_tail(gpu, nd, y_pos);
             }
         }
-
-        // Strum receptors
-        for player in [false, true] {
-            for lane in 0..4 {
-                self.draw_strum(gpu, lane, player);
-            }
+        for lane in 0..4 {
+            self.draw_strum(gpu, lane, false);
         }
-
-        // Pass 2: Hold tails NOT actively held (in front of strums)
         for &(i, y_pos) in &note_positions {
             let nd = &self.game.notes[i];
+            if nd.must_press { continue; }
             if nd.sustain_length > 0.0 && !nd.too_late && !self.is_hold_active(nd) {
                 self.draw_hold_tail(gpu, nd, y_pos);
             }
         }
-
-        // Note heads
         for &(i, y_pos) in &note_positions {
             let nd = &self.game.notes[i];
-            if nd.was_good_hit || nd.too_late { continue; }
+            if nd.must_press || nd.was_good_hit || nd.too_late { continue; }
+            if !nd.visible { continue; }
             if y_pos < -NOTE_WIDTH || y_pos > GAME_H + NOTE_WIDTH { continue; }
-            let (sx, _sy, sa) = self.strum_pos(nd.lane, nd.must_press);
-            if sa <= 0.0 { continue; }
-            let a = sa.clamp(0.0, 1.0);
-            self.draw_note_sprite_alpha(gpu, NOTE_ANIMS[nd.lane], hud_x(sx), hud_y(y_pos), hud_s(NOTE_SCALE), a);
+            let (sx, _sy, sa, ang) = self.strum_pos(nd.lane, false);
+            let a = (sa * nd.alpha).clamp(0.0, 1.0);
+            if a <= 0.0 { continue; }
+            let note_ang = ang + nd.angle;
+            let note_scale = NOTE_SCALE * (nd.scale_x / 0.7); // scale relative to default 0.7
+            let assets = self.opp_note_assets.as_ref().or(self.note_assets.as_ref());
+            if let Some(assets) = assets {
+                let color = note_color(nd, a);
+                self.draw_note_sprite_colored(gpu, assets, NOTE_ANIMS[nd.lane],
+                    hud_x(sx + nd.offset_x), hud_y(y_pos + nd.offset_y),
+                    hud_s(note_scale), color, note_ang);
+            }
+        }
+        // Flush opponent batch
+        let opp_tex = self.opp_note_assets.as_ref().or(self.note_assets.as_ref());
+        if let Some(assets) = opp_tex {
+            gpu.draw_batch(Some(&assets.texture));
         }
 
-        // Flush note batch BEFORE drawing splashes
+        // === Player side: holds (behind) → strums → holds (front) → note heads ===
+        for &(i, y_pos) in &note_positions {
+            let nd = &self.game.notes[i];
+            if !nd.must_press { continue; }
+            if nd.sustain_length > 0.0 && !nd.too_late && self.is_hold_active(nd) {
+                self.draw_hold_tail(gpu, nd, y_pos);
+            }
+        }
+        for lane in 0..4 {
+            self.draw_strum(gpu, lane, true);
+        }
+        for &(i, y_pos) in &note_positions {
+            let nd = &self.game.notes[i];
+            if !nd.must_press { continue; }
+            if nd.sustain_length > 0.0 && !nd.too_late && !self.is_hold_active(nd) {
+                self.draw_hold_tail(gpu, nd, y_pos);
+            }
+        }
+        for &(i, y_pos) in &note_positions {
+            let nd = &self.game.notes[i];
+            if !nd.must_press || nd.was_good_hit || nd.too_late { continue; }
+            if !nd.visible { continue; }
+            if y_pos < -NOTE_WIDTH || y_pos > GAME_H + NOTE_WIDTH { continue; }
+            let (sx, _sy, sa, ang) = self.strum_pos(nd.lane, true);
+            let a = (sa * nd.alpha).clamp(0.0, 1.0);
+            if a <= 0.0 { continue; }
+            let note_ang = ang + nd.angle;
+            let note_scale = NOTE_SCALE * (nd.scale_x / 0.7);
+            if let Some(assets) = &self.note_assets {
+                let color = note_color(nd, a);
+                self.draw_note_sprite_colored(gpu, assets, NOTE_ANIMS[nd.lane],
+                    hud_x(sx + nd.offset_x), hud_y(y_pos + nd.offset_y),
+                    hud_s(note_scale), color, note_ang);
+            }
+        }
+        // Flush player batch
         if let Some(assets) = &self.note_assets {
             gpu.draw_batch(Some(&assets.texture));
-        } else {
-            gpu.draw_batch(None);
         }
 
         // Note splashes (separate batch)
         if let Some(splash) = &self.splash_atlas {
             for s in &self.splashes {
-                let (sx, _sy, _sa) = self.strum_pos(s.lane, s.player);
+                let (sx, sy, _sa, _ang) = self.strum_pos(s.lane, s.player);
                 let anim = SPLASH_PREFIXES[s.lane];
                 if let Some(frame) = splash.atlas.get_frame(anim, s.frame) {
                     let scale = NOTE_SCALE * 1.3;
                     let cx = hud_x(sx + NOTE_WIDTH / 2.0) - frame.frame_w * scale / 2.0;
-                    let cy = hud_y(STRUM_Y + NOTE_WIDTH / 2.0) - frame.frame_h * scale / 2.0;
+                    let cy = hud_y(sy + NOTE_WIDTH / 2.0) - frame.frame_h * scale / 2.0;
                     gpu.draw_sprite_frame(
                         frame, splash.tex_w, splash.tex_h,
                         cx, cy, scale, false, [1.0, 1.0, 1.0, 0.6],
@@ -152,16 +210,19 @@ impl PlayScreen {
         let hby = hud_y(HEALTH_BAR_Y);
         let hbw = hud_s(HEALTH_BAR_W);
         let hbh = hud_s(HEALTH_BAR_H);
+        // Black border
         gpu.push_colored_quad(hbx - 2.0, hby - 2.0, hbw + 4.0, hbh + 4.0, [0.0, 0.0, 0.0, 1.0]);
+        gpu.draw_batch(None);
+        // Colored fills: opponent on left, player on right
         gpu.push_colored_quad(hbx, hby, hbw, hbh, self.hb_color_dad);
         let player_w = hbw * health_pct;
         gpu.push_colored_quad(hbx + hbw - player_w, hby, player_w, hbh, self.hb_color_bf);
+        gpu.draw_batch(None);
 
         if self.game.song_ended {
             gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
+            gpu.draw_batch(None);
         }
-
-        gpu.draw_batch(None);
 
         // === Icons with bop ===
         let divider_x = hbx + hbw * (1.0 - health_pct);
@@ -280,9 +341,13 @@ impl PlayScreen {
             gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
             gpu.draw_batch(None);
 
-            let items = ["Resume", "Restart Song", "Exit to Menu"];
-            let menu_y = GAME_H / 2.0 - 60.0;
-            for (i, &label) in items.iter().enumerate() {
+            let skip_secs = (self.skip_target_ms / 1000.0).max(0.0);
+            let skip_min = (skip_secs / 60.0) as u32;
+            let skip_sec = (skip_secs % 60.0) as u32;
+            let skip_label = format!("Skip To  < {}:{:02} >", skip_min, skip_sec);
+            let items: [&str; 4] = ["Resume", "Restart Song", &skip_label, "Exit to Menu"];
+            let menu_y = GAME_H / 2.0 - 80.0;
+            for (i, label) in items.iter().enumerate() {
                 let y = menu_y + i as f32 * 40.0;
                 let color = if i == self.pause_selection {
                     [1.0, 1.0, 1.0, 1.0]
@@ -292,7 +357,7 @@ impl PlayScreen {
                 let prefix = if i == self.pause_selection { "> " } else { "  " };
                 gpu.draw_text(
                     &format!("{}{}", prefix, label),
-                    GAME_W / 2.0 - 80.0, y, 28.0, color,
+                    GAME_W / 2.0 - 120.0, y, 28.0, color,
                 );
             }
             gpu.draw_text("PAUSED", GAME_W / 2.0 - 60.0, menu_y - 60.0, 36.0, white);
@@ -427,8 +492,43 @@ impl PlayScreen {
         }
     }
 
+    /// Draw a note sprite with alpha and rotation, using specific note assets.
+    fn draw_note_sprite_ex(&self, gpu: &mut GpuState, assets: &NoteAssets, anim: &str, x: f32, y: f32, scale: f32, alpha: f32, angle: f32) {
+        if let Some(frame) = assets.atlas.get_frame(anim, 0) {
+            let a = alpha.clamp(0.0, 1.0);
+            if angle.abs() > 0.01 {
+                gpu.draw_sprite_frame_rotated(
+                    frame, assets.tex_w, assets.tex_h,
+                    x, y, scale, false, angle, [a, a, a, a],
+                );
+            } else {
+                gpu.draw_sprite_frame(
+                    frame, assets.tex_w, assets.tex_h,
+                    x, y, scale, false, [a, a, a, a],
+                );
+            }
+        }
+    }
+
+    /// Draw a note sprite with custom RGBA color and rotation.
+    fn draw_note_sprite_colored(&self, gpu: &mut GpuState, assets: &NoteAssets, anim: &str, x: f32, y: f32, scale: f32, color: [f32; 4], angle: f32) {
+        if let Some(frame) = assets.atlas.get_frame(anim, 0) {
+            if angle.abs() > 0.01 {
+                gpu.draw_sprite_frame_rotated(
+                    frame, assets.tex_w, assets.tex_h,
+                    x, y, scale, false, angle, color,
+                );
+            } else {
+                gpu.draw_sprite_frame(
+                    frame, assets.tex_w, assets.tex_h,
+                    x, y, scale, false, color,
+                );
+            }
+        }
+    }
+
     fn draw_strum(&self, gpu: &mut GpuState, lane: usize, player: bool) {
-        let (x, y, alpha) = self.strum_pos(lane, player);
+        let (x, y, alpha, angle) = self.strum_pos(lane, player);
         if alpha <= 0.0 { return; }
         let elapsed = if player { self.game.player_confirm[lane] } else { self.game.opponent_confirm[lane] };
         let (anim, frame_idx) = if elapsed > 0.0 {
@@ -439,7 +539,13 @@ impl PlayScreen {
         } else {
             (STRUM_ANIMS[lane], 0)
         };
-        if let Some(assets) = &self.note_assets {
+        // Use opponent note skin for opponent strums
+        let assets = if !player {
+            self.opp_note_assets.as_ref().or(self.note_assets.as_ref())
+        } else {
+            self.note_assets.as_ref()
+        };
+        if let Some(assets) = assets {
             let static_frame = assets.atlas.get_frame(STRUM_ANIMS[lane], 0);
             let (ref_w, ref_h) = static_frame
                 .map(|f| (f.frame_w, f.frame_h))
@@ -453,16 +559,29 @@ impl PlayScreen {
                 let draw_x = cx - frame.frame_w * NOTE_SCALE / 2.0;
                 let draw_y = cy - frame.frame_h * NOTE_SCALE / 2.0;
                 let a = alpha.clamp(0.0, 1.0);
-                gpu.draw_sprite_frame(
-                    frame, assets.tex_w, assets.tex_h,
-                    draw_x, draw_y, NOTE_SCALE, false, [a, a, a, a],
-                );
+                if angle.abs() > 0.01 {
+                    gpu.draw_sprite_frame_rotated(
+                        frame, assets.tex_w, assets.tex_h,
+                        draw_x, draw_y, NOTE_SCALE, false, angle, [a, a, a, a],
+                    );
+                } else {
+                    gpu.draw_sprite_frame(
+                        frame, assets.tex_w, assets.tex_h,
+                        draw_x, draw_y, NOTE_SCALE, false, [a, a, a, a],
+                    );
+                }
             }
         }
     }
 
     fn draw_hold_tail(&self, gpu: &mut GpuState, nd: &NoteData, y_pos: f32) {
-        let assets = match &self.note_assets { Some(a) => a, None => return };
+        // Use opponent note skin for opponent holds
+        let assets = if !nd.must_press {
+            self.opp_note_assets.as_ref().or(self.note_assets.as_ref())
+        } else {
+            self.note_assets.as_ref()
+        };
+        let assets = match assets { Some(a) => a, None => return };
         let lane = nd.lane;
 
         let piece = match assets.atlas.get_frame(HOLD_PIECE_ANIMS[lane], 0) {
@@ -474,8 +593,9 @@ impl PlayScreen {
 
         let tw = assets.tex_w;
         let th = assets.tex_h;
-        let (x, _, _) = self.strum_pos(lane, nd.must_press);
-        let white = [1.0, 1.0, 1.0, 1.0];
+        let (x, sy, sa, _ang) = self.strum_pos(lane, nd.must_press);
+        let a = sa.clamp(0.0, 1.0);
+        let color = [1.0, 1.0, 1.0, a];
 
         let pw = piece.src.w * NOTE_SCALE;
         let ph = piece.src.h * NOTE_SCALE;
@@ -486,7 +606,7 @@ impl PlayScreen {
         let hold_top = y_pos + NOTE_WIDTH * 0.5;
 
         let clip_y = if nd.was_good_hit {
-            STRUM_Y + NOTE_WIDTH * 0.5
+            sy + NOTE_WIDTH * 0.5
         } else {
             -999.0
         };
@@ -508,7 +628,7 @@ impl PlayScreen {
                     piece.src.x, piece.src.y + piece.src.h * clip_frac,
                     piece.src.w, piece.src.h * (vis_h / tile_h),
                     px, vis_top, pw, vis_h,
-                    false, white,
+                    false, color,
                 );
             }
             cy += ph;
@@ -524,7 +644,7 @@ impl PlayScreen {
                     end.src.x, end.src.y + end.src.h * clip_frac,
                     end.src.w, end.src.h * (vis_h / eh),
                     ex, vis_top, ew, vis_h,
-                    false, white,
+                    false, color,
                 );
             }
         }

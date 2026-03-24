@@ -7,13 +7,13 @@ use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 use rustic_render::gpu::GpuState;
 
 use crate::screen::Screen;
-use crate::screens::play::PlayScreen;
+use crate::screens::title::TitleScreen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -75,11 +75,7 @@ impl ApplicationHandler for App {
                 ..
             } => match state {
                 ElementState::Pressed => {
-                    if key == KeyCode::Escape {
-                        event_loop.exit();
-                    } else {
-                        self.current_screen.handle_key(key);
-                    }
+                    self.current_screen.handle_key(key);
                 }
                 ElementState::Released => {
                     self.current_screen.handle_key_release(key);
@@ -92,6 +88,18 @@ impl ApplicationHandler for App {
                 self.last_frame = now;
 
                 self.current_screen.update(dt);
+
+                // Screen transitions (retry, etc.)
+                if let Some(mut next) = self.current_screen.next_screen() {
+                    // Pass shared audio (freakyMenu) between menu screens
+                    if let Some(audio) = self.current_screen.take_audio() {
+                        next.set_audio(audio);
+                    }
+                    if let Some(gpu) = &self.gpu {
+                        next.init(gpu);
+                    }
+                    self.current_screen = next;
+                }
 
                 if let Some(gpu) = &mut self.gpu {
                     self.current_screen.draw(gpu);
@@ -113,6 +121,6 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-    let mut app = App::new(Box::new(PlayScreen::new("bopeebo", "normal")));
+    let mut app = App::new(Box::new(TitleScreen::new()));
     event_loop.run_app(&mut app).unwrap();
 }

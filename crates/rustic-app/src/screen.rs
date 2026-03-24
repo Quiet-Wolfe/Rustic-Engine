@@ -1,3 +1,4 @@
+use rustic_audio::AudioEngine;
 use rustic_render::gpu::GpuState;
 use winit::keyboard::KeyCode;
 
@@ -8,4 +9,10 @@ pub trait Screen {
     fn handle_key_release(&mut self, _key: KeyCode) {}
     fn update(&mut self, dt: f32);
     fn draw(&mut self, gpu: &mut GpuState);
+    /// Return a new screen to transition to (e.g. retry).
+    fn next_screen(&mut self) -> Option<Box<dyn Screen>> { None }
+    /// Take the shared menu audio engine (freakyMenu) so the next screen can reuse it.
+    fn take_audio(&mut self) -> Option<AudioEngine> { None }
+    /// Receive a shared audio engine from the previous screen.
+    fn set_audio(&mut self, _audio: AudioEngine) {}
 }

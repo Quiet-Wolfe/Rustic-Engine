@@ -1,135 +1,289 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Mod-priority asset path resolver.
-/// Checks: current_mod -> global_mods -> base_assets.
+///
+/// Search roots are checked in order (first = highest priority).
+/// Typical setup: mod assets → engine shared → base game shared → base game.
 pub struct AssetPaths {
-    pub base_path: PathBuf,
-    pub current_mod: Option<PathBuf>,
-    pub global_mods: Vec<PathBuf>,
+    /// Ordered search roots. First match wins.
+    search_roots: Vec<PathBuf>,
 }
 
 impl AssetPaths {
-    pub fn new(base_path: PathBuf) -> Self {
+    pub fn new() -> Self {
         Self {
-            base_path,
-            current_mod: None,
-            global_mods: Vec::new(),
+            search_roots: Vec::new(),
         }
     }
 
-    /// Resolve an asset path with mod priority.
-    pub fn resolve(&self, relative: &str) -> PathBuf {
-        if let Some(ref mod_path) = self.current_mod {
-            let p = mod_path.join(relative);
-            if p.exists() {
-                return p;
+    /// Build the default path resolver for Psych Engine + mods.
+    /// Roots are added highest priority first.
+    pub fn psych_default() -> Self {
+        let mut paths = Self::new();
+
+        // Mod: VS Retrospecter Part 2
+        let retro = PathBuf::from("references/VS-RetroSpecter-PART-2-Compiled/assets");
+        if retro.exists() {
+            paths.add_root(retro.clone());
+            // Mod also has a shared/ subdirectory with images/sounds/music
+            let retro_shared = retro.join("shared");
+            if retro_shared.exists() {
+                paths.add_root(retro_shared);
             }
         }
 
-        for mod_path in &self.global_mods {
-            let p = mod_path.join(relative);
+        // Engine shared (note skins, common SFX, menu music, bf character)
+        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets/shared"));
+
+        // Base game shared (characters, stages, data, images)
+        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets/base_game/shared"));
+
+        // Base game root (songs, week-specific dirs like week1/)
+        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets/base_game"));
+
+        // Engine root (fallback)
+        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets"));
+
+        paths
+    }
+
+    /// Add a search root (lower priority than existing roots).
+    pub fn add_root(&mut self, path: PathBuf) {
+        self.search_roots.push(path);
+    }
+
+    /// Add a search root at highest priority (before all existing roots).
+    pub fn add_root_front(&mut self, path: PathBuf) {
+        self.search_roots.insert(0, path);
+    }
+
+    // === Core resolution ===
+
+    /// Find the first existing file matching `relative` across all search roots.
+    pub fn find(&self, relative: &str) -> Option<PathBuf> {
+        for root in &self.search_roots {
+            let p = root.join(relative);
             if p.exists() {
-                return p;
+                return Some(p);
             }
         }
-
-        self.base_path.join(relative)
+        None
     }
 
-    pub fn exists(&self, relative: &str) -> bool {
-        self.resolve(relative).exists()
-    }
-
-    /// Image path: checks shared/images/ then images/.
-    pub fn image(&self, name: &str) -> PathBuf {
-        let p = self.resolve(&format!("shared/images/{name}.png"));
-        if p.exists() {
-            return p;
+    /// Find first match across multiple relative path patterns.
+    /// Checks ALL roots for the first pattern, then ALL roots for the second, etc.
+    fn find_any(&self, patterns: &[String]) -> Option<PathBuf> {
+        for pattern in patterns {
+            if let Some(p) = self.find(pattern) {
+                return Some(p);
+            }
         }
-        self.resolve(&format!("images/{name}.png"))
+        None
     }
 
-    /// Atlas XML path: checks shared/images/ then images/.
-    pub fn xml(&self, name: &str) -> PathBuf {
-        let p = self.resolve(&format!("shared/images/{name}.xml"));
-        if p.exists() {
-            return p;
+    /// Find ALL matches for a relative path across all search roots.
+    /// Used for collecting scripts from multiple sources.
+    fn find_all(&self, relative: &str) -> Vec<PathBuf> {
+        let mut results = Vec::new();
+        for root in &self.search_roots {
+            let p = root.join(relative);
+            if p.exists() {
+                results.push(p);
+            }
         }
-        self.resolve(&format!("images/{name}.xml"))
+        results
     }
 
-    pub fn song(&self, song_name: &str, file: &str) -> PathBuf {
-        self.resolve(&format!("songs/{song_name}/{file}"))
+    // === Character assets ===
+
+    /// Find a character JSON file.
+    pub fn character_json(&self, name: &str) -> Option<PathBuf> {
+        self.find(&format!("characters/{name}.json"))
     }
 
-    pub fn chart(&self, song_name: &str, difficulty: &str) -> PathBuf {
+    /// Find character sprite atlas (png + xml). Returns the directory containing them.
+    pub fn character_atlas_dir(&self, image_field: &str) -> Option<PathBuf> {
+        // Check images/{image}.png in each root
+        let png = format!("images/{image_field}.png");
+        for root in &self.search_roots {
+            if root.join(&png).exists() {
+                return Some(root.join("images"));
+            }
+        }
+        None
+    }
+
+    /// Find a health bar icon.
+    /// Checks both standard `icon-{name}.png` and mod-style `{name}.png` paths.
+    pub fn health_icon(&self, name: &str) -> Option<PathBuf> {
+        self.find_any(&[
+            format!("images/icons/icon-{name}.png"),
+            format!("images/icons/{name}.png"),
+        ])
+    }
+
+    // === Stage assets ===
+
+    /// Find a stage JSON file.
+    pub fn stage_json(&self, name: &str) -> Option<PathBuf> {
+        self.find(&format!("stages/{name}.json"))
+    }
+
+    /// Find a stage Lua script.
+    pub fn stage_lua(&self, name: &str) -> Option<PathBuf> {
+        self.find(&format!("stages/{name}.lua"))
+    }
+
+    /// Find a stage image, checking the stage's directory first.
+    /// Psych Engine: stage directory → shared/images → images.
+    pub fn stage_image(&self, image: &str, stage_dir: &str) -> Option<PathBuf> {
+        let mut patterns = Vec::new();
+        if !stage_dir.is_empty() {
+            patterns.push(format!("{stage_dir}/images/{image}.png"));
+        }
+        patterns.push(format!("images/{image}.png"));
+        self.find_any(&patterns)
+    }
+
+    // === Song/chart assets ===
+
+    /// Find a chart JSON file.
+    pub fn chart(&self, song_name: &str, difficulty: &str) -> Option<PathBuf> {
         let filename = if difficulty == "normal" || difficulty.is_empty() {
             format!("{song_name}.json")
         } else {
             format!("{song_name}-{difficulty}.json")
         };
-        self.resolve(&format!("data/{song_name}/{filename}"))
+        self.find(&format!("data/{song_name}/{filename}"))
     }
 
-    pub fn character(&self, name: &str) -> PathBuf {
-        self.resolve(&format!("characters/{name}.json"))
+    /// Find a song audio file (e.g., "Inst.ogg", "Voices-Player.ogg").
+    pub fn song_audio(&self, song_name: &str, file: &str) -> Option<PathBuf> {
+        self.find(&format!("songs/{song_name}/{file}"))
     }
 
-    pub fn stage(&self, name: &str) -> PathBuf {
-        self.resolve(&format!("stages/{name}.json"))
-    }
-
-    pub fn character_image(&self, name: &str) -> PathBuf {
-        self.resolve(&format!("shared/images/characters/{name}.png"))
-    }
-
-    pub fn character_xml(&self, name: &str) -> PathBuf {
-        self.resolve(&format!("shared/images/characters/{name}.xml"))
-    }
-
-    pub fn health_icon(&self, name: &str) -> PathBuf {
-        let p = self.resolve(&format!("shared/images/icons/icon-{name}.png"));
-        if p.exists() {
-            return p;
-        }
-        self.resolve(&format!("images/icons/icon-{name}.png"))
-    }
-
-    pub fn week(&self, name: &str) -> PathBuf {
-        self.resolve(&format!("weeks/{name}.json"))
-    }
-
-    /// Scan a directory for file stems matching an extension.
-    pub fn scan_directory(&self, relative_dir: &str, extension: &str) -> Vec<String> {
-        let mut results = Vec::new();
-        let dir = self.resolve(relative_dir);
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some(extension) {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        results.push(stem.to_string());
+    /// Discover all Lua scripts for a song.
+    /// Psych Engine loads: data/{song}/*.lua (script.lua, modchart.lua, eventScript.lua, etc.)
+    pub fn song_scripts(&self, song_name: &str) -> Vec<PathBuf> {
+        let relative_dir = format!("data/{song_name}");
+        let mut scripts = Vec::new();
+        // Check each root for a data/{song}/ directory
+        for root in &self.search_roots {
+            let dir = root.join(&relative_dir);
+            if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                            scripts.push(path);
+                        }
                     }
                 }
             }
         }
-        results.sort();
-        results
+        scripts.sort();
+        scripts
     }
 
-    /// Scan for available songs by looking in data/ directories.
-    pub fn scan_songs(&self) -> Vec<String> {
-        let mut songs = Vec::new();
-        let data_dir = self.resolve("data");
-        if let Ok(entries) = std::fs::read_dir(&data_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        let chart = path.join(format!("{name}.json"));
-                        if chart.exists() {
-                            songs.push(name.to_string());
+    /// Discover custom event Lua scripts.
+    pub fn custom_event_scripts(&self) -> Vec<PathBuf> {
+        let mut scripts = Vec::new();
+        for root in &self.search_roots {
+            let dir = root.join("custom_events");
+            if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                            scripts.push(path);
                         }
+                    }
+                }
+            }
+        }
+        scripts.sort();
+        scripts
+    }
+
+    // === Image / sound assets ===
+
+    /// Find an image by name (checks images/ in each root).
+    pub fn image(&self, name: &str) -> Option<PathBuf> {
+        self.find(&format!("images/{name}.png"))
+    }
+
+    /// Find an image atlas XML.
+    pub fn image_xml(&self, name: &str) -> Option<PathBuf> {
+        self.find(&format!("images/{name}.xml"))
+    }
+
+    /// Find a sound effect.
+    pub fn sound(&self, name: &str) -> Option<PathBuf> {
+        self.find_any(&[
+            format!("sounds/{name}.ogg"),
+        ])
+    }
+
+    /// Find a music file.
+    pub fn music(&self, name: &str) -> Option<PathBuf> {
+        self.find_any(&[
+            format!("music/{name}.ogg"),
+        ])
+    }
+
+    // === Week / freeplay assets ===
+
+    /// Find a week JSON.
+    pub fn week_json(&self, name: &str) -> Option<PathBuf> {
+        self.find(&format!("weeks/{name}.json"))
+    }
+
+    /// Find the first existing weeks directory (for scanning available weeks).
+    pub fn weeks_dir(&self) -> Option<PathBuf> {
+        for root in &self.search_roots {
+            let dir = root.join("weeks");
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+        None
+    }
+
+    /// Collect all weeks directories across all roots (for merging week lists).
+    pub fn all_weeks_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        for root in &self.search_roots {
+            let dir = root.join("weeks");
+            if dir.is_dir() {
+                dirs.push(dir);
+            }
+        }
+        dirs
+    }
+
+    // === Song discovery ===
+
+    /// Discover all song names by scanning `data/` directories across all roots.
+    /// A directory is considered a song if it contains a `.json` chart file
+    /// matching the directory name (e.g. `data/extirpatient/extirpatient.json`).
+    /// Returns unique song names (highest-priority root wins on duplicates).
+    pub fn discover_songs(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut songs = Vec::new();
+        for root in &self.search_roots {
+            let data_dir = root.join("data");
+            if !data_dir.is_dir() { continue; }
+            if let Ok(entries) = std::fs::read_dir(&data_dir) {
+                for entry in entries.flatten() {
+                    if !entry.path().is_dir() { continue; }
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy().to_string();
+                    if seen.contains(&name_str) { continue; }
+                    // Check for a chart JSON matching the folder name
+                    let chart = entry.path().join(format!("{}.json", name_str));
+                    if chart.exists() {
+                        seen.insert(name_str.clone());
+                        songs.push(name_str);
                     }
                 }
             }
@@ -138,13 +292,51 @@ impl AssetPaths {
         songs
     }
 
-    pub fn set_current_mod(&mut self, path: Option<PathBuf>) {
-        self.current_mod = path;
+    // === Scanning ===
+
+    /// Scan for all files with a given extension in a relative directory across all roots.
+    /// Returns unique file stems.
+    pub fn scan_stems(&self, relative_dir: &str, extension: &str) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut results = Vec::new();
+        for root in &self.search_roots {
+            let dir = root.join(relative_dir);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some(extension) {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            if seen.insert(stem.to_string()) {
+                                results.push(stem.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        results.sort();
+        results
     }
 
-    pub fn add_global_mod(&mut self, path: PathBuf) {
-        if !self.global_mods.contains(&path) {
-            self.global_mods.push(path);
+    /// Find the first directory matching a relative path across all roots.
+    pub fn find_dir(&self, relative: &str) -> Option<PathBuf> {
+        for root in &self.search_roots {
+            let p = root.join(relative);
+            if p.is_dir() {
+                return Some(p);
+            }
         }
+        None
+    }
+
+    /// Get all search roots (for debugging).
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.search_roots
+    }
+}
+
+impl Default for AssetPaths {
+    fn default() -> Self {
+        Self::new()
     }
 }

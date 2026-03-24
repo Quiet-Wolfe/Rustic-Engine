@@ -6,6 +6,7 @@ use crate::note::{EventNote, NoteData, NoteKind};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwagSong {
+    #[serde(default, deserialize_with = "de_string_or_default")]
     pub song: String,
     pub notes: Vec<SwagSection>,
     #[serde(default)]
@@ -16,14 +17,14 @@ pub struct SwagSong {
     #[serde(default)]
     pub offset: f64,
 
-    #[serde(default = "default_player1")]
+    #[serde(default = "default_player1", deserialize_with = "de_string_or_default")]
     pub player1: String,
-    #[serde(default = "default_player2")]
+    #[serde(default = "default_player2", deserialize_with = "de_string_or_default")]
     pub player2: String,
-    #[serde(default = "default_gf")]
+    #[serde(default = "default_gf", deserialize_with = "de_string_or_default")]
     pub gf_version: String,
 
-    #[serde(default = "default_stage")]
+    #[serde(default = "default_stage", deserialize_with = "de_string_or_default")]
     pub stage: String,
     #[serde(default)]
     pub format: String,
@@ -45,6 +46,11 @@ pub struct SwagSong {
     pub arrow_skin: String,
     #[serde(default)]
     pub splash_skin: String,
+}
+
+/// Deserialize a string that may be null (treat null as empty string).
+fn de_string_or_default<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Option::<String>::deserialize(d).map(|o| o.unwrap_or_default())
 }
 
 fn default_speed() -> f64 {
@@ -118,6 +124,12 @@ pub fn parse_chart(json_data: &str) -> Result<ParsedChart, ChartError> {
 
     let mut song: SwagSong =
         serde_json::from_value(song_value).map_err(|e| ChartError::Parse(e.to_string()))?;
+
+    // Apply defaults for null/empty fields
+    if song.player1.is_empty() { song.player1 = default_player1(); }
+    if song.player2.is_empty() { song.player2 = default_player2(); }
+    if song.gf_version.is_empty() { song.gf_version = default_gf(); }
+    if song.stage.is_empty() { song.stage = default_stage(); }
 
     if !song.format.starts_with("psych_v1") {
         convert_to_psych_v1(&mut song);

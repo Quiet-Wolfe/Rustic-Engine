@@ -67,6 +67,16 @@ pub struct ScriptState {
     /// When any script calls setProperty('foo', 123), it's stored here so
     /// other scripts can read it back via getProperty('foo').
     pub custom_vars: HashMap<String, LuaValue>,
+
+    /// Per-note visual overrides set by Lua modcharts.
+    /// Key is note index, value maps field name to override value.
+    pub note_overrides: HashMap<usize, HashMap<String, f64>>,
+
+    /// Total note count, so Lua can query unspawnNotes.length.
+    pub note_count: usize,
+
+    /// Basic note data for Lua reads: (strum_time, lane, must_press, sustain_length).
+    pub note_read_data: Vec<(f64, usize, bool, f64)>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -76,6 +86,9 @@ pub struct StrumProps {
     pub y: f32,
     pub alpha: f32,
     pub angle: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub down_scroll: Option<bool>,
     /// If true, these are custom values; if false, use defaults.
     pub custom: bool,
 }
@@ -198,7 +211,7 @@ impl ScriptState {
             property_writes: Vec::new(),
             property_values: HashMap::new(),
             tweens: TweenManager::new(),
-            strum_props: [StrumProps { x: 0.0, y: 0.0, alpha: 1.0, angle: 0.0, custom: false }; 8],
+            strum_props: [StrumProps { x: 0.0, y: 0.0, alpha: 1.0, angle: 0.0, scale_x: 0.7, scale_y: 0.7, down_scroll: None, custom: false }; 8],
             sprites_to_remove: Vec::new(),
             song_position: 0.0,
             camera_zoom: 1.0,
@@ -208,6 +221,9 @@ impl ScriptState {
             camera_target_requests: Vec::new(),
             triggered_events: Vec::new(),
             custom_vars: HashMap::new(),
+            note_overrides: HashMap::new(),
+            note_count: 0,
+            note_read_data: Vec::new(),
         }
     }
 }

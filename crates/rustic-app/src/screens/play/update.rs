@@ -107,6 +107,13 @@ impl PlayScreen {
             self.scripts.set_on_all("__midY_bf", my as f64);
         }
 
+        // Update tweens/timers BEFORE Lua callbacks (matches Psych Engine: FlxG updates
+        // tweens first, then game update runs Lua callbacks which can override tween values)
+        if self.scripts.has_scripts() {
+            self.scripts.update_tweens(dt);
+            self.process_property_writes();
+        }
+
         // Lua: onUpdate (before gameplay logic)
         if self.scripts.has_scripts() {
             self.scripts.call_with_elapsed("onUpdate", dt as f64);
@@ -120,6 +127,49 @@ impl PlayScreen {
         };
         let audio_finished = self.audio.as_ref().is_some_and(|a| a.is_finished());
         self.game.update(dt, audio_pos, audio_finished);
+
+        // === Dispatch chart events (onEvent) ===
+        let song_pos = self.game.conductor.song_position;
+        while self.event_index < self.chart_events.len()
+            && self.chart_events[self.event_index].strum_time <= song_pos
+        {
+            let evt = &self.chart_events[self.event_index];
+            let name = evt.name.clone();
+            let v1 = evt.value1.clone();
+            let v2 = evt.value2.clone();
+            self.event_index += 1;
+
+            log::debug!("Chart event: {} ({}, {})", name, v1, v2);
+
+            // Fire onEvent on all Lua scripts
+            if self.scripts.has_scripts() {
+                self.scripts.call_event(&name, &v1, &v2);
+                self.process_property_writes();
+            }
+
+            // Handle built-in events
+            match name.as_str() {
+                "Add Camera Zoom" => {
+                    let game_zoom: f32 = v1.parse().unwrap_or(0.015);
+                    let hud_zoom: f32 = v2.parse().unwrap_or(0.03);
+                    if !self.disable_zooming && self.camera.zoom < 1.35 {
+                        self.camera.zoom += game_zoom;
+                        self.hud_zoom += hud_zoom;
+                    }
+                }
+                "Change Scroll Speed" => {
+                    let multiplier: f64 = v1.parse().unwrap_or(1.0);
+                    let _duration: f32 = v2.parse().unwrap_or(0.0);
+                    // Psych Engine: songSpeed = SONG.speed * multiplier
+                    // TODO: tween over duration instead of instant
+                    self.game.song_speed = self.game.base_song_speed * multiplier;
+                }
+                "Set GF Speed" => {
+                    // Sets GF dance frequency (not implemented yet)
+                }
+                _ => {}
+            }
+        }
 
         // === Process gameplay events ===
         let events = self.game.drain_events();
@@ -355,11 +405,6 @@ impl PlayScreen {
         // Lua: onUpdatePost (after all game logic)
         if self.scripts.has_scripts() {
             self.scripts.call_with_elapsed("onUpdatePost", dt as f64);
-        }
-
-        // Update tweens/timers and fire completion callbacks
-        if self.scripts.has_scripts() {
-            self.scripts.update_tweens(dt);
         }
 
         // Process game-level property writes from Lua scripts

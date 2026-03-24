@@ -339,6 +339,58 @@ impl GpuState {
         GpuTexture { bind_group, width, height }
     }
 
+    /// Create a solid-color texture. `color_hex` is "RRGGBB" or "AARRGGBB".
+    pub fn create_solid_texture(&self, width: u32, height: u32, color_hex: &str) -> GpuTexture {
+        let hex = color_hex.trim_start_matches('#');
+        let (r, g, b, a) = if hex.len() >= 8 {
+            (
+                u8::from_str_radix(&hex[2..4], 16).unwrap_or(255),
+                u8::from_str_radix(&hex[4..6], 16).unwrap_or(255),
+                u8::from_str_radix(&hex[6..8], 16).unwrap_or(255),
+                u8::from_str_radix(&hex[0..2], 16).unwrap_or(255),
+            )
+        } else {
+            (
+                u8::from_str_radix(&hex[0..2], 16).unwrap_or(255),
+                u8::from_str_radix(&hex[2..4], 16).unwrap_or(255),
+                u8::from_str_radix(&hex[4..6], 16).unwrap_or(255),
+                255,
+            )
+        };
+        // Premultiply
+        let af = a as f32 / 255.0;
+        let pixel = [(r as f32 * af + 0.5) as u8, (g as f32 * af + 0.5) as u8, (b as f32 * af + 0.5) as u8, a];
+        let w = width.max(1);
+        let h = height.max(1);
+        let data: Vec<u8> = pixel.iter().copied().cycle().take((w * h * 4) as usize).collect();
+
+        let texture = self.device.create_texture_with_data(
+            &self.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("solid_color"),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &data,
+        );
+        let view = texture.create_view(&Default::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Solid Texture Bind Group"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        });
+        GpuTexture { bind_group, width: w, height: h }
+    }
+
     /// Add a sprite frame to the current batch.
     pub fn draw_sprite_frame(
         &mut self,
@@ -408,6 +460,60 @@ impl GpuState {
         }
     }
 
+    /// Draw a sprite frame with rotation (angle in degrees, around frame center).
+    pub fn draw_sprite_frame_rotated(
+        &mut self,
+        frame: &SpriteFrame,
+        tex_w: f32,
+        tex_h: f32,
+        x: f32,
+        y: f32,
+        scale: f32,
+        flip_x: bool,
+        angle_deg: f32,
+        color: [f32; 4],
+    ) {
+        if angle_deg.abs() < 0.01 {
+            return self.draw_sprite_frame(frame, tex_w, tex_h, x, y, scale, flip_x, color);
+        }
+        // Compute display size and draw position (same as draw_sprite_frame)
+        let (w, h, draw_x, draw_y, u0, v0, u1, v1) = if frame.rotated {
+            let dw = frame.src.h * scale;
+            let dh = frame.src.w * scale;
+            let dx = if flip_x {
+                x + (frame.frame_w + frame.offset_x - frame.src.h) * scale
+            } else {
+                x - frame.offset_x * scale
+            };
+            let dy = y - frame.offset_y * scale;
+            let _u0 = frame.src.x / tex_w;
+            let _v0 = frame.src.y / tex_h;
+            let _u1 = (frame.src.x + frame.src.w) / tex_w;
+            let _v1 = (frame.src.y + frame.src.h) / tex_h;
+            // For rotated atlas frames, we'd need special UV handling.
+            // For now, approximate with the un-rotated UVs (most note skins aren't atlas-rotated).
+            (dw, dh, dx, dy, _u0, _v0, _u1, _v1)
+        } else {
+            let w = frame.src.w * scale;
+            let h = frame.src.h * scale;
+            let dx = if flip_x {
+                x + (frame.frame_w + frame.offset_x - frame.src.w) * scale
+            } else {
+                x - frame.offset_x * scale
+            };
+            let dy = y - frame.offset_y * scale;
+            let u0 = frame.src.x / tex_w;
+            let v0 = frame.src.y / tex_h;
+            let u1 = (frame.src.x + frame.src.w) / tex_w;
+            let v1 = (frame.src.y + frame.src.h) / tex_h;
+            (w, h, dx, dy, u0, v0, u1, v1)
+        };
+        let cx = draw_x + w / 2.0;
+        let cy = draw_y + h / 2.0;
+        let angle_rad = angle_deg.to_radians();
+        self.push_quad_rotated(cx, cy, w, h, u0, v0, u1, v1, angle_rad, flip_x, color);
+    }
+
     fn push_quad(
         &mut self,
         x: f32, y: f32, w: f32, h: f32,
@@ -422,6 +528,33 @@ impl GpuState {
         self.vertices.push(SpriteVertex { position: [x + w, y], uv: [tr_u, tr_v], color });
         self.vertices.push(SpriteVertex { position: [x + w, y + h], uv: [br_u, br_v], color });
         self.vertices.push(SpriteVertex { position: [x, y + h], uv: [bl_u, bl_v], color });
+        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    /// Push a quad rotated by `angle` radians around its center. Coordinates in game-space pixels.
+    pub fn push_quad_rotated(
+        &mut self,
+        cx: f32, cy: f32, w: f32, h: f32,
+        u0: f32, v0: f32, u1: f32, v1: f32,
+        angle: f32,
+        flip_x: bool,
+        color: [f32; 4],
+    ) {
+        let (sin, cos) = angle.sin_cos();
+        let hw = w / 2.0;
+        let hh = h / 2.0;
+        // Corners relative to center, then rotate
+        let corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)];
+        let mut verts = [[0.0f32; 2]; 4];
+        for (i, (lx, ly)) in corners.iter().enumerate() {
+            verts[i] = [cx + lx * cos - ly * sin, cy + lx * sin + ly * cos];
+        }
+        let (ul, ur) = if flip_x { (u1, u0) } else { (u0, u1) };
+        let base = self.vertices.len() as u32;
+        self.vertices.push(SpriteVertex { position: verts[0], uv: [ul, v0], color });
+        self.vertices.push(SpriteVertex { position: verts[1], uv: [ur, v0], color });
+        self.vertices.push(SpriteVertex { position: verts[2], uv: [ur, v1], color });
+        self.vertices.push(SpriteVertex { position: verts[3], uv: [ul, v1], color });
         self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use winit::keyboard::KeyCode;
 
 use rustic_core::character::CharacterFile;
@@ -48,15 +46,18 @@ impl SpriteTestScreen {
 
 impl Screen for SpriteTestScreen {
     fn init(&mut self, gpu: &GpuState) {
-        let assets = AssetPaths::new(PathBuf::from("references/FNF-PsychEngine/assets/shared"));
+        let assets = AssetPaths::psych_default();
 
-        let char_path = assets.character("bf");
+        let char_path = assets.character_json("bf")
+            .expect("bf.json not found");
         let char_json = std::fs::read_to_string(&char_path)
             .unwrap_or_else(|e| panic!("Failed to read character file {:?}: {}", char_path, e));
         let bf_char = CharacterFile::from_json(&char_json).expect("Failed to parse bf.json");
 
-        let img_path = assets.image(&bf_char.image);
-        let xml_path = assets.xml(&bf_char.image);
+        let img_path = assets.image(&bf_char.image)
+            .expect("BF image not found");
+        let xml_path = assets.image_xml(&bf_char.image)
+            .expect("BF atlas XML not found");
 
         let gpu_texture = gpu.load_texture_from_path(&img_path);
 

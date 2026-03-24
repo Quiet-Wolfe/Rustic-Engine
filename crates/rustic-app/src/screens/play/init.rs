@@ -96,6 +96,7 @@ impl PlayScreen {
         // Initialize PlayState with chart data
         self.game = PlayState::new(parsed.song.bpm);
         self.game.song_speed = parsed.song.speed;
+        self.game.base_song_speed = parsed.song.speed;
 
         let sections: Vec<(bool, f64, f64)> = parsed.song.notes.iter()
             .map(|s| {
@@ -108,6 +109,22 @@ impl PlayScreen {
         let mut notes = parsed.notes;
         notes.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap());
         self.game.notes = notes;
+
+        // Store chart events (from chart JSON + separate events.json if it exists)
+        let mut chart_events = parsed.events;
+        // Try loading separate events.json (Psych Engine loads both)
+        if let Some(events_path) = paths.find(&format!("data/{}/events.json", self.song_name)) {
+            if let Ok(events_json) = std::fs::read_to_string(&events_path) {
+                match rustic_core::chart::parse_events_file(&events_json) {
+                    Ok(mut extra_events) => chart_events.append(&mut extra_events),
+                    Err(e) => log::warn!("Failed to parse events.json: {}", e),
+                }
+            }
+        }
+        chart_events.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap());
+        log::info!("Loaded {} chart events", chart_events.len());
+        self.chart_events = chart_events;
+        self.event_index = 0;
 
         // Build section timing data
         {
@@ -214,6 +231,15 @@ impl PlayScreen {
             self.scripts.load_script(&script_path);
         }
 
+        // Set default character position globals BEFORE onCreate
+        // (Psych Engine sets BF_X, DAD_X etc. from stage data)
+        self.scripts.set_on_all("defaultBoyfriendX", stage.boyfriend[0]);
+        self.scripts.set_on_all("defaultBoyfriendY", stage.boyfriend[1]);
+        self.scripts.set_on_all("defaultOpponentX", stage.opponent[0]);
+        self.scripts.set_on_all("defaultOpponentY", stage.opponent[1]);
+        self.scripts.set_on_all("defaultGirlfriendX", stage.girlfriend[0]);
+        self.scripts.set_on_all("defaultGirlfriendY", stage.girlfriend[1]);
+
         // Call onCreate on all loaded scripts
         if self.scripts.has_scripts() {
             self.scripts.call("onCreate");
@@ -293,6 +319,18 @@ impl PlayScreen {
             if let Some((json_path, char_def)) = parse_char(&paths, &parsed.song.gf_version) {
                 self.char_gf = load_char_sprite(&paths, gpu, &json_path, &char_def, stage.girlfriend[0], stage.girlfriend[1], false, stage_name);
             }
+        }
+
+        // Load opponent note skin if character defines one
+        if let Some((_, char_def)) = &dad_def {
+            if !char_def.skin.is_empty() {
+                self.opp_note_assets = self.load_note_skin(gpu, &paths, &char_def.skin);
+                if self.opp_note_assets.is_some() {
+                    log::info!("Loaded opponent note skin: {}", char_def.skin);
+                }
+            }
+            // Note: healthBarImg is a custom Retrospecter-fork field, not standard Psych Engine.
+            // Custom health bar images are not yet supported — using standard colored bar.
         }
 
         // Store camera offsets for dynamic recomputation at section changes
@@ -403,6 +441,14 @@ impl PlayScreen {
             self.game.song_speed, self.game.conductor.bpm, stage_name,
             if self.scripts.has_scripts() { "yes" } else { "none" },
         );
+
+        // Populate note data into Lua VMs so modcharts can query/modify individual notes
+        if self.scripts.has_scripts() {
+            let note_tuples: Vec<(f64, usize, bool, f64)> = self.game.notes.iter()
+                .map(|n| (n.strum_time, n.lane, n.must_press, n.sustain_length))
+                .collect();
+            self.scripts.populate_note_data(&note_tuples);
+        }
 
         // Call onCreatePost after everything is initialized
         if self.scripts.has_scripts() {

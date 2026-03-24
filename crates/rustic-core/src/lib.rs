@@ -6,3 +6,4 @@ pub mod paths;
 pub mod rating;
 pub mod scoring;
 pub mod stage;
+pub mod week;

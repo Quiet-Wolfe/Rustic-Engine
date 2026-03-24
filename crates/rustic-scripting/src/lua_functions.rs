@@ -86,10 +86,17 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
         tbl.set("y", 0.0)?;
         tbl.set("alpha", 1.0)?;
         tbl.set("angle", 0.0)?;
+        tbl.set("scale_x", 0.7)?;
+        tbl.set("scale_y", 0.7)?;
+        tbl.set("downScroll", false)?;
         tbl.set("custom", false)?;
         strum_props.set(i + 1, tbl)?;
     }
     g.set("__strum_props", strum_props)?;
+    // Initialize note data tables for per-note manipulation
+    g.set("__note_read_data", lua.create_table()?)?;
+    g.set("__note_overrides", lua.create_table()?)?;
+    g.set("__dirty_notes", lua.create_table()?)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -443,6 +450,30 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
+    // characterPlayAnim(charType, anim, forced) — queue character anim via pending props
+    globals.set("characterPlayAnim", lua.create_function(|lua, (char_type, anim, forced): (String, String, Option<bool>)| {
+        let _forced = forced.unwrap_or(false);
+        // Queue as a property write for the app layer to handle
+        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        let tbl = lua.create_table()?;
+        let prop = format!("__charPlayAnim.{}", char_type);
+        tbl.set("prop", prop)?;
+        tbl.set("value", anim)?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    // addProperty(name, defaultValue) — creates a property (stored as custom var)
+    globals.set("addProperty", lua.create_function(|lua, (name, value): (String, LuaValue)| {
+        let vars: LuaTable = lua.globals().get("__custom_vars")?;
+        // Only set if not already defined
+        let existing: LuaValue = vars.get(name.as_str())?;
+        if matches!(existing, LuaNil) {
+            vars.set(name, value)?;
+        }
+        Ok(())
+    })?)?;
+
     // screenCenter(tag, axis)
     globals.set("screenCenter", lua.create_function(|lua, (tag, axis): (String, Option<String>)| {
         let axis = axis.unwrap_or_else(|| "xy".to_string());
@@ -577,6 +608,12 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 };
             }
         }
+        // Handle dotted paths for game object arrays (e.g. "unspawnNotes.length")
+        if prop == "unspawnNotes.length" || prop == "notes.length" {
+            let g = lua.globals();
+            return Ok(g.get::<LuaValue>("__unspawnNotesLength").unwrap_or(LuaValue::Integer(0)));
+        }
+
         // Known game properties — read from globals (which Lua scripts may have set)
         let g = lua.globals();
         match prop.as_str() {
@@ -629,9 +666,44 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         "y" => Ok(tbl.get::<LuaValue>("y").unwrap_or(LuaValue::Number(0.0))),
                         "alpha" => Ok(tbl.get::<LuaValue>("alpha").unwrap_or(LuaValue::Number(1.0))),
                         "angle" => Ok(tbl.get::<LuaValue>("angle").unwrap_or(LuaValue::Number(0.0))),
+                        "scale.x" => Ok(tbl.get::<LuaValue>("scale_x").unwrap_or(LuaValue::Number(0.7))),
+                        "scale.y" => Ok(tbl.get::<LuaValue>("scale_y").unwrap_or(LuaValue::Number(0.7))),
+                        "downScroll" => Ok(tbl.get::<LuaValue>("downScroll").unwrap_or(LuaValue::Boolean(false))),
                         _ => Ok(LuaNil),
                     };
                 }
+            }
+        }
+        // Handle note groups (unspawnNotes / notes)
+        if group == "unspawnNotes" || group == "notes" {
+            let i = idx as usize;
+            // First check for overrides in __note_overrides
+            let overrides: LuaTable = lua.globals().get("__note_overrides")?;
+            if let Ok(note_tbl) = overrides.get::<LuaTable>(i as i64 + 1) {
+                if let Ok(val) = note_tbl.get::<LuaValue>(field.as_str()) {
+                    if val != LuaNil {
+                        return Ok(val);
+                    }
+                }
+            }
+            // Fall back to __note_read_data for basic fields
+            let read_data: LuaTable = lua.globals().get("__note_read_data")?;
+            if let Ok(note_tbl) = read_data.get::<LuaTable>(i as i64 + 1) {
+                return match field.as_str() {
+                    "strumTime" => Ok(note_tbl.get::<LuaValue>("strumTime").unwrap_or(LuaValue::Number(0.0))),
+                    "noteData" | "lane" => Ok(note_tbl.get::<LuaValue>("lane").unwrap_or(LuaValue::Integer(0))),
+                    "mustPress" => Ok(note_tbl.get::<LuaValue>("mustPress").unwrap_or(LuaValue::Boolean(false))),
+                    "isSustainNote" => Ok(note_tbl.get::<LuaValue>("isSustainNote").unwrap_or(LuaValue::Boolean(false))),
+                    "sustainLength" => Ok(note_tbl.get::<LuaValue>("sustainLength").unwrap_or(LuaValue::Number(0.0))),
+                    // Visual defaults for fields not yet overridden
+                    "visible" => Ok(LuaValue::Boolean(true)),
+                    "alpha" => Ok(LuaValue::Number(1.0)),
+                    "scale.x" | "scale.y" => Ok(LuaValue::Number(0.7)),
+                    "angle" => Ok(LuaValue::Number(0.0)),
+                    "flipY" => Ok(LuaValue::Boolean(false)),
+                    "colorTransform.redOffset" | "colorTransform.greenOffset" | "colorTransform.blueOffset" => Ok(LuaValue::Number(0.0)),
+                    _ => Ok(LuaNil),
+                };
             }
         }
         Ok(LuaNil)
@@ -650,15 +722,34 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 let props: LuaTable = lua.globals().get("__strum_props")?;
                 if let Ok(tbl) = props.get::<LuaTable>(si as i64 + 1) {
                     match field.as_str() {
-                        "x" => tbl.set("x", value)?,
-                        "y" => tbl.set("y", value)?,
-                        "alpha" => tbl.set("alpha", value)?,
-                        "angle" => tbl.set("angle", value)?,
+                        "x" => tbl.set("x", &value)?,
+                        "y" => tbl.set("y", &value)?,
+                        "alpha" => tbl.set("alpha", &value)?,
+                        "angle" => tbl.set("angle", &value)?,
+                        "scale.x" => tbl.set("scale_x", &value)?,
+                        "scale.y" => tbl.set("scale_y", &value)?,
+                        "downScroll" => tbl.set("downScroll", &value)?,
                         _ => {}
                     }
                     tbl.set("custom", true)?;
                 }
             }
+        } else if group == "unspawnNotes" || group == "notes" {
+            // Handle note groups
+            let i = idx as usize;
+            let overrides: LuaTable = lua.globals().get("__note_overrides")?;
+            let note_tbl: LuaTable = match overrides.get::<LuaTable>(i as i64 + 1) {
+                Ok(t) => t,
+                Err(_) => {
+                    let t = lua.create_table()?;
+                    overrides.set(i as i64 + 1, t.clone())?;
+                    t
+                }
+            };
+            note_tbl.set(field.as_str(), value)?;
+            // Mark this note index as dirty
+            let dirty: LuaTable = lua.globals().get("__dirty_notes")?;
+            dirty.set(i as i64 + 1, true)?;
         }
         Ok(())
     })?)?;

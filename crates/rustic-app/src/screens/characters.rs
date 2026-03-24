@@ -17,15 +17,18 @@ pub struct CharacterSprite {
     pub anim: AnimationController,
     pub x: f32,
     pub y: f32,
-    scale: f32,
+    pub scale: f32,
     flip_x: bool,
     offsets: HashMap<String, [f64; 2]>,
+    loop_flags: HashMap<String, bool>,
     pub hold_timer: f64,
     pub sing_duration: f64,
     pub has_dance_idle: bool,
     dance_left: bool,
     pub healthbar_colors: [u8; 3],
     pub healthicon: String,
+    /// Character-specific camera offset from character JSON.
+    pub camera_position: [f64; 2],
 }
 
 impl CharacterSprite {
@@ -42,8 +45,9 @@ impl CharacterSprite {
         let char_def = CharacterFile::from_json(&json_str)
             .unwrap_or_else(|e| panic!("Failed to parse char JSON {:?}: {}", char_json_path, e));
 
-        let png_path = atlas_dir.join(format!("{}.png", char_def.image));
-        let xml_path = atlas_dir.join(format!("{}.xml", char_def.image));
+        let effective_image = char_def.effective_image();
+        let png_path = atlas_dir.join(format!("{}.png", effective_image));
+        let xml_path = atlas_dir.join(format!("{}.xml", effective_image));
         let xml_str = std::fs::read_to_string(&xml_path)
             .unwrap_or_else(|e| panic!("Failed to read char atlas XML {:?}: {}", xml_path, e));
 
@@ -51,6 +55,7 @@ impl CharacterSprite {
         let mut atlas = SpriteAtlas::from_xml(&xml_str);
 
         let mut offsets = HashMap::new();
+        let mut loop_flags = HashMap::new();
         for anim_def in &char_def.animations {
             if anim_def.indices.is_empty() {
                 atlas.add_by_prefix(&anim_def.anim, &anim_def.name);
@@ -59,6 +64,7 @@ impl CharacterSprite {
                 atlas.add_by_indices(&anim_def.anim, &anim_def.name, &indices);
             }
             offsets.insert(anim_def.anim.clone(), anim_def.offsets);
+            loop_flags.insert(anim_def.anim.clone(), anim_def.loop_anim);
         }
 
         // Psych Engine: flipX = (json.flip_x != isPlayer)
@@ -80,12 +86,14 @@ impl CharacterSprite {
             scale: char_def.scale as f32,
             flip_x,
             offsets,
+            loop_flags,
             hold_timer: 0.0,
             sing_duration: char_def.sing_duration,
             has_dance_idle,
             dance_left: false,
             healthbar_colors: char_def.healthbar_colors,
             healthicon: char_def.healthicon.clone(),
+            camera_position: char_def.camera_position,
         };
 
         if has_dance_idle {
@@ -102,8 +110,12 @@ impl CharacterSprite {
         if count == 0 {
             return;
         }
-        let looping = name.contains("-loop") || name == "idle";
-        if force || self.anim.current_anim != name || self.anim.finished {
+        // Use the loop flag from character JSON, falling back to name heuristics
+        let looping = self.loop_flags.get(name).copied()
+            .unwrap_or_else(|| name.contains("-loop") || name == "idle");
+        if force {
+            self.anim.force_play(name, 24.0, looping);
+        } else if self.anim.current_anim != name || self.anim.finished {
             self.anim.play(name, 24.0, looping);
         }
     }
@@ -216,12 +228,20 @@ impl StageBgSprite {
     }
 
     pub fn draw(&self, gpu: &mut GpuState, cam: &GameCamera) {
-        // HaxeFlixel parallax: screen_pos = (sprite.x - scroll * scrollFactor) * zoom
-        // where scroll = cam_center - screen_half / zoom
-        let scroll_x = cam.x - GAME_W / (2.0 * cam.zoom);
-        let scroll_y = cam.y - GAME_H / (2.0 * cam.zoom);
-        let sx = (self.x - scroll_x * self.scroll_x) * cam.zoom;
-        let sy = (self.y - scroll_y * self.scroll_y) * cam.zoom;
+        // HaxeFlixel camera rendering:
+        //   scroll = cam_center - screen_size / 2  (NO zoom division)
+        //   buffer_pos = sprite.x - scroll * scrollFactor
+        //   screen_pos = (buffer_pos - screen_size/2) * zoom + screen_size/2
+        // The zoom is a scale transform centered on screen, applied AFTER
+        // the scroll/parallax computation.
+        // Note: updateHitbox's offset and origin cancel out in rendering —
+        // the visual result is the same with or without it. So no hitbox offset needed.
+        let scroll_x = cam.x - GAME_W / 2.0;
+        let scroll_y = cam.y - GAME_H / 2.0;
+        let buf_x = self.x - scroll_x * self.scroll_x;
+        let buf_y = self.y - scroll_y * self.scroll_y;
+        let sx = (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0;
+        let sy = (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0;
         let scale = self.scale * cam.zoom;
         let w = self.tex_w * scale;
         let h = self.tex_h * scale;

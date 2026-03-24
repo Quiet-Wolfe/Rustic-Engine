@@ -129,6 +129,17 @@ impl ScriptManager {
         !self.scripts.is_empty()
     }
 
+    /// Populate note data into all Lua VMs so modcharts can query/modify individual notes.
+    /// Each tuple is (strum_time, lane, must_press, sustain_length).
+    pub fn populate_note_data(&mut self, notes: &[(f64, usize, bool, f64)]) {
+        self.state.note_count = notes.len();
+        self.state.note_read_data = notes.to_vec();
+
+        for script in &mut self.scripts {
+            script.populate_note_data(notes);
+        }
+    }
+
     /// Set a numeric global on all loaded scripts (like Psych Engine's setOnScripts).
     pub fn set_on_all(&mut self, name: &str, value: f64) {
         for script in &mut self.scripts {
@@ -140,6 +151,15 @@ impl ScriptManager {
     pub fn set_bool_on_all(&mut self, name: &str, value: bool) {
         for script in &mut self.scripts {
             script.set_global_bool(name, value);
+        }
+    }
+
+    /// Call onEvent(name, value1, value2) on all scripts.
+    pub fn call_event(&mut self, name: &str, value1: &str, value2: &str) {
+        for script in &mut self.scripts {
+            if let Err(e) = script.call_callback_str("onEvent", &mut self.state, &[name, value1, value2]) {
+                log::error!("onEvent error: {}", e);
+            }
         }
     }
 }

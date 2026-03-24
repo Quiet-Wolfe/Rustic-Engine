@@ -140,11 +140,13 @@ pub struct PlayScreen {
     pub(super) icon_scale_dad: f32,
 
     // Sprite assets
-    pub(super) note_assets: Option<NoteAssets>,
+    pub(super) note_assets: Option<NoteAssets>,        // default / player note skin
+    pub(super) opp_note_assets: Option<NoteAssets>,    // opponent note skin (if different)
     pub(super) rating_assets: Option<RatingAssets>,
     pub(super) splash_atlas: Option<NoteAssets>,
     pub(super) icon_bf: Option<GpuTexture>,
     pub(super) icon_dad: Option<GpuTexture>,
+    pub(super) healthbar_tex: Option<GpuTexture>,
     pub(super) countdown_ready: Option<GpuTexture>,
     pub(super) countdown_set: Option<GpuTexture>,
     pub(super) countdown_go: Option<GpuTexture>,
@@ -171,6 +173,10 @@ pub struct PlayScreen {
     /// When true, camera follows camFollow position instead of character targets.
     pub(super) camera_forced_pos: bool,
 
+    /// Chart events (sorted by strum_time, fired as song progresses).
+    pub(super) chart_events: Vec<rustic_core::note::EventNote>,
+    pub(super) event_index: usize,
+
     // Death
     pub(super) death: Option<DeathState>,
     pub(super) death_char_preloaded: Option<CharacterSprite>,
@@ -186,6 +192,7 @@ pub struct PlayScreen {
     // Pause
     pub(super) paused: bool,
     pub(super) pause_selection: usize,
+    pub(super) skip_target_ms: f64,
     pub(super) wants_restart: bool,
 }
 
@@ -204,10 +211,12 @@ impl PlayScreen {
             icon_scale_bf: 1.0,
             icon_scale_dad: 1.0,
             note_assets: None,
+            opp_note_assets: None,
             rating_assets: None,
             splash_atlas: None,
             icon_bf: None,
             icon_dad: None,
+            healthbar_tex: None,
             countdown_ready: None,
             countdown_set: None,
             countdown_go: None,
@@ -229,6 +238,8 @@ impl PlayScreen {
             cam_zooming: false,
             disable_zooming: false,
             camera_forced_pos: false,
+            chart_events: Vec::new(),
+            event_index: 0,
             death: None,
             death_char_preloaded: None,
             scripts: ScriptManager::new(),
@@ -239,6 +250,7 @@ impl PlayScreen {
             paths: AssetPaths::psych_default(),
             paused: false,
             pause_selection: 0,
+            skip_target_ms: 0.0,
             wants_restart: false,
         }
     }
@@ -257,15 +269,45 @@ impl PlayScreen {
         if player { base + GAME_W / 2.0 } else { base }
     }
 
-    /// Get strum position/alpha from modchart state. Falls back to defaults.
-    pub(super) fn strum_pos(&self, lane: usize, player: bool) -> (f32, f32, f32) {
+    /// Get strum position/alpha/angle from modchart state. Falls back to defaults.
+    /// Returns (x, y, alpha, angle_degrees).
+    pub(super) fn strum_pos(&self, lane: usize, player: bool) -> (f32, f32, f32, f32) {
         let idx = if player { lane + 4 } else { lane };
         let sp = &self.scripts.state.strum_props[idx];
         if sp.custom {
-            (sp.x, sp.y, sp.alpha)
+            (sp.x, sp.y, sp.alpha, sp.angle)
         } else {
-            (Self::strum_x(lane, player), STRUM_Y, 1.0)
+            (Self::strum_x(lane, player), STRUM_Y, 1.0, 0.0)
         }
+    }
+
+    /// Load a custom note skin (PNG + XML) and register standard animations.
+    pub(super) fn load_note_skin(
+        &self,
+        gpu: &rustic_render::gpu::GpuState,
+        paths: &rustic_core::paths::AssetPaths,
+        skin_path: &str,
+    ) -> Option<NoteAssets> {
+        let png = paths.image(skin_path)?;
+        let xml_path = paths.image_xml(skin_path)?;
+        let xml_str = std::fs::read_to_string(&xml_path).ok()?;
+        let tex = gpu.load_texture_from_path(&png);
+        let mut atlas = rustic_render::sprites::SpriteAtlas::from_xml(&xml_str);
+        for (anim, prefix) in NOTE_ANIMS.iter().zip(NOTE_PREFIXES.iter()) {
+            atlas.add_by_prefix(anim, prefix);
+        }
+        for prefix in STRUM_ANIMS.iter().chain(PRESS_ANIMS.iter())
+            .chain(CONFIRM_ANIMS.iter()).chain(HOLD_PIECE_ANIMS.iter())
+            .chain(HOLD_END_ANIMS.iter())
+        {
+            atlas.add_by_prefix(prefix, prefix);
+        }
+        Some(NoteAssets {
+            tex_w: tex.width as f32,
+            tex_h: tex.height as f32,
+            texture: tex,
+            atlas,
+        })
     }
 
     /// Recompute camera targets from current character positions (called at section changes).
@@ -356,8 +398,54 @@ impl PlayScreen {
                 "camGame.visible" => {
                     // TODO: toggle game camera visibility
                 }
+                "__charPlayAnim.dad" | "__charPlayAnim.opponent" => {
+                    if let LuaValue::String(anim) = &val {
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.play_anim(anim, true);
+                        }
+                    }
+                }
+                "__charPlayAnim.bf" | "__charPlayAnim.boyfriend" => {
+                    if let LuaValue::String(anim) = &val {
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.play_anim(anim, true);
+                        }
+                    }
+                }
+                "__charPlayAnim.gf" | "__charPlayAnim.girlfriend" => {
+                    if let LuaValue::String(anim) = &val {
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.play_anim(anim, true);
+                        }
+                    }
+                }
                 _ => {
                     log::debug!("Unhandled property write: {} = {:?}", prop, val);
+                }
+            }
+        }
+
+        // Sync note overrides from scripting state to NoteData
+        if !self.scripts.state.note_overrides.is_empty() {
+            let overrides = std::mem::take(&mut self.scripts.state.note_overrides);
+            for (idx, fields) in overrides {
+                if idx >= self.game.notes.len() { continue; }
+                let note = &mut self.game.notes[idx];
+                for (field, val) in &fields {
+                    match field.as_str() {
+                        "visible" => note.visible = *val != 0.0,
+                        "alpha" => note.alpha = *val as f32,
+                        "scale.x" => note.scale_x = *val as f32,
+                        "scale.y" => note.scale_y = *val as f32,
+                        "angle" => note.angle = *val as f32,
+                        "flipY" => note.flip_y = *val != 0.0,
+                        "offsetX" | "offset.x" => note.offset_x = *val as f32,
+                        "offsetY" | "offset.y" => note.offset_y = *val as f32,
+                        "colorTransform.redOffset" => note.color_r_offset = *val as f32,
+                        "colorTransform.greenOffset" => note.color_g_offset = *val as f32,
+                        "colorTransform.blueOffset" => note.color_b_offset = *val as f32,
+                        _ => {}
+                    }
                 }
             }
         }
