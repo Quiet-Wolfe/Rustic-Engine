@@ -269,15 +269,15 @@ impl PlayScreen {
         if player { base + GAME_W / 2.0 } else { base }
     }
 
-    /// Get strum position/alpha/angle from modchart state. Falls back to defaults.
-    /// Returns (x, y, alpha, angle_degrees).
-    pub(super) fn strum_pos(&self, lane: usize, player: bool) -> (f32, f32, f32, f32) {
+    /// Get strum position/alpha/angle/scale from modchart state. Falls back to defaults.
+    /// Returns (x, y, alpha, angle_degrees, scale).
+    pub(super) fn strum_pos(&self, lane: usize, player: bool) -> (f32, f32, f32, f32, f32) {
         let idx = if player { lane + 4 } else { lane };
         let sp = &self.scripts.state.strum_props[idx];
         if sp.custom {
-            (sp.x, sp.y, sp.alpha, sp.angle)
+            (sp.x, sp.y, sp.alpha, sp.angle, sp.scale_x)
         } else {
-            (Self::strum_x(lane, player), STRUM_Y, 1.0, 0.0)
+            (Self::strum_x(lane, player), STRUM_Y, 1.0, 0.0, NOTE_SCALE)
         }
     }
 
@@ -439,6 +439,8 @@ impl PlayScreen {
                         "scale.y" => note.scale_y = *val as f32,
                         "angle" => note.angle = *val as f32,
                         "flipY" => note.flip_y = *val != 0.0,
+                        "correctionOffset" => note.correction_offset = *val as f32,
+                        "isReversingScroll" => note.is_reversing_scroll = *val != 0.0,
                         "offsetX" | "offset.x" => note.offset_x = *val as f32,
                         "offsetY" | "offset.y" => note.offset_y = *val as f32,
                         "colorTransform.redOffset" => note.color_r_offset = *val as f32,

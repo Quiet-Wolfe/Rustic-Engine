@@ -22,7 +22,7 @@ impl AssetPaths {
         let mut paths = Self::new();
 
         // Mod: VS Retrospecter Part 2
-        let retro = PathBuf::from("references/VS-RetroSpecter-PART-2-Compiled/assets");
+        let retro = PathBuf::from("references/Vs-Retrospecter-Part-2-COMPILED/assets");
         if retro.exists() {
             paths.add_root(retro.clone());
             // Mod also has a shared/ subdirectory with images/sounds/music

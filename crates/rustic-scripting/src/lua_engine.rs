@@ -340,17 +340,29 @@ impl LuaScript {
                             "alpha" => crate::tweens::TweenProperty::Alpha,
                             "angle" => crate::tweens::TweenProperty::Angle,
                             "zoom" => crate::tweens::TweenProperty::Zoom,
+                            "scale_x" => crate::tweens::TweenProperty::ScaleX,
+                            "scale_y" => crate::tweens::TweenProperty::ScaleY,
                             _ => continue,
                         };
-                        // Get current value as start value
-                        let start = if let Some(si) = parse_strum_index(&target) {
-                            // Strum target — read from strum_props
+                        // Get current value as start value (explicit start overrides auto-detection)
+                        let start = if let Ok(s) = tbl.get::<f64>("start") {
+                            s as f32
+                        } else if let Some(si) = parse_strum_index(&target) {
                             let sp = &state.strum_props[si];
                             match &prop {
                                 crate::tweens::TweenProperty::X => sp.x,
                                 crate::tweens::TweenProperty::Y => sp.y,
                                 crate::tweens::TweenProperty::Alpha => sp.alpha,
                                 crate::tweens::TweenProperty::Angle => sp.angle,
+                                crate::tweens::TweenProperty::ScaleX => sp.scale_x,
+                                crate::tweens::TweenProperty::ScaleY => sp.scale_y,
+                                _ => 0.0,
+                            }
+                        } else if target.starts_with("__var_") {
+                            let var_name = &target["__var_".len()..];
+                            match state.custom_vars.get(var_name) {
+                                Some(crate::script_state::LuaValue::Float(f)) => *f as f32,
+                                Some(crate::script_state::LuaValue::Int(i)) => *i as f32,
                                 _ => 0.0,
                             }
                         } else {
@@ -495,6 +507,19 @@ impl LuaScript {
             }
             if let Ok(new_tbl) = self.lua.create_table() {
                 globals.set("__pending_events", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_cam_sections (moveCameraSection requests)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_cam_sections") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(section) = pending.get::<i32>(i) {
+                    state.camera_section_requests.push(section);
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_cam_sections", new_tbl).ok();
             }
         }
 

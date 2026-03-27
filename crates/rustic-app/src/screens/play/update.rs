@@ -410,6 +410,18 @@ impl PlayScreen {
         // Process game-level property writes from Lua scripts
         self.process_property_writes();
 
+        // Process moveCameraSection requests from scripts (runHaxeCode / moveCameraSection)
+        let cam_sections: Vec<i32> = self.scripts.state.camera_section_requests.drain(..).collect();
+        for section_idx in cam_sections {
+            let idx = section_idx as usize;
+            if idx < self.game.sections.len() {
+                let must_hit = self.game.sections[idx].must_hit;
+                self.recompute_camera_targets();
+                let target = if must_hit { self.cam_bf } else { self.cam_dad };
+                self.camera.follow(target[0], target[1]);
+            }
+        }
+
         // Process camera target requests from Lua (cameraSetTarget)
         let cam_targets: Vec<String> = self.scripts.state.camera_target_requests.drain(..).collect();
         for target in cam_targets {

@@ -391,6 +391,12 @@ impl TweenManager {
         for tween in self.tweens.values() {
             let val = tween.current_value();
 
+            // Variable tweens (__var_name): collect for custom_vars update
+            if tween.target.starts_with("__var_") {
+                game_tweens.push((tween.target.clone(), tween.property.clone(), val));
+                continue;
+            }
+
             // Check if it's a strum tween (__strum_opponent_N or __strum_player_N)
             if tween.target.starts_with("__strum_") {
                 let idx = if tween.target.starts_with("__strum_opponent_") {
@@ -408,6 +414,8 @@ impl TweenManager {
                             TweenProperty::Y => strum_props[si].y = val,
                             TweenProperty::Alpha => strum_props[si].alpha = val,
                             TweenProperty::Angle => strum_props[si].angle = val,
+                            TweenProperty::ScaleX => strum_props[si].scale_x = val,
+                            TweenProperty::ScaleY => strum_props[si].scale_y = val,
                             _ => {}
                         }
                     }

@@ -77,6 +77,9 @@ pub struct ScriptState {
 
     /// Basic note data for Lua reads: (strum_time, lane, must_press, sustain_length).
     pub note_read_data: Vec<(f64, usize, bool, f64)>,
+
+    /// Pending moveCameraSection requests: section indices to look up in chart data.
+    pub camera_section_requests: Vec<i32>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -224,6 +227,7 @@ impl ScriptState {
             note_overrides: HashMap::new(),
             note_count: 0,
             note_read_data: Vec::new(),
+            camera_section_requests: Vec::new(),
         }
     }
 }

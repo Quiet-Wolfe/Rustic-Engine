@@ -7,13 +7,16 @@ use mlua::prelude::*;
 /// "opponentStrums.members[N]" or "playerStrums.members[N]" → same
 /// Otherwise returns the target as-is (Lua sprite tag).
 fn resolve_strum_target(target: &str) -> String {
+    // Helper: extract index N from "prefix[N]" or "prefix[N].sub.prop"
+    let extract_idx = |s: &str| -> Option<usize> {
+        let bracket = s.find(']')?;
+        s[..bracket].parse().ok()
+    };
+
     // strumLineNotes.members[N] — N is 0-7 (0-3 opponent, 4-7 player)
-    if let Some(idx_str) = target.strip_prefix("strumLineNotes.members[")
-        .and_then(|s| s.strip_suffix(']'))
-    {
-        // May have sub-property like .colorTransform — strip it
-        let idx_part = idx_str.split('.').next().unwrap_or(idx_str);
-        if let Ok(idx) = idx_part.parse::<usize>() {
+    // Also matches strumLineNotes.members[N].colorTransform etc.
+    if let Some(rest) = target.strip_prefix("strumLineNotes.members[") {
+        if let Some(idx) = extract_idx(rest) {
             return if idx < 4 {
                 format!("__strum_opponent_{}", idx)
             } else {
@@ -21,21 +24,15 @@ fn resolve_strum_target(target: &str) -> String {
             };
         }
     }
-    // opponentStrums.members[N]
-    if let Some(idx_str) = target.strip_prefix("opponentStrums.members[")
-        .and_then(|s| s.strip_suffix(']'))
-    {
-        let idx_part = idx_str.split('.').next().unwrap_or(idx_str);
-        if let Ok(idx) = idx_part.parse::<usize>() {
+    // opponentStrums.members[N] (with optional .sub.prop)
+    if let Some(rest) = target.strip_prefix("opponentStrums.members[") {
+        if let Some(idx) = extract_idx(rest) {
             return format!("__strum_opponent_{}", idx);
         }
     }
-    // playerStrums.members[N]
-    if let Some(idx_str) = target.strip_prefix("playerStrums.members[")
-        .and_then(|s| s.strip_suffix(']'))
-    {
-        let idx_part = idx_str.split('.').next().unwrap_or(idx_str);
-        if let Ok(idx) = idx_part.parse::<usize>() {
+    // playerStrums.members[N] (with optional .sub.prop)
+    if let Some(rest) = target.strip_prefix("playerStrums.members[") {
+        if let Some(idx) = extract_idx(rest) {
             return format!("__strum_player_{}", idx);
         }
     }
@@ -97,6 +94,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__note_read_data", lua.create_table()?)?;
     g.set("__note_overrides", lua.create_table()?)?;
     g.set("__dirty_notes", lua.create_table()?)?;
+    g.set("__pending_cam_sections", lua.create_table()?)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -809,8 +807,68 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // runHaxeCode / runHaxeFunction — no-op
-    globals.set("runHaxeCode", lua.create_function(|_lua, _code: String| -> LuaResult<LuaValue> {
+    // runHaxeCode — pattern-match common Haxe patterns and execute natively
+    globals.set("runHaxeCode", lua.create_function(|lua, code: String| -> LuaResult<LuaValue> {
+        let code = code.trim();
+
+        // Pattern: game.moveCameraSection(N)
+        if let Some(inner) = code.strip_prefix("game.moveCameraSection(") {
+            if let Some(num_str) = inner.split(')').next() {
+                if let Ok(section) = num_str.trim().parse::<i32>() {
+                    let g = lua.globals();
+                    let pending: LuaTable = g.get("__pending_cam_sections")?;
+                    let len = pending.len()? as i64;
+                    pending.set(len + 1, section)?;
+                }
+            }
+            return Ok(LuaNil);
+        }
+
+        // Pattern: FlxTween.num(getVar('name'), endVal, duration, {ease: FlxEase.X}, function(num) {setVar('name', num);})
+        if code.contains("FlxTween.num") {
+            if let Some((var_name, end_val, duration, ease)) = parse_flx_tween_num(code) {
+                let g = lua.globals();
+                // Read current value of the variable as start
+                let start_val = if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                    custom.get::<f64>(var_name.as_str()).unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                // Push as a variable tween
+                let pending: LuaTable = g.get("__pending_tweens")?;
+                let tbl = lua.create_table()?;
+                tbl.set("tag", format!("__hx_var_{}", var_name))?;
+                tbl.set("target", format!("__var_{}", var_name))?;
+                tbl.set("property", "x")?; // arbitrary, we just need the interpolated value
+                tbl.set("value", end_val)?;
+                tbl.set("duration", duration)?;
+                tbl.set("ease", ease)?;
+                tbl.set("start", start_val)?;
+                let len = pending.len()? as i64;
+                pending.set(len + 1, tbl)?;
+                log::debug!("runHaxeCode: FlxTween.num({}, {} -> {}, {}s)", var_name, start_val, end_val, duration);
+            }
+            return Ok(LuaNil);
+        }
+
+        // Pattern: camCharacters.visible = true/false
+        if code.contains("camCharacters.visible") {
+            // Parse the boolean value — affects character layer visibility
+            // For now, log it; full implementation needs a property write
+            if code.contains("true") {
+                log::debug!("runHaxeCode: camCharacters.visible = true");
+            } else if code.contains("false") {
+                log::debug!("runHaxeCode: camCharacters.visible = false");
+            }
+            return Ok(LuaNil);
+        }
+
+        // Ignore: function definitions, camCharacters.shake, camVideo.zoom, etc.
+        if code.contains("function ") || code.contains(".shake(") || code.contains("camVideo.") {
+            return Ok(LuaNil);
+        }
+
+        log::debug!("runHaxeCode: unhandled pattern: {}", &code[..code.len().min(80)]);
         Ok(LuaNil)
     })?)?;
 
@@ -856,6 +914,16 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         let len = pending.len().unwrap_or(0);
         pending.set(len + 1, entry)?;
         g.set("__pending_events", pending)?;
+        Ok(())
+    })?)?;
+
+    // moveCameraSection(section) — move camera based on chart section's mustHitSection
+    globals.set("moveCameraSection", lua.create_function(|lua, section: Option<i32>| {
+        let section = section.unwrap_or(0);
+        let g = lua.globals();
+        let pending: LuaTable = g.get("__pending_cam_sections")?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, section)?;
         Ok(())
     })?)?;
 
@@ -1116,8 +1184,8 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
                 "y" => "y",
                 "alpha" => "alpha",
                 "angle" => "angle",
-                "scale.x" | "scaleX" => "x", // For strum scale, map to x for now
-                "scale.y" | "scaleY" => "y",
+                "scale.x" | "scaleX" => "scale_x",
+                "scale.y" | "scaleY" => "scale_y",
                 _ => {
                     log::debug!("startTween: ignoring unknown property '{}' on '{}'", prop_name, target);
                     continue;
@@ -1342,6 +1410,51 @@ fn lua_val_to_f32(val: &LuaValue) -> Option<f32> {
         LuaValue::Integer(n) => Some(*n as f32),
         _ => None,
     }
+}
+
+/// Parse a FlxTween.num(getVar('name'), endVal, duration, {ease: FlxEase.X}, ...) pattern.
+/// Returns (var_name, end_value, duration, ease_name).
+fn parse_flx_tween_num(code: &str) -> Option<(String, f64, f64, String)> {
+    // Extract variable name from getVar('...')
+    let gv = code.find("getVar('")?;
+    let name_start = gv + "getVar('".len();
+    let name_end_rel = code[name_start..].find('\'')?;
+    let var_name = code[name_start..name_start + name_end_rel].to_string();
+
+    // Find the closing paren of getVar('...')
+    let after_name = name_start + name_end_rel;
+    let close_paren = code[after_name..].find(')')?;
+    let pos = after_name + close_paren + 1; // past the )
+
+    // Remaining: ,endVal,duration ,{ease: FlxEase.X}, ...
+    let remaining = &code[pos..];
+    let remaining = remaining.trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+
+    // Parse end value
+    let end_str: String = remaining.chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+        .collect();
+    let end_val: f64 = end_str.parse().ok()?;
+
+    // Skip past end value, parse duration
+    let remaining = &remaining[end_str.len()..];
+    let remaining = remaining.trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+    let dur_str: String = remaining.chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+        .collect();
+    let duration: f64 = dur_str.parse().ok()?;
+
+    // Find ease function name from FlxEase.X
+    let ease = if let Some(idx) = code.find("FlxEase.") {
+        let start = idx + "FlxEase.".len();
+        code[start..].chars()
+            .take_while(|c| c.is_alphanumeric())
+            .collect::<String>()
+    } else {
+        "linear".to_string()
+    };
+
+    Some((var_name, end_val, duration, ease))
 }
 
 fn lua_val_to_string(val: &LuaValue) -> String {

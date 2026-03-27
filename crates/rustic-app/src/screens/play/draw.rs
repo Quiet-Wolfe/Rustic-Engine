@@ -97,7 +97,7 @@ impl PlayScreen {
         let note_positions: Vec<(usize, f32)> = (0..self.game.notes.len())
             .map(|i| {
                 let nd = &self.game.notes[i];
-                let (_sx, sy, _sa, _ang) = self.strum_pos(nd.lane, nd.must_press);
+                let (_sx, sy, _sa, _ang, _sc) = self.strum_pos(nd.lane, nd.must_press);
                 (i, self.game.note_y(nd.strum_time, sy))
             })
             .collect();
@@ -125,7 +125,7 @@ impl PlayScreen {
             if nd.must_press || nd.was_good_hit || nd.too_late { continue; }
             if !nd.visible { continue; }
             if y_pos < -NOTE_WIDTH || y_pos > GAME_H + NOTE_WIDTH { continue; }
-            let (sx, _sy, sa, ang) = self.strum_pos(nd.lane, false);
+            let (sx, _sy, sa, ang, _sc) = self.strum_pos(nd.lane, false);
             let a = (sa * nd.alpha).clamp(0.0, 1.0);
             if a <= 0.0 { continue; }
             let note_ang = ang + nd.angle;
@@ -167,7 +167,7 @@ impl PlayScreen {
             if !nd.must_press || nd.was_good_hit || nd.too_late { continue; }
             if !nd.visible { continue; }
             if y_pos < -NOTE_WIDTH || y_pos > GAME_H + NOTE_WIDTH { continue; }
-            let (sx, _sy, sa, ang) = self.strum_pos(nd.lane, true);
+            let (sx, _sy, sa, ang, _sc) = self.strum_pos(nd.lane, true);
             let a = (sa * nd.alpha).clamp(0.0, 1.0);
             if a <= 0.0 { continue; }
             let note_ang = ang + nd.angle;
@@ -187,7 +187,7 @@ impl PlayScreen {
         // Note splashes (separate batch)
         if let Some(splash) = &self.splash_atlas {
             for s in &self.splashes {
-                let (sx, sy, _sa, _ang) = self.strum_pos(s.lane, s.player);
+                let (sx, sy, _sa, _ang, _sc) = self.strum_pos(s.lane, s.player);
                 let anim = SPLASH_PREFIXES[s.lane];
                 if let Some(frame) = splash.atlas.get_frame(anim, s.frame) {
                     let scale = NOTE_SCALE * 1.3;
@@ -528,7 +528,7 @@ impl PlayScreen {
     }
 
     fn draw_strum(&self, gpu: &mut GpuState, lane: usize, player: bool) {
-        let (x, y, alpha, angle) = self.strum_pos(lane, player);
+        let (x, y, alpha, angle, scale) = self.strum_pos(lane, player);
         if alpha <= 0.0 { return; }
         let elapsed = if player { self.game.player_confirm[lane] } else { self.game.opponent_confirm[lane] };
         let (anim, frame_idx) = if elapsed > 0.0 {
@@ -550,24 +550,25 @@ impl PlayScreen {
             let (ref_w, ref_h) = static_frame
                 .map(|f| (f.frame_w, f.frame_h))
                 .unwrap_or((NOTE_WIDTH / NOTE_SCALE, NOTE_WIDTH / NOTE_SCALE));
+            // Center using default NOTE_SCALE so modchart scale pulses around the strum center
             let cx = x + ref_w * NOTE_SCALE / 2.0;
             let cy = y + ref_h * NOTE_SCALE / 2.0;
 
             let count = assets.atlas.frame_count(anim);
             let clamped = if count > 0 { frame_idx.min(count - 1) } else { 0 };
             if let Some(frame) = assets.atlas.get_frame(anim, clamped) {
-                let draw_x = cx - frame.frame_w * NOTE_SCALE / 2.0;
-                let draw_y = cy - frame.frame_h * NOTE_SCALE / 2.0;
+                let draw_x = cx - frame.frame_w * scale / 2.0;
+                let draw_y = cy - frame.frame_h * scale / 2.0;
                 let a = alpha.clamp(0.0, 1.0);
                 if angle.abs() > 0.01 {
                     gpu.draw_sprite_frame_rotated(
                         frame, assets.tex_w, assets.tex_h,
-                        draw_x, draw_y, NOTE_SCALE, false, angle, [a, a, a, a],
+                        draw_x, draw_y, scale, false, angle, [a, a, a, a],
                     );
                 } else {
                     gpu.draw_sprite_frame(
                         frame, assets.tex_w, assets.tex_h,
-                        draw_x, draw_y, NOTE_SCALE, false, [a, a, a, a],
+                        draw_x, draw_y, scale, false, [a, a, a, a],
                     );
                 }
             }
@@ -593,7 +594,7 @@ impl PlayScreen {
 
         let tw = assets.tex_w;
         let th = assets.tex_h;
-        let (x, sy, sa, _ang) = self.strum_pos(lane, nd.must_press);
+        let (x, sy, sa, _ang, _sc) = self.strum_pos(lane, nd.must_press);
         let a = sa.clamp(0.0, 1.0);
         let color = [1.0, 1.0, 1.0, a];
 

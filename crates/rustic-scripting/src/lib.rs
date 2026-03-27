@@ -87,6 +87,12 @@ impl ScriptManager {
 
         // Convert game tweens to property writes so PlayScreen can process them
         for (target, prop, val) in game_tweens {
+            // Variable tweens: update custom_vars directly
+            if let Some(var_name) = target.strip_prefix("__var_") {
+                self.state.custom_vars.insert(var_name.to_string(), LuaValue::Float(val as f64));
+                continue;
+            }
+
             let prop_name = match prop {
                 TweenProperty::Zoom => {
                     if target == "camGame" { "camera.zoom" }
