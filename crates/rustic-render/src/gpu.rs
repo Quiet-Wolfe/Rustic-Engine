@@ -4,6 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
+use crate::postprocess::PostProcessor;
 use crate::shader::SHADER_SRC;
 use crate::sprites::SpriteFrame;
 use crate::text::TextSystem;
@@ -60,6 +61,12 @@ pub struct GpuState {
     frame_output: Option<wgpu::SurfaceTexture>,
     frame_view: Option<wgpu::TextureView>,
     frame_cleared: bool,
+    // Post-processing
+    pub postprocess: PostProcessor,
+    /// When true, scene renders to offscreen target and post-process applies to surface.
+    pp_active: bool,
+    surface_view_for_pp: Option<wgpu::TextureView>,
+    surface_output_for_pp: Option<wgpu::SurfaceTexture>,
 }
 
 impl GpuState {
@@ -265,6 +272,8 @@ impl GpuState {
 
         let text_system = TextSystem::new(&device, &queue, format);
 
+        let postprocess = PostProcessor::new(&device, format, game_w as u32, game_h as u32);
+
         Self {
             device,
             queue,
@@ -286,6 +295,10 @@ impl GpuState {
             frame_output: None,
             frame_view: None,
             frame_cleared: false,
+            postprocess,
+            pp_active: false,
+            surface_view_for_pp: None,
+            surface_output_for_pp: None,
         }
     }
 
@@ -460,6 +473,66 @@ impl GpuState {
         }
     }
 
+    /// Add a sprite frame to the current batch, flipped vertically (for reflections).
+    pub fn draw_sprite_frame_flip_y(
+        &mut self,
+        frame: &SpriteFrame,
+        tex_w: f32,
+        tex_h: f32,
+        x: f32,
+        y: f32,
+        scale: f32,
+        flip_x: bool,
+        color: [f32; 4],
+    ) {
+        // Same as draw_sprite_frame but V coordinates swapped (v0↔v1)
+        if frame.rotated {
+            let display_w = frame.src.h * scale;
+            let display_h = frame.src.w * scale;
+            let draw_x = if flip_x {
+                x + (frame.frame_w + frame.offset_x - frame.src.h) * scale
+            } else {
+                x - frame.offset_x * scale
+            };
+            let draw_y = y - frame.offset_y * scale;
+            let u0 = frame.src.x / tex_w;
+            let v0 = frame.src.y / tex_h;
+            let u1 = (frame.src.x + frame.src.w) / tex_w;
+            let v1 = (frame.src.y + frame.src.h) / tex_h;
+            // Rotated + flip_y: swap the V mapping
+            let (tl_u, tl_v, tr_u, tr_v, br_u, br_v, bl_u, bl_v) = if flip_x {
+                (u0, v1, u0, v0, u1, v0, u1, v1)
+            } else {
+                (u1, v1, u1, v0, u0, v0, u0, v1)
+            };
+            self.push_quad(
+                draw_x, draw_y, display_w, display_h,
+                tl_u, tl_v, tr_u, tr_v, br_u, br_v, bl_u, bl_v,
+                color,
+            );
+        } else {
+            let w = frame.src.w * scale;
+            let h = frame.src.h * scale;
+            let draw_x = if flip_x {
+                x + (frame.frame_w + frame.offset_x - frame.src.w) * scale
+            } else {
+                x - frame.offset_x * scale
+            };
+            let draw_y = y - frame.offset_y * scale;
+            let u0 = frame.src.x / tex_w;
+            let v0 = frame.src.y / tex_h;
+            let u1 = (frame.src.x + frame.src.w) / tex_w;
+            let v1 = (frame.src.y + frame.src.h) / tex_h;
+            // flip_y: swap v0 and v1
+            let (u_left, u_right) = if flip_x { (u1, u0) } else { (u0, u1) };
+            self.push_quad(
+                draw_x, draw_y, w, h,
+                u_left, v1, u_right, v1, u_right, v0, u_left, v0,
+                color,
+            );
+        }
+    }
+
     /// Draw a sprite frame with rotation (angle in degrees, around frame center).
     pub fn draw_sprite_frame_rotated(
         &mut self,
@@ -528,6 +601,24 @@ impl GpuState {
         self.vertices.push(SpriteVertex { position: [x + w, y], uv: [tr_u, tr_v], color });
         self.vertices.push(SpriteVertex { position: [x + w, y + h], uv: [br_u, br_v], color });
         self.vertices.push(SpriteVertex { position: [x, y + h], uv: [bl_u, bl_v], color });
+        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    /// Push a quad with 4 arbitrary vertex positions (for matrix-transformed sprites like Adobe Animate atlas).
+    pub fn push_raw_quad(
+        &mut self,
+        positions: [[f32; 2]; 4],
+        uvs: [[f32; 2]; 4],
+        color: [f32; 4],
+    ) {
+        let base = self.vertices.len() as u32;
+        for i in 0..4 {
+            self.vertices.push(SpriteVertex {
+                position: positions[i],
+                uv: uvs[i],
+                color,
+            });
+        }
         self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
@@ -676,6 +767,11 @@ impl GpuState {
         (vp_x, vp_y, vp_w, vp_h)
     }
 
+    /// Enable or disable post-processing for subsequent frames.
+    pub fn set_postprocess_active(&mut self, active: bool) {
+        self.pp_active = active;
+    }
+
     /// Begin a multi-batch frame. Call draw_batch() for each texture layer, then end_frame().
     pub fn begin_frame(&mut self) -> bool {
         let output = match self.surface.get_current_texture() {
@@ -689,9 +785,22 @@ impl GpuState {
                 return false;
             }
         };
-        let view = output.texture.create_view(&Default::default());
-        self.frame_output = Some(output);
-        self.frame_view = Some(view);
+
+        if self.pp_active {
+            // Render scene to offscreen texture; surface is held for the post-process pass
+            let surface_view = output.texture.create_view(&Default::default());
+            self.surface_view_for_pp = Some(surface_view);
+            self.surface_output_for_pp = Some(output);
+            // Point frame_view at the offscreen target
+            self.frame_view = Some(self.postprocess.create_offscreen_view());
+            self.frame_output = None; // Not using surface directly
+        } else {
+            let view = output.texture.create_view(&Default::default());
+            self.frame_output = Some(output);
+            self.frame_view = Some(view);
+            self.surface_view_for_pp = None;
+            self.surface_output_for_pp = None;
+        }
         self.frame_cleared = false;
         true
     }
@@ -716,9 +825,14 @@ impl GpuState {
         self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
         self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
 
+        let (vp_x, vp_y, vp_w, vp_h) = if self.pp_active {
+            (0.0, 0.0, self.game_w, self.game_h)
+        } else {
+            self.viewport_rect()
+        };
+
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
-            let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Batch Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -745,7 +859,6 @@ impl GpuState {
     /// Finish the multi-batch frame: draw any remaining colored quads, render text, present.
     pub fn end_frame(&mut self) {
         let view = self.frame_view.take().expect("call begin_frame first");
-        let output = self.frame_output.take().expect("call begin_frame first");
 
         let load_op = if self.frame_cleared {
             wgpu::LoadOp::Load
@@ -760,9 +873,15 @@ impl GpuState {
             self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
         }
 
+        let (vp_x, vp_y, vp_w, vp_h) = if self.pp_active {
+            // When rendering to offscreen, use full texture as viewport
+            (0.0, 0.0, self.game_w, self.game_h)
+        } else {
+            self.viewport_rect()
+        };
+
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
-            let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Final Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -792,7 +911,22 @@ impl GpuState {
             );
         }
         self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+
+        if self.pp_active {
+            // Apply post-processing: offscreen → surface
+            if let Some(surface_view) = self.surface_view_for_pp.take() {
+                let viewport = self.viewport_rect();
+                self.postprocess.update_uniforms(&self.queue);
+                self.postprocess.apply(&self.device, &self.queue, &surface_view, viewport);
+                if let Some(output) = self.surface_output_for_pp.take() {
+                    output.present();
+                }
+            }
+        } else {
+            if let Some(output) = self.frame_output.take() {
+                output.present();
+            }
+        }
     }
 
     /// Draw a sub-region of a texture as a quad. UV coords are in pixels, converted internally.

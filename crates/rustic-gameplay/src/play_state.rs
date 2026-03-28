@@ -118,6 +118,9 @@ impl PlayState {
                     rating: judgment.name.clone(),
                     combo: self.score.combo,
                     score: judgment.score,
+                    note_type: self.notes[idx].kind.as_type_str().to_string(),
+                    is_sustain: self.notes[idx].sustain_length > 0.0,
+                    members_index: idx,
                 });
                 self.events.push(GameEvent::UnmuteVocals);
             }
@@ -185,6 +188,9 @@ impl PlayState {
                 self.opponent_confirm[self.notes[i].lane] = f64::MIN_POSITIVE;
                 self.events.push(GameEvent::OpponentNoteHit {
                     lane: self.notes[i].lane,
+                    note_type: self.notes[i].kind.as_type_str().to_string(),
+                    is_sustain: self.notes[i].sustain_length > 0.0,
+                    members_index: i,
                 });
             }
 
@@ -195,7 +201,11 @@ impl PlayState {
                 self.notes[i].too_late = true;
                 self.score.note_miss(scoring::HEALTH_MISS);
                 let lane = self.notes[i].lane;
-                self.events.push(GameEvent::NoteMiss { lane });
+                self.events.push(GameEvent::NoteMiss {
+                    lane,
+                    note_type: self.notes[i].kind.as_type_str().to_string(),
+                    members_index: i,
+                });
                 self.events.push(GameEvent::MuteVocals);
                 self.events.push(GameEvent::PlayMissSound);
             }

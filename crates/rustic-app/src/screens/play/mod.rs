@@ -16,7 +16,7 @@ use rustic_render::sprites::SpriteAtlas;
 use rustic_scripting::{ScriptManager, LuaSpriteKind};
 
 use crate::screen::Screen;
-use super::characters::{CharacterSprite, StageBgSprite};
+use super::characters::{Character, StageBgSprite};
 
 // === Psych Engine constants ===
 pub const GAME_W: f32 = 1280.0;
@@ -106,9 +106,232 @@ pub(super) enum DrawLayer {
     Bf,
 }
 
+/// 80sNightflaid visual phase state.
+pub(super) struct NightflaidState {
+    /// Whether the 80s phase is currently active.
+    pub active: bool,
+    /// unbeatableBG texture and position.
+    pub bg_texture: Option<GpuTexture>,
+    pub bg_x: f32,
+    pub bg_y: f32,
+    pub bg_angle: f32,
+    pub bg_alpha: f32,
+    /// Lightning bolt textures (animated sparrow).
+    pub lightning_atlas: Option<SpriteAtlas>,
+    pub lightning_texture: Option<GpuTexture>,
+    pub lightning_tex_w: f32,
+    pub lightning_tex_h: f32,
+    pub lightning_left_x: f32,
+    pub lightning_right_x: f32,
+    pub lightning_frame: usize,
+    pub lightning_timer: f32,
+    /// Needle textures (animated sparrow).
+    pub needle_atlas: Option<SpriteAtlas>,
+    pub needle_texture: Option<GpuTexture>,
+    pub needle_tex_w: f32,
+    pub needle_tex_h: f32,
+    pub needle_left_y: [f32; 3],
+    pub needle_right_y: [f32; 3],
+    pub needles_active: bool,
+    /// unbeatableBG drift tween state.
+    pub bg_tween_target_x: f32,
+    pub bg_tween_target_angle: f32,
+    pub bg_tween_duration: f32,
+    pub bg_tween_elapsed: f32,
+    pub bg_tween_start_x: f32,
+    pub bg_tween_start_angle: f32,
+    /// GF visible in 80s mode.
+    pub gf_visible_80s: bool,
+    /// GF position for 80s mode (slides up from below).
+    pub gf_80s_y: f32,
+    pub gf_80s_target_y: f32,
+    pub gf_80s_tween_elapsed: f32,
+    pub gf_80s_tween_duration: f32,
+    /// VCR shader parameters being tweened.
+    pub vcr_tween_elapsed: f32,
+    pub vcr_tween_duration: f32,
+    pub vcr_tween_active: bool,
+    pub vcr_target_enabled: bool,
+
+    // Stage background color overlay (left/right halves, like NightflaidShaderHandler).
+    /// Current left-side stage background color [R,G,B,A].
+    pub stage_color_left: [f32; 4],
+    /// Current right-side stage background color [R,G,B,A].
+    pub stage_color_right: [f32; 4],
+    /// Color tween state for left side.
+    pub color_left_tween_active: bool,
+    pub color_left_start: [f32; 4],
+    pub color_left_target: [f32; 4],
+    pub color_left_elapsed: f32,
+    pub color_left_duration: f32,
+    /// Color tween state for right side.
+    pub color_right_tween_active: bool,
+    pub color_right_start: [f32; 4],
+    pub color_right_target: [f32; 4],
+    pub color_right_elapsed: f32,
+    pub color_right_duration: f32,
+    /// Whether stage lights are visible.
+    pub lights_on: bool,
+}
+
+impl Default for NightflaidState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            bg_texture: None,
+            bg_x: -1000.0,
+            bg_y: -900.0,
+            bg_angle: 0.0,
+            bg_alpha: 0.0,
+            lightning_atlas: None,
+            lightning_texture: None,
+            lightning_tex_w: 0.0,
+            lightning_tex_h: 0.0,
+            lightning_left_x: 110.0 - 500.0,
+            lightning_right_x: 1020.0 + 500.0,
+            lightning_frame: 0,
+            lightning_timer: 0.0,
+            needle_atlas: None,
+            needle_texture: None,
+            needle_tex_w: 0.0,
+            needle_tex_h: 0.0,
+            needle_left_y: [0.0, 360.0, 720.0],
+            needle_right_y: [0.0, 360.0, 720.0],
+            needles_active: false,
+            bg_tween_target_x: -1000.0,
+            bg_tween_target_angle: 0.0,
+            bg_tween_duration: 3.0,
+            bg_tween_elapsed: 0.0,
+            bg_tween_start_x: -1000.0,
+            bg_tween_start_angle: 0.0,
+            gf_visible_80s: false,
+            gf_80s_y: 820.0, // off screen
+            gf_80s_target_y: 100.0,
+            gf_80s_tween_elapsed: 0.0,
+            gf_80s_tween_duration: 0.75,
+            vcr_tween_elapsed: 0.0,
+            vcr_tween_duration: 1.0,
+            vcr_tween_active: false,
+            vcr_target_enabled: false,
+            // Default stage colors: CCCCCC (light gray) normalized
+            stage_color_left: [0.8, 0.8, 0.8, 1.0],
+            stage_color_right: [0.8, 0.8, 0.8, 1.0],
+            color_left_tween_active: false,
+            color_left_start: [0.8, 0.8, 0.8, 1.0],
+            color_left_target: [0.8, 0.8, 0.8, 1.0],
+            color_left_elapsed: 0.0,
+            color_left_duration: 1.0,
+            color_right_tween_active: false,
+            color_right_start: [0.8, 0.8, 0.8, 1.0],
+            color_right_target: [0.8, 0.8, 0.8, 1.0],
+            color_right_elapsed: 0.0,
+            color_right_duration: 1.0,
+            lights_on: true,
+        }
+    }
+}
+
+/// Custom health bar (overlay + bar sprites, clipRect-style fill, color tweens).
+/// Loaded when the opponent character has a `healthBarImg` field pointing to
+/// `images/healthBars/<name>/` with bar.png and overlay.png.
+pub(super) struct CustomHealthBar {
+    pub bar_texture: GpuTexture,
+    pub overlay_texture: GpuTexture,
+    /// Scale factor (V-Slice uses 0.7).
+    pub scale: f32,
+    /// Overall alpha (starts at 0, tweens to 1 at beat 16).
+    pub alpha: f32,
+    /// Smoothed health value (lerped toward actual health each frame).
+    pub health_lerp: f32,
+    /// Current left bar color (opponent side) — RGBA premultiplied.
+    pub left_color: [f32; 4],
+    /// Current right bar color (player side) — RGBA premultiplied.
+    pub right_color: [f32; 4],
+    /// Color tween state.
+    pub color_tween_elapsed: f32,
+    pub color_tween_duration: f32,
+    pub color_tween_active: bool,
+    pub color_tween_start_left: [f32; 4],
+    pub color_tween_start_right: [f32; 4],
+    pub color_tween_target_left: [f32; 4],
+    pub color_tween_target_right: [f32; 4],
+    /// Saved player color (restored after form changes).
+    pub saved_player_color: [f32; 4],
+    /// Whether the bar has faded in yet.
+    pub visible: bool,
+}
+
+impl CustomHealthBar {
+    pub fn new(bar_texture: GpuTexture, overlay_texture: GpuTexture) -> Self {
+        let default_left = [0.8, 0.0, 0.0, 1.0]; // red opponent
+        let default_right = [0.19, 0.69, 0.82, 1.0]; // #31B0D1 BF blue
+        Self {
+            bar_texture,
+            overlay_texture,
+            scale: 0.7,
+            alpha: 0.0,
+            health_lerp: 1.0,
+            left_color: default_left,
+            right_color: default_right,
+            color_tween_elapsed: 0.0,
+            color_tween_duration: 1.0,
+            color_tween_active: false,
+            color_tween_start_left: default_left,
+            color_tween_start_right: default_right,
+            color_tween_target_left: default_left,
+            color_tween_target_right: default_right,
+            saved_player_color: default_right,
+            visible: false,
+        }
+    }
+
+    /// Start a color tween to new opponent/player colors.
+    pub fn tween_colors(&mut self, left: [f32; 4], right: Option<[f32; 4]>, duration: f32) {
+        self.color_tween_start_left = self.left_color;
+        self.color_tween_start_right = self.right_color;
+        self.color_tween_target_left = left;
+        self.color_tween_target_right = right.unwrap_or(self.right_color);
+        self.color_tween_duration = duration;
+        self.color_tween_elapsed = 0.0;
+        self.color_tween_active = true;
+    }
+
+    /// Update smoothed health and color tweens.
+    pub fn update(&mut self, dt: f32, actual_health: f32) {
+        // Health lerp (frame-rate-dependent like V-Slice: 0.15 factor)
+        self.health_lerp += (actual_health - self.health_lerp) * 0.15;
+        let visual_health = self.health_lerp.clamp(0.0, 1.7);
+        let _ = visual_health; // used in draw
+
+        // Color tween
+        if self.color_tween_active {
+            self.color_tween_elapsed += dt;
+            let t = (self.color_tween_elapsed / self.color_tween_duration).min(1.0);
+            // circOut ease
+            let eased = (1.0 - (1.0 - t) * (1.0 - t)).sqrt();
+            for i in 0..4 {
+                self.left_color[i] = self.color_tween_start_left[i]
+                    + (self.color_tween_target_left[i] - self.color_tween_start_left[i]) * eased;
+                self.right_color[i] = self.color_tween_start_right[i]
+                    + (self.color_tween_target_right[i] - self.color_tween_start_right[i]) * eased;
+            }
+            if t >= 1.0 {
+                self.color_tween_active = false;
+            }
+        }
+    }
+
+    /// Fade in the bar (called at beat 16).
+    pub fn fade_in(&mut self) {
+        self.visible = true;
+        // Instant-ish fade: set alpha to 1 (V-Slice uses 0.08s circOut, but we can approximate)
+        self.alpha = 1.0;
+    }
+}
+
 /// Death screen state (visual layer).
 pub(super) struct DeathState {
-    pub character: CharacterSprite,
+    pub character: Character,
     pub phase: DeathPhase,
     pub timer: f64,
     pub fade_alpha: f32,
@@ -147,14 +370,16 @@ pub struct PlayScreen {
     pub(super) icon_bf: Option<GpuTexture>,
     pub(super) icon_dad: Option<GpuTexture>,
     pub(super) healthbar_tex: Option<GpuTexture>,
+    /// Custom health bar (loaded when opponent has healthBarImg).
+    pub(super) custom_healthbar: Option<CustomHealthBar>,
     pub(super) countdown_ready: Option<GpuTexture>,
     pub(super) countdown_set: Option<GpuTexture>,
     pub(super) countdown_go: Option<GpuTexture>,
 
     // Characters & Stage
-    pub(super) char_bf: Option<CharacterSprite>,
-    pub(super) char_dad: Option<CharacterSprite>,
-    pub(super) char_gf: Option<CharacterSprite>,
+    pub(super) char_bf: Option<Character>,
+    pub(super) char_dad: Option<Character>,
+    pub(super) char_gf: Option<Character>,
     pub(super) stage_bg: Vec<StageBgSprite>,
     pub(super) draw_order: Vec<DrawLayer>,
     pub(super) camera: GameCamera,
@@ -179,7 +404,7 @@ pub struct PlayScreen {
 
     // Death
     pub(super) death: Option<DeathState>,
-    pub(super) death_char_preloaded: Option<CharacterSprite>,
+    pub(super) death_char_preloaded: Option<Character>,
 
     // Lua scripting
     pub(super) scripts: ScriptManager,
@@ -190,6 +415,30 @@ pub struct PlayScreen {
     pub(super) paths: AssetPaths,
     /// Whether the character camera layer is visible (toggled by camCharacters.visible).
     pub(super) cam_characters_visible: bool,
+    /// Whether character reflections are drawn (flipY copies below characters).
+    pub(super) reflections_enabled: bool,
+    /// Reflection alpha (0.35 in V-Slice ReflectShader).
+    pub(super) reflection_alpha: f32,
+    /// Reflection Y offset from bottom of character (-30 in V-Slice).
+    pub(super) reflection_dist_y: f32,
+    /// 80sNightflaid visual phase state (only used for nightflaid stage).
+    pub(super) nightflaid: NightflaidState,
+    /// Pending flags for 80s activation/deactivation (set in update, consumed in draw where gpu is available).
+    pub(super) nightflaid_activate_pending: bool,
+    pub(super) nightflaid_deactivate_pending: bool,
+
+    /// Pending character change requests: (target, new_char_name)
+    pub(super) char_change_requests: Vec<(String, String)>,
+    /// Stage positions for character slots (for Change Character event)
+    pub(super) stage_pos_bf: [f64; 2],
+    pub(super) stage_pos_dad: [f64; 2],
+    pub(super) stage_pos_gf: [f64; 2],
+    pub(super) stage_name: String,
+
+    // Frame timing
+    pub(super) last_dt: f32,
+    /// Downscroll mode: notes scroll down, health bar at top.
+    pub(super) downscroll: bool,
 
     // Pause
     pub(super) paused: bool,
@@ -219,6 +468,7 @@ impl PlayScreen {
             icon_bf: None,
             icon_dad: None,
             healthbar_tex: None,
+            custom_healthbar: None,
             countdown_ready: None,
             countdown_set: None,
             countdown_go: None,
@@ -251,6 +501,19 @@ impl PlayScreen {
             lua_front: Vec::new(),
             paths: AssetPaths::psych_default(),
             cam_characters_visible: true,
+            reflections_enabled: false,
+            reflection_alpha: 0.35,
+            reflection_dist_y: -30.0,
+            nightflaid: NightflaidState::default(),
+            nightflaid_activate_pending: false,
+            nightflaid_deactivate_pending: false,
+            char_change_requests: Vec::new(),
+            stage_pos_bf: [0.0; 2],
+            stage_pos_dad: [0.0; 2],
+            stage_pos_gf: [0.0; 2],
+            stage_name: String::new(),
+            last_dt: 1.0 / 60.0,
+            downscroll: false,
             paused: false,
             pause_selection: 0,
             skip_target_ms: 0.0,
@@ -270,6 +533,235 @@ impl PlayScreen {
     pub(super) fn strum_x(lane: usize, player: bool) -> f32 {
         let base = STRUM_X + 50.0 + NOTE_WIDTH * lane as f32;
         if player { base + GAME_W / 2.0 } else { base }
+    }
+
+    /// Load 80sNightflaid visual assets (unbeatableBG, lightning, needles).
+    pub(super) fn load_nightflaid_assets(&mut self, gpu: &GpuState, paths: &AssetPaths) {
+        // Load unbeatableBG
+        if let Some(p) = paths.find("images/nightflaid/unbeatableBG.png") {
+            self.nightflaid.bg_texture = Some(gpu.load_texture_from_path(&p));
+        }
+        // Load lightning sparrow atlas
+        if let Some(png_path) = paths.find("images/nightflaid/ycbu_lightning.png") {
+            if let Some(xml_path) = paths.find("images/nightflaid/ycbu_lightning.xml") {
+                let xml_str = std::fs::read_to_string(&xml_path).ok();
+                if let Some(xml) = xml_str {
+                    let tex = gpu.load_texture_from_path(&png_path);
+                    let atlas = SpriteAtlas::from_xml(&xml);
+                    // Register lightning animation
+                    self.nightflaid.lightning_tex_w = tex.width as f32;
+                    self.nightflaid.lightning_tex_h = tex.height as f32;
+                    self.nightflaid.lightning_atlas = Some(atlas);
+                    self.nightflaid.lightning_texture = Some(tex);
+                }
+            }
+        }
+        // Load needle sparrow atlas
+        if let Some(png_path) = paths.find("images/nightflaid/needle.png") {
+            if let Some(xml_path) = paths.find("images/nightflaid/needle.xml") {
+                let xml_str = std::fs::read_to_string(&xml_path).ok();
+                if let Some(xml) = xml_str {
+                    let tex = gpu.load_texture_from_path(&png_path);
+                    let atlas = SpriteAtlas::from_xml(&xml);
+                    self.nightflaid.needle_tex_w = tex.width as f32;
+                    self.nightflaid.needle_tex_h = tex.height as f32;
+                    self.nightflaid.needle_atlas = Some(atlas);
+                    self.nightflaid.needle_texture = Some(tex);
+                }
+            }
+        }
+        log::info!("Loaded 80sNightflaid assets: bg={}, lightning={}, needle={}",
+            self.nightflaid.bg_texture.is_some(),
+            self.nightflaid.lightning_texture.is_some(),
+            self.nightflaid.needle_texture.is_some(),
+        );
+    }
+
+    /// Activate the 80sNightflaid visual phase.
+    pub(super) fn activate_80s_nightflaid(&mut self, gpu: &mut GpuState) {
+        self.nightflaid.active = true;
+        self.nightflaid.bg_alpha = 0.0; // Will tween to 1.0
+        self.nightflaid.needles_active = true;
+        self.nightflaid.gf_visible_80s = true;
+        self.nightflaid.gf_80s_y = GAME_H + 100.0;
+        self.nightflaid.gf_80s_target_y = 100.0;
+        self.nightflaid.gf_80s_tween_elapsed = 0.0;
+        self.nightflaid.gf_80s_tween_duration = 0.75;
+
+        // Slide lightning bolts in from sides
+        self.nightflaid.lightning_left_x = 110.0 - 500.0;
+        self.nightflaid.lightning_right_x = 1020.0 + 500.0;
+
+        // Start VCR shader tween
+        self.nightflaid.vcr_tween_active = true;
+        self.nightflaid.vcr_tween_elapsed = 0.0;
+        self.nightflaid.vcr_tween_duration = 1.0;
+        self.nightflaid.vcr_target_enabled = true;
+
+        // Start unbeatableBG drift
+        self.start_unbeatable_tween();
+
+        // Enable post-processing
+        gpu.set_postprocess_active(true);
+        gpu.postprocess.uniforms.enabled = 1;
+
+        // Hide game camera (characters render in 80s overlay)
+        self.cam_characters_visible = false;
+    }
+
+    /// Deactivate the 80sNightflaid phase (return to normal stage).
+    pub(super) fn deactivate_80s_nightflaid(&mut self, gpu: &mut GpuState) {
+        self.nightflaid.active = false;
+        self.nightflaid.needles_active = false;
+        self.nightflaid.gf_visible_80s = false;
+        self.nightflaid.bg_alpha = 0.0;
+
+        // Disable VCR
+        self.nightflaid.vcr_tween_active = true;
+        self.nightflaid.vcr_tween_elapsed = 0.0;
+        self.nightflaid.vcr_tween_duration = 0.5;
+        self.nightflaid.vcr_target_enabled = false;
+
+        // Show game camera again
+        self.cam_characters_visible = true;
+    }
+
+    /// Start a new random drift tween for unbeatableBG.
+    fn start_unbeatable_tween(&mut self) {
+        self.nightflaid.bg_tween_start_x = self.nightflaid.bg_x;
+        self.nightflaid.bg_tween_start_angle = self.nightflaid.bg_angle;
+        // Random target (matching V-Slice ranges)
+        let seed = (self.game.conductor.song_position * 7.3).sin().abs() as f32;
+        self.nightflaid.bg_tween_target_x = -1000.0 + (seed * 2.0 - 1.0) * 400.0;
+        let seed2 = (self.game.conductor.song_position * 11.1).cos().abs() as f32;
+        self.nightflaid.bg_tween_target_angle = (seed2 * 2.0 - 1.0) * 25.0;
+        self.nightflaid.bg_tween_duration = 2.5 + seed * 2.0;
+        self.nightflaid.bg_tween_elapsed = 0.0;
+    }
+
+    /// Update 80sNightflaid animations each frame.
+    pub(super) fn update_nightflaid(&mut self, dt: f32, gpu: &mut GpuState) {
+        // Stage color tweens run regardless of 80s phase
+        self.update_nightflaid_colors(dt);
+
+        if !self.nightflaid.active && !self.nightflaid.vcr_tween_active {
+            return;
+        }
+
+        // VCR shader tween
+        if self.nightflaid.vcr_tween_active {
+            self.nightflaid.vcr_tween_elapsed += dt;
+            let t = (self.nightflaid.vcr_tween_elapsed / self.nightflaid.vcr_tween_duration).min(1.0);
+            // quadOut ease
+            let eased = 1.0 - (1.0 - t) * (1.0 - t);
+            if self.nightflaid.vcr_target_enabled {
+                gpu.postprocess.uniforms.scanline_intensity = eased;
+                gpu.postprocess.uniforms.distortion_mult = eased;
+                gpu.postprocess.uniforms.chromatic_aberration = eased;
+                gpu.postprocess.uniforms.vignette_intensity = eased * 0.5;
+            } else {
+                gpu.postprocess.uniforms.scanline_intensity = 1.0 - eased;
+                gpu.postprocess.uniforms.distortion_mult = 1.0 - eased;
+                gpu.postprocess.uniforms.chromatic_aberration = 1.0 - eased;
+                gpu.postprocess.uniforms.vignette_intensity = (1.0 - eased) * 0.5;
+            }
+            if t >= 1.0 {
+                self.nightflaid.vcr_tween_active = false;
+                if !self.nightflaid.vcr_target_enabled {
+                    gpu.postprocess.uniforms.enabled = 0;
+                    gpu.set_postprocess_active(false);
+                }
+            }
+        }
+
+        if !self.nightflaid.active {
+            return;
+        }
+
+        // Update time for shader
+        gpu.postprocess.uniforms.time += dt;
+
+        // unbeatableBG alpha fade in
+        if self.nightflaid.bg_alpha < 1.0 {
+            self.nightflaid.bg_alpha = (self.nightflaid.bg_alpha + dt / 0.75).min(1.0);
+        }
+
+        // unbeatableBG drift tween
+        self.nightflaid.bg_tween_elapsed += dt;
+        let t = (self.nightflaid.bg_tween_elapsed / self.nightflaid.bg_tween_duration).min(1.0);
+        self.nightflaid.bg_x = self.nightflaid.bg_tween_start_x
+            + (self.nightflaid.bg_tween_target_x - self.nightflaid.bg_tween_start_x) * t;
+        self.nightflaid.bg_angle = self.nightflaid.bg_tween_start_angle
+            + (self.nightflaid.bg_tween_target_angle - self.nightflaid.bg_tween_start_angle) * t;
+        if t >= 1.0 {
+            self.start_unbeatable_tween();
+        }
+
+        // Lightning animation (24 fps)
+        self.nightflaid.lightning_timer += dt;
+        if self.nightflaid.lightning_timer >= 1.0 / 24.0 {
+            self.nightflaid.lightning_timer -= 1.0 / 24.0;
+            self.nightflaid.lightning_frame += 1;
+        }
+
+        // Lightning slide in (from offscreen to visible)
+        let lightning_target_left = 110.0;
+        let lightning_target_right = 1020.0;
+        if self.nightflaid.lightning_left_x < lightning_target_left {
+            // quadOut ease towards target
+            self.nightflaid.lightning_left_x += (lightning_target_left - self.nightflaid.lightning_left_x) * dt * 3.0;
+        }
+        if self.nightflaid.lightning_right_x > lightning_target_right {
+            self.nightflaid.lightning_right_x += (lightning_target_right - self.nightflaid.lightning_right_x) * dt * 3.0;
+        }
+
+        // Needle scrolling
+        if self.nightflaid.needles_active {
+            for y in &mut self.nightflaid.needle_left_y {
+                *y -= 360.0 * dt;
+                if *y < -200.0 {
+                    *y += (720.0 / 2.0) * 3.0;
+                }
+            }
+            for y in &mut self.nightflaid.needle_right_y {
+                *y += 360.0 * dt;
+                if *y > GAME_H {
+                    *y -= (720.0 / 2.0) * 3.0;
+                }
+            }
+        }
+
+        // GF slide-up tween
+        if self.nightflaid.gf_visible_80s && self.nightflaid.gf_80s_tween_elapsed < self.nightflaid.gf_80s_tween_duration {
+            self.nightflaid.gf_80s_tween_elapsed += dt;
+            let t = (self.nightflaid.gf_80s_tween_elapsed / self.nightflaid.gf_80s_tween_duration).min(1.0);
+            // circOut ease
+            let eased = (1.0 - (1.0 - t) * (1.0 - t)).sqrt();
+            let start_y = GAME_H + 100.0;
+            self.nightflaid.gf_80s_y = start_y + (self.nightflaid.gf_80s_target_y - start_y) * eased;
+        }
+    }
+
+    /// Update nightflaid stage background color tweens.
+    fn update_nightflaid_colors(&mut self, dt: f32) {
+        if self.nightflaid.color_left_tween_active {
+            self.nightflaid.color_left_elapsed += dt;
+            let t = (self.nightflaid.color_left_elapsed / self.nightflaid.color_left_duration).min(1.0);
+            for i in 0..4 {
+                self.nightflaid.stage_color_left[i] = self.nightflaid.color_left_start[i]
+                    + (self.nightflaid.color_left_target[i] - self.nightflaid.color_left_start[i]) * t;
+            }
+            if t >= 1.0 { self.nightflaid.color_left_tween_active = false; }
+        }
+        if self.nightflaid.color_right_tween_active {
+            self.nightflaid.color_right_elapsed += dt;
+            let t = (self.nightflaid.color_right_elapsed / self.nightflaid.color_right_duration).min(1.0);
+            for i in 0..4 {
+                self.nightflaid.stage_color_right[i] = self.nightflaid.color_right_start[i]
+                    + (self.nightflaid.color_right_target[i] - self.nightflaid.color_right_start[i]) * t;
+            }
+            if t >= 1.0 { self.nightflaid.color_right_tween_active = false; }
+        }
     }
 
     /// Get strum position/alpha/angle/scale from modchart state. Falls back to defaults.
@@ -311,6 +803,77 @@ impl PlayScreen {
             texture: tex,
             atlas,
         })
+    }
+
+    /// Process queued character change requests (needs GPU for texture loading).
+    pub(super) fn process_char_changes(&mut self, gpu: &GpuState) {
+        use rustic_core::character::CharacterFile;
+        use super::characters::{AtlasCharacterSprite, CharacterSprite};
+
+        let requests: Vec<(String, String)> = self.char_change_requests.drain(..).collect();
+        for (target, char_name) in requests {
+            let json_path = match self.paths.character_json(&char_name) {
+                Some(p) => p,
+                None => {
+                    log::warn!("Change Character: can't find {}.json", char_name);
+                    continue;
+                }
+            };
+            let json_str = match std::fs::read_to_string(&json_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("Change Character: can't read {:?}: {}", json_path, e);
+                    continue;
+                }
+            };
+            let char_def = match CharacterFile::from_json(&json_str) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("Change Character: can't parse {:?}: {}", json_path, e);
+                    continue;
+                }
+            };
+
+            let effective_image = char_def.effective_image().to_string();
+            let is_player = matches!(target.as_str(), "bf" | "boyfriend" | "0");
+
+            // Use the stored stage positions for the target slot
+            let (stage_x, stage_y) = match target.as_str() {
+                "bf" | "boyfriend" | "0" => (self.stage_pos_bf[0], self.stage_pos_bf[1]),
+                "gf" | "girlfriend" | "2" => (self.stage_pos_gf[0], self.stage_pos_gf[1]),
+                _ => (self.stage_pos_dad[0], self.stage_pos_dad[1]),
+            };
+
+            // Load the new character (atlas or sparrow)
+            let new_char = if let Some(animate_dir) = self.paths.character_animate_dir(&effective_image) {
+                log::info!("Change Character: loading atlas {} from {:?}", char_name, animate_dir);
+                let mut sprite = AtlasCharacterSprite::load(gpu, &char_def, &animate_dir, stage_x, stage_y, is_player);
+                if let Some(&s) = char_def.stage_scale.get(&self.stage_name) {
+                    sprite.scale = s as f32;
+                }
+                Some(Character::Atlas(sprite))
+            } else if let Some(atlas_dir) = self.paths.character_atlas_dir(&effective_image) {
+                log::info!("Change Character: loading sparrow {} from {:?}", char_name, atlas_dir);
+                let mut sprite = CharacterSprite::load(gpu, &json_path, &atlas_dir, stage_x, stage_y, is_player);
+                if let Some(&s) = char_def.stage_scale.get(&self.stage_name) {
+                    sprite.scale = s as f32;
+                }
+                Some(Character::Sparrow(sprite))
+            } else {
+                log::warn!("Change Character: can't find atlas for image '{}'", effective_image);
+                None
+            };
+
+            if let Some(ch) = new_char {
+                match target.as_str() {
+                    "bf" | "boyfriend" | "0" => self.char_bf = Some(ch),
+                    "gf" | "girlfriend" | "2" => self.char_gf = Some(ch),
+                    _ => self.char_dad = Some(ch),
+                }
+                // Recompute camera targets with new character
+                self.recompute_camera_targets();
+            }
+        }
     }
 
     /// Recompute camera targets from current character positions (called at section changes).
@@ -422,6 +985,21 @@ impl PlayScreen {
                         }
                     }
                 }
+                "__charDance.dad" | "__charDance.opponent" => {
+                    if let Some(dad) = &mut self.char_dad {
+                        dad.dance();
+                    }
+                }
+                "__charDance.bf" | "__charDance.boyfriend" => {
+                    if let Some(bf) = &mut self.char_bf {
+                        bf.dance();
+                    }
+                }
+                "__charDance.gf" | "__charDance.girlfriend" => {
+                    if let Some(gf) = &mut self.char_gf {
+                        gf.dance();
+                    }
+                }
                 "opponentCameraOffset.x" => {
                     if let Some(v) = as_f32 {
                         self.scripts.state.opponent_camera_offset.0 = v;
@@ -446,6 +1024,76 @@ impl PlayScreen {
                     if let LuaValue::Bool(b) = &val {
                         self.cam_characters_visible = *b;
                     }
+                }
+                "dad.animationSuffix" | "opponent.animationSuffix" => {
+                    if let LuaValue::String(s) = &val {
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.set_anim_suffix(s);
+                        }
+                    }
+                }
+                "boyfriend.animationSuffix" | "bf.animationSuffix" => {
+                    if let LuaValue::String(s) = &val {
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.set_anim_suffix(s);
+                        }
+                    }
+                }
+                "gf.animationSuffix" | "girlfriend.animationSuffix" => {
+                    if let LuaValue::String(s) = &val {
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.set_anim_suffix(s);
+                        }
+                    }
+                }
+                "dad.idleSuffix" | "opponent.idleSuffix" => {
+                    if let LuaValue::String(s) = &val {
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.set_idle_suffix(s);
+                        }
+                    }
+                }
+                "boyfriend.idleSuffix" | "bf.idleSuffix" => {
+                    if let LuaValue::String(s) = &val {
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.set_idle_suffix(s);
+                        }
+                    }
+                }
+                "gf.idleSuffix" | "girlfriend.idleSuffix" => {
+                    if let LuaValue::String(s) = &val {
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.set_idle_suffix(s);
+                        }
+                    }
+                }
+                // Character position/alpha/visibility
+                "dad.x" | "dadGroup.x" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_dad { c.set_x(v); } }
+                }
+                "dad.y" | "dadGroup.y" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_dad { c.set_y(v); } }
+                }
+                "boyfriend.x" | "bf.x" | "boyfriendGroup.x" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_bf { c.set_x(v); } }
+                }
+                "boyfriend.y" | "bf.y" | "boyfriendGroup.y" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_bf { c.set_y(v); } }
+                }
+                "gf.x" | "girlfriend.x" | "gfGroup.x" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_gf { c.set_x(v); } }
+                }
+                "gf.y" | "girlfriend.y" | "gfGroup.y" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_gf { c.set_y(v); } }
+                }
+                "dad.alpha" | "dadGroup.alpha" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_dad { c.set_alpha(v); } }
+                }
+                "boyfriend.alpha" | "bf.alpha" | "boyfriendGroup.alpha" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_bf { c.set_alpha(v); } }
+                }
+                "gf.alpha" | "girlfriend.alpha" | "gfGroup.alpha" => {
+                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_gf { c.set_alpha(v); } }
                 }
                 "hud.zoom" => {
                     if let Some(v) = as_f32 {
@@ -484,6 +1132,47 @@ impl PlayScreen {
                 }
             }
         }
+    }
+
+    /// Process pending character position adjustments from runHaxeCode.
+    pub(super) fn process_char_positions(&mut self) {
+        let adjustments: Vec<(String, String, f64)> =
+            self.scripts.state.char_position_adjustments.drain(..).collect();
+
+        let mut i = 0;
+        while i < adjustments.len() {
+            let (ref char_name, ref field, value) = adjustments[i];
+
+            // NaN is a marker that the next entry is an absolute set
+            if value.is_nan() && i + 1 < adjustments.len() {
+                let abs_val = adjustments[i + 1].2 as f32;
+                self.apply_char_pos(char_name, field, abs_val, false);
+                i += 2;
+                continue;
+            }
+
+            // Otherwise it's a delta
+            self.apply_char_pos(char_name, field, value as f32, true);
+            i += 1;
+        }
+    }
+
+    fn apply_char_pos(&mut self, char_name: &str, field: &str, value: f32, is_delta: bool) {
+        let char = match char_name {
+            "boyfriend" => self.char_bf.as_mut(),
+            "dad" => self.char_dad.as_mut(),
+            "gf" => self.char_gf.as_mut(),
+            _ => return,
+        };
+        let Some(ch) = char else { return };
+        match (field, is_delta) {
+            ("x", true) => ch.set_x(ch.x() + value),
+            ("y", true) => ch.set_y(ch.y() + value),
+            ("x", false) => ch.set_x(value),
+            ("y", false) => ch.set_y(value),
+            _ => {}
+        }
+        log::debug!("char position: {}.{} {} {}", char_name, field, if is_delta { "+=" } else { "=" }, value);
     }
 
     /// Process pending Lua sprite additions: load textures and add to draw lists.

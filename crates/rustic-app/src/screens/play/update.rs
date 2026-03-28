@@ -8,8 +8,25 @@ use super::{
     SPLASH_FPS, SPLASH_FRAMES, GAME_W,
 };
 
+/// Parse a hex color string (e.g., "CCCCCC", "FB002D") to [R,G,B,A] floats.
+fn parse_hex_color(hex: &str) -> [f32; 4] {
+    let hex = hex.trim_start_matches('#').trim_start_matches("0x").trim_start_matches("0X");
+    let hex = if hex.len() > 6 { &hex[hex.len()-6..] } else { hex };
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0];
+        }
+    }
+    [0.8, 0.8, 0.8, 1.0] // fallback: CCCCCC
+}
+
 impl PlayScreen {
     pub(super) fn update_inner(&mut self, dt: f32) {
+        self.last_dt = dt;
         if self.paused { return; }
 
         // Death state machine (visual only)
@@ -20,7 +37,7 @@ impl PlayScreen {
 
             match death.phase {
                 DeathPhase::FirstDeath => {
-                    if death.character.anim.finished {
+                    if death.character.anim_finished() {
                         death.phase = DeathPhase::Loop;
                         death.character.play_anim("deathLoop", false);
                         if let Some(audio) = &mut self.audio {
@@ -114,6 +131,20 @@ impl PlayScreen {
             self.process_property_writes();
         }
 
+        // Sync character state so Lua getProperty works for animation names and positions
+        if let Some(dad) = &self.char_dad {
+            self.scripts.state.dad_anim_name = dad.current_anim_name().to_string();
+            self.scripts.state.dad_pos = (dad.x(), dad.y());
+        }
+        if let Some(bf) = &self.char_bf {
+            self.scripts.state.bf_anim_name = bf.current_anim_name().to_string();
+            self.scripts.state.bf_pos = (bf.x(), bf.y());
+        }
+        if let Some(gf) = &self.char_gf {
+            self.scripts.state.gf_anim_name = gf.current_anim_name().to_string();
+            self.scripts.state.gf_pos = (gf.x(), gf.y());
+        }
+
         // Lua: onUpdate (before gameplay logic)
         if self.scripts.has_scripts() {
             self.scripts.call_with_elapsed("onUpdate", dt as f64);
@@ -160,12 +191,150 @@ impl PlayScreen {
                 "Change Scroll Speed" => {
                     let multiplier: f64 = v1.parse().unwrap_or(1.0);
                     let _duration: f32 = v2.parse().unwrap_or(0.0);
-                    // Psych Engine: songSpeed = SONG.speed * multiplier
-                    // TODO: tween over duration instead of instant
                     self.game.song_speed = self.game.base_song_speed * multiplier;
                 }
                 "Set GF Speed" => {
                     // Sets GF dance frequency (not implemented yet)
+                }
+                "Play Animation" => {
+                    // v1 = animation name, v2 = character (empty = dad)
+                    let target = if v2.is_empty() { "dad" } else { v2.as_str() };
+                    match target {
+                        "dad" | "opponent" | "1" => {
+                            if let Some(dad) = &mut self.char_dad {
+                                dad.play_anim(&v1, true);
+                            }
+                        }
+                        "bf" | "boyfriend" | "0" => {
+                            if let Some(bf) = &mut self.char_bf {
+                                bf.play_anim(&v1, true);
+                            }
+                        }
+                        "gf" | "girlfriend" | "2" => {
+                            if let Some(gf) = &mut self.char_gf {
+                                gf.play_anim(&v1, true);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                "Change Character" => {
+                    // v1 = target ("dad", "bf", "gf", or "0"/"1"/"2")
+                    // v2 = new character name
+                    if !v2.is_empty() {
+                        self.char_change_requests.push((v1.clone(), v2.clone()));
+                    }
+                }
+                // Nightflaid stage color events (normally handled via runHaxeCode, implemented natively)
+                "Nightflaid color tween" if self.stage_name == "nightflaid" => {
+                    let color = parse_hex_color(&v1);
+                    let dur: f32 = v2.parse().unwrap_or(1.0);
+                    self.nightflaid.color_left_start = self.nightflaid.stage_color_left;
+                    self.nightflaid.color_left_target = color;
+                    self.nightflaid.color_left_elapsed = 0.0;
+                    self.nightflaid.color_left_duration = dur;
+                    self.nightflaid.color_left_tween_active = true;
+                    self.nightflaid.color_right_start = self.nightflaid.stage_color_right;
+                    self.nightflaid.color_right_target = color;
+                    self.nightflaid.color_right_elapsed = 0.0;
+                    self.nightflaid.color_right_duration = dur;
+                    self.nightflaid.color_right_tween_active = true;
+                }
+                "Nightflaid color tween left-only" if self.stage_name == "nightflaid" => {
+                    let color = parse_hex_color(&v1);
+                    let dur: f32 = v2.parse().unwrap_or(1.0);
+                    self.nightflaid.color_left_start = self.nightflaid.stage_color_left;
+                    self.nightflaid.color_left_target = color;
+                    self.nightflaid.color_left_elapsed = 0.0;
+                    self.nightflaid.color_left_duration = dur;
+                    self.nightflaid.color_left_tween_active = true;
+                }
+                "Nightflaid color tween right-only" if self.stage_name == "nightflaid" => {
+                    let color = parse_hex_color(&v1);
+                    let dur: f32 = v2.parse().unwrap_or(1.0);
+                    self.nightflaid.color_right_start = self.nightflaid.stage_color_right;
+                    self.nightflaid.color_right_target = color;
+                    self.nightflaid.color_right_elapsed = 0.0;
+                    self.nightflaid.color_right_duration = dur;
+                    self.nightflaid.color_right_tween_active = true;
+                }
+                "Nightflaid swap sides" if self.stage_name == "nightflaid" => {
+                    let dur: f32 = v1.parse().unwrap_or(0.15);
+                    let old_left = self.nightflaid.stage_color_left;
+                    let old_right = self.nightflaid.stage_color_right;
+                    self.nightflaid.color_left_start = old_left;
+                    self.nightflaid.color_left_target = old_right;
+                    self.nightflaid.color_left_elapsed = 0.0;
+                    self.nightflaid.color_left_duration = dur;
+                    self.nightflaid.color_left_tween_active = true;
+                    self.nightflaid.color_right_start = old_right;
+                    self.nightflaid.color_right_target = old_left;
+                    self.nightflaid.color_right_elapsed = 0.0;
+                    self.nightflaid.color_right_duration = dur;
+                    self.nightflaid.color_right_tween_active = true;
+                }
+                "Nightflaid lightings" if self.stage_name == "nightflaid" => {
+                    let on = matches!(v1.to_lowercase().as_str(), "on" | "1" | "");
+                    self.nightflaid.lights_on = on;
+                }
+                "NINTENDO" => {
+                    // VS Retrospecter custom event: triggers 80sNightflaid phase
+                    if v2 == "80snightflaid" && self.stage_name == "nightflaid" {
+                        log::info!("80sNightflaid phase activated!");
+                        self.nightflaid_activate_pending = true;
+                    }
+                }
+                "Wildcard" => {
+                    // VS Retrospecter custom event: calls Lua function by name.
+                    // v1 = function name, v2 = argument
+                    if self.scripts.has_scripts() {
+                        self.scripts.call_lua_function(&v1, &v2);
+                        self.process_property_writes();
+                    }
+                    // setOppAnimation: also set the opponent's animation suffix
+                    if v1 == "setOppAnimation" {
+                        if let Some(dad) = &mut self.char_dad {
+                            let suffix = if v2.is_empty() {
+                                String::new()
+                            } else {
+                                format!("-{}", v2)
+                            };
+                            log::info!("Setting opponent anim suffix to '{}'", suffix);
+                            dad.set_anim_suffix(&suffix);
+                        }
+                        // Color-tween custom health bar per opponent form
+                        if let Some(chb) = &mut self.custom_healthbar {
+                            let (left, right, health_reset, dur) = match v2.to_uppercase().as_str() {
+                                "DAD" => ([1.0, 0.004, 0.02, 1.0], Some([0.39, 1.0, 0.23, 1.0]), Some(1.0), 1.0),
+                                "WHITTY" => ([0.81, 0.004, 0.17, 1.0], Some(chb.saved_player_color), Some(1.0), 1.0),
+                                "RUV" => ([0.59, 0.55, 0.64, 1.0], None, Some(1.0), 1.0),
+                                "GARCELLO" => ([0.004, 1.0, 0.58, 1.0], None, Some(1.0), 1.0),
+                                "TABI" => ([0.36, 0.42, 0.51, 1.0], None, Some(2.0), 1.0),
+                                "TRICKY" => ([0.99, 0.098, 0.016, 1.0], None, Some(1.25), 1.0),
+                                "SHAGGY" => ([0.83, 0.106, 0.114, 1.0], None, Some(1.0), 1.0),
+                                "SONIC" => ([0.0, 0.345, 0.71, 1.0], None, Some(1.0), 1.0),
+                                "POKEMON" => ([0.49, 0.36, 0.56, 1.0], None, Some(1.0), 1.0),
+                                "NINTENDO" => ([0.65, 0.84, 0.96, 1.0], None, Some(1.0), 1.0),
+                                "PRECUT" => ([1.0, 1.0, 1.0, 1.0], None, None, 0.5),
+                                _ => (chb.left_color, None, None, 1.0),
+                            };
+                            chb.tween_colors(left, right, dur);
+                            if let Some(h) = health_reset {
+                                self.game.score.health = h;
+                            }
+                        }
+                    }
+                    // returner: deactivate 80sNightflaid
+                    if v1 == "returner" && self.stage_name == "nightflaid" {
+                        log::info!("80sNightflaid phase deactivated (returner)");
+                        self.nightflaid_deactivate_pending = true;
+                    }
+                    // preMidsongCutscene: slide out lightning + fade BG
+                    if v1 == "preMidsongCutscene" && self.stage_name == "nightflaid" {
+                        // GF slides down, unbeatableBG fades out, lightning slides out
+                        self.nightflaid.gf_visible_80s = false;
+                        self.nightflaid.bg_alpha = 0.0;
+                    }
                 }
                 _ => {}
             }
@@ -175,7 +344,7 @@ impl PlayScreen {
         let events = self.game.drain_events();
         for event in events {
             match event {
-                GameEvent::NoteHit { lane, rating, combo, .. } => {
+                GameEvent::NoteHit { lane, rating, combo, note_type, is_sustain, members_index, .. } => {
                     // Visual: spawn rating popup
                     self.rating_popups.push(RatingPopup {
                         rating_name: rating.clone(),
@@ -196,12 +365,12 @@ impl PlayScreen {
                     if let Some(bf) = &mut self.char_bf {
                         bf.play_sing(lane);
                     }
-                    // Lua: goodNoteHit
+                    // Lua: goodNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        self.scripts.call("goodNoteHit");
+                        self.scripts.call_note_hit("goodNoteHit", members_index, lane, &note_type, is_sustain);
                     }
                 }
-                GameEvent::NoteMiss { lane } => {
+                GameEvent::NoteMiss { lane, note_type, members_index } => {
                     self.rating_popups.push(RatingPopup {
                         rating_name: "miss".into(), combo: 0,
                         y: 0.0, vel_y: RATING_VEL_Y,
@@ -212,21 +381,21 @@ impl PlayScreen {
                     if let Some(bf) = &mut self.char_bf {
                         bf.play_miss(lane);
                     }
-                    // Lua: noteMiss
+                    // Lua: noteMiss(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        self.scripts.call("noteMiss");
+                        self.scripts.call_note_hit("noteMiss", members_index, lane, &note_type, false);
                     }
                 }
-                GameEvent::OpponentNoteHit { lane } => {
+                GameEvent::OpponentNoteHit { lane, note_type, is_sustain, members_index } => {
                     if !self.disable_zooming {
                         self.cam_zooming = true;
                     }
                     if let Some(dad) = &mut self.char_dad {
                         dad.play_sing(lane);
                     }
-                    // Lua: opponentNoteHit
+                    // Lua: opponentNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        self.scripts.call("opponentNoteHit");
+                        self.scripts.call_note_hit("opponentNoteHit", members_index, lane, &note_type, is_sustain);
                     }
                 }
                 GameEvent::CountdownBeat { swag } => {
@@ -272,28 +441,42 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::BeatHit { beat } => {
-                    // Character dance
+                    // Character dance — dance() itself guards against interrupting
+                    // special animations (descend, ascend, intro, etc.)
                     if let Some(dad) = &mut self.char_dad {
-                        let freq = if dad.has_dance_idle { 1 } else { 2 };
-                        if beat % freq == 0 && !dad.anim.current_anim.starts_with("sing") {
+                        let freq = if dad.has_dance_idle() { 1 } else { 2 };
+                        if beat % freq == 0 && !dad.current_anim().starts_with("sing") {
                             dad.dance();
                         }
                     }
                     if let Some(bf) = &mut self.char_bf {
-                        let freq = if bf.has_dance_idle { 1 } else { 2 };
-                        if beat % freq == 0 && !bf.anim.current_anim.starts_with("sing") {
+                        let freq = if bf.has_dance_idle() { 1 } else { 2 };
+                        if beat % freq == 0 && !bf.current_anim().starts_with("sing") {
                             bf.dance();
                         }
                     }
                     if let Some(gf) = &mut self.char_gf {
-                        let freq = if gf.has_dance_idle { 1 } else { 2 };
+                        let freq = if gf.has_dance_idle() { 1 } else { 2 };
                         if beat % freq == 0 {
                             gf.dance();
                         }
                     }
-                    // Icon bop
-                    self.icon_scale_bf = 1.2;
-                    self.icon_scale_dad = 1.2;
+                    // Icon bop (every 2 beats for custom bar, every beat otherwise)
+                    if self.custom_healthbar.is_some() {
+                        if beat % 2 == 0 {
+                            self.icon_scale_bf = 1.2;
+                            self.icon_scale_dad = 1.2;
+                        }
+                    } else {
+                        self.icon_scale_bf = 1.2;
+                        self.icon_scale_dad = 1.2;
+                    }
+                    // Custom health bar fade-in at beat 16
+                    if beat == 16 {
+                        if let Some(chb) = &mut self.custom_healthbar {
+                            chb.fade_in();
+                        }
+                    }
                     // Lua: onBeatHit
                     if self.scripts.has_scripts() {
                         self.scripts.call_beat("onBeatHit", beat);
@@ -339,8 +522,8 @@ impl PlayScreen {
                     }
                     if let Some(mut death_char) = self.death_char_preloaded.take() {
                         if let Some(bf) = &self.char_bf {
-                            death_char.x = bf.x;
-                            death_char.y = bf.y;
+                            death_char.set_x(bf.x());
+                            death_char.set_y(bf.y());
                         }
                         death_char.play_anim("firstDeath", true);
                         self.death = Some(DeathState {
@@ -356,25 +539,29 @@ impl PlayScreen {
         }
 
         // Visual: character animations (sing→idle transitions)
+        // Opponent: don't return to idle while any hold note is sustaining
+        let opp_holding = self.game.opponent_confirm.iter().any(|&c| c > 0.0);
         if let Some(dad) = &mut self.char_dad {
-            if dad.anim.current_anim.starts_with("sing") {
-                dad.hold_timer += dt_ms;
-                let threshold = self.game.conductor.step_crochet * dad.sing_duration * 1.1;
-                if dad.hold_timer >= threshold {
+            if dad.current_anim().starts_with("sing") {
+                let ht = dad.hold_timer() + dt_ms;
+                dad.set_hold_timer(ht);
+                let threshold = self.game.conductor.step_crochet * dad.sing_duration() * 1.1;
+                if ht >= threshold && !opp_holding {
                     dad.dance();
-                    dad.hold_timer = 0.0;
+                    dad.set_hold_timer(0.0);
                 }
             }
             dad.update(dt);
         }
 
         if let Some(bf) = &mut self.char_bf {
-            if bf.anim.current_anim.starts_with("sing") {
-                bf.hold_timer += dt_ms;
-                let threshold = self.game.conductor.step_crochet * bf.sing_duration * 1.1;
-                if bf.hold_timer >= threshold && !self.game.keys_held.iter().any(|&k| k) {
+            if bf.current_anim().starts_with("sing") {
+                let ht = bf.hold_timer() + dt_ms;
+                bf.set_hold_timer(ht);
+                let threshold = self.game.conductor.step_crochet * bf.sing_duration() * 1.1;
+                if ht >= threshold && !self.game.keys_held.iter().any(|&k| k) {
                     bf.dance();
-                    bf.hold_timer = 0.0;
+                    bf.set_hold_timer(0.0);
                 }
             }
             bf.update(dt);
@@ -388,6 +575,12 @@ impl PlayScreen {
         let icon_lerp = (-dt * 9.0).exp();
         self.icon_scale_bf = 1.0 + (self.icon_scale_bf - 1.0) * icon_lerp;
         self.icon_scale_dad = 1.0 + (self.icon_scale_dad - 1.0) * icon_lerp;
+
+        // Custom health bar update
+        if let Some(chb) = &mut self.custom_healthbar {
+            let health = self.game.score.health as f32;
+            chb.update(dt, health);
+        }
 
         // Camera zoom decay
         let zoom_before = self.camera.zoom;

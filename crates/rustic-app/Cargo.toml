@@ -9,6 +9,7 @@ rustic-render = { workspace = true }
 rustic-audio = { workspace = true }
 rustic-gameplay = { workspace = true }
 rustic-scripting = { workspace = true }
+rustanimate = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }

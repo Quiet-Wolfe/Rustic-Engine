@@ -340,7 +340,11 @@ impl TweenManager {
     }
 
     pub fn cancel_tween(&mut self, tag: &str) {
+        // Exact match
         self.tweens.remove(tag);
+        // Also cancel sub-property tweens created by startTween (e.g., "tag_scale.x", "tag_y")
+        let prefix = format!("{}_", tag);
+        self.tweens.retain(|k, _| !k.starts_with(&prefix));
     }
 
     pub fn add_timer(&mut self, timer: LuaTimer) {

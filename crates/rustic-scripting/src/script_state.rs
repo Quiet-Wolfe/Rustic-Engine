@@ -99,6 +99,25 @@ pub struct ScriptState {
     pub opponent_camera_offset: (f32, f32),
     /// Camera offset when pointing at player: (x, y).
     pub bf_camera_offset: (f32, f32),
+
+    /// Character names for runHaxeCode switch resolution.
+    pub bf_name: String,
+    pub dad_name: String,
+    pub gf_name: String,
+
+    /// Current animation names for characters (synced from game each frame).
+    pub dad_anim_name: String,
+    pub bf_anim_name: String,
+    pub gf_anim_name: String,
+    /// Current character positions (synced from game each frame).
+    pub dad_pos: (f32, f32),
+    pub bf_pos: (f32, f32),
+    pub gf_pos: (f32, f32),
+
+    /// Pending character position adjustments from runHaxeCode.
+    /// Each entry: (character: "boyfriend"/"dad"/"gf", field: "x"/"y", value: f64).
+    /// NaN value means the next entry is an absolute set; otherwise it's a delta (+=/-=).
+    pub char_position_adjustments: Vec<(String, String, f64)>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -316,6 +335,16 @@ impl ScriptState {
             camera_forced_pos: false,
             opponent_camera_offset: (0.0, 0.0),
             bf_camera_offset: (0.0, 0.0),
+            bf_name: String::new(),
+            dad_name: String::new(),
+            gf_name: String::new(),
+            dad_anim_name: String::new(),
+            bf_anim_name: String::new(),
+            gf_anim_name: String::new(),
+            dad_pos: (0.0, 0.0),
+            bf_pos: (0.0, 0.0),
+            gf_pos: (0.0, 0.0),
+            char_position_adjustments: Vec::new(),
         }
     }
 }

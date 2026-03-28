@@ -6,9 +6,11 @@ edition = "2021"
 [dependencies]
 rustic-core = { workspace = true }
 wgpu = { workspace = true }
+naga = { workspace = true }
 winit = { workspace = true }
 image = { workspace = true }
 bytemuck = { workspace = true }
 quick-xml = { workspace = true }
 glyphon = { workspace = true }
 log = { workspace = true }
+rustanimate = { workspace = true }

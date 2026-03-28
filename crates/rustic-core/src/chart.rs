@@ -46,6 +46,12 @@ pub struct SwagSong {
     pub arrow_skin: String,
     #[serde(default)]
     pub splash_skin: String,
+    /// Opponent note skin override (VS Retrospecter extension).
+    #[serde(default, rename = "arrowSkinDAD")]
+    pub arrow_skin_dad: String,
+    /// Player note skin override (VS Retrospecter extension).
+    #[serde(default, rename = "arrowSkinBF")]
+    pub arrow_skin_bf: String,
 }
 
 /// Deserialize a string that may be null (treat null as empty string).

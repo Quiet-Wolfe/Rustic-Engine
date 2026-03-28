@@ -7,14 +7,22 @@ pub enum GameEvent {
         rating: String,
         combo: i32,
         score: i32,
+        note_type: String,
+        is_sustain: bool,
+        members_index: usize,
     },
     /// Player missed a note (too late or ghost tap).
     NoteMiss {
         lane: usize,
+        note_type: String,
+        members_index: usize,
     },
     /// Opponent auto-hit a note.
     OpponentNoteHit {
         lane: usize,
+        note_type: String,
+        is_sustain: bool,
+        members_index: usize,
     },
     /// Strum confirm should be shown (player or opponent).
     StrumConfirm {

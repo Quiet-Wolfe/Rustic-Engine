@@ -30,6 +30,13 @@ impl ScriptManager {
         self.state.is_story_mode = is_story_mode;
     }
 
+    /// Set character names (for Lua globals and runHaxeCode switch resolution).
+    pub fn set_char_names(&mut self, bf: &str, dad: &str, gf: &str) {
+        self.state.bf_name = bf.to_string();
+        self.state.dad_name = dad.to_string();
+        self.state.gf_name = gf.to_string();
+    }
+
     /// Set asset search roots so Lua functions can resolve image paths.
     pub fn set_image_roots(&mut self, roots: Vec<PathBuf>) {
         self.state.image_roots = roots;
@@ -66,6 +73,15 @@ impl ScriptManager {
         }
     }
 
+    /// Call a note-hit callback with Psych Engine's standard arguments.
+    pub fn call_note_hit(&mut self, callback: &str, members_index: usize, note_data: usize, note_type: &str, is_sustain: bool) {
+        for script in &mut self.scripts {
+            if let Err(e) = script.call_note_callback(callback, &mut self.state, members_index, note_data, note_type, is_sustain) {
+                log::error!("Lua callback '{}' error: {}", callback, e);
+            }
+        }
+    }
+
     /// Call a callback that receives the current beat number.
     pub fn call_beat(&mut self, callback: &str, beat: i32) {
         self.state.cur_beat = beat;
@@ -90,6 +106,30 @@ impl ScriptManager {
             // Variable tweens: update custom_vars directly
             if let Some(var_name) = target.strip_prefix("__var_") {
                 self.state.custom_vars.insert(var_name.to_string(), LuaValue::Float(val as f64));
+                continue;
+            }
+
+            // Character/group tweens → emit property writes
+            let is_char_target = matches!(target.as_str(),
+                "dad" | "dadGroup" | "boyfriend" | "boyfriendGroup" | "gf" | "gfGroup");
+            if is_char_target {
+                let char_prefix = match target.as_str() {
+                    "dad" | "dadGroup" => "dad",
+                    "boyfriend" | "boyfriendGroup" => "boyfriend",
+                    "gf" | "gfGroup" => "gf",
+                    _ => continue,
+                };
+                let prop_name = match prop {
+                    TweenProperty::X => format!("{}.x", char_prefix),
+                    TweenProperty::Y => format!("{}.y", char_prefix),
+                    TweenProperty::Alpha => format!("{}.alpha", char_prefix),
+                    TweenProperty::Angle => format!("{}.angle", char_prefix),
+                    _ => continue,
+                };
+                self.state.property_writes.push((
+                    prop_name,
+                    LuaValue::Float(val as f64),
+                ));
                 continue;
             }
 
@@ -159,11 +199,28 @@ impl ScriptManager {
         }
     }
 
+    /// Set a string global on all loaded scripts.
+    pub fn set_str_on_all(&mut self, name: &str, value: &str) {
+        for script in &mut self.scripts {
+            script.set_global_string(name, value);
+        }
+    }
+
     /// Call onEvent(name, value1, value2) on all scripts.
     pub fn call_event(&mut self, name: &str, value1: &str, value2: &str) {
         for script in &mut self.scripts {
             if let Err(e) = script.call_callback_str("onEvent", &mut self.state, &[name, value1, value2]) {
                 log::error!("onEvent error: {}", e);
+            }
+        }
+    }
+
+    /// Call a named Lua function with a single string argument across all scripts.
+    /// Used by the "Wildcard" event type (VS Retrospecter) to invoke arbitrary Lua functions.
+    pub fn call_lua_function(&mut self, func_name: &str, arg: &str) {
+        for script in &mut self.scripts {
+            if let Err(e) = script.call_callback_str(func_name, &mut self.state, &[arg]) {
+                log::warn!("Wildcard {}({}): {}", func_name, arg, e);
             }
         }
     }

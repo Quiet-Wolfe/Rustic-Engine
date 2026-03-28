@@ -12,7 +12,7 @@ use super::{
     NOTE_ANIMS, NOTE_PREFIXES, STRUM_ANIMS, PRESS_ANIMS, CONFIRM_ANIMS,
     HOLD_PIECE_ANIMS, HOLD_END_ANIMS, SPLASH_PREFIXES,
 };
-use super::super::characters::{CharacterSprite, StageBgSprite};
+use super::super::characters::{AtlasCharacterSprite, Character, CharacterSprite, StageBgSprite};
 
 impl PlayScreen {
     pub(super) fn init_inner(&mut self, gpu: &GpuState) {
@@ -151,6 +151,10 @@ impl PlayScreen {
         };
 
         self.default_cam_zoom = stage.default_zoom as f32;
+        self.stage_pos_bf = [stage.boyfriend[0], stage.boyfriend[1]];
+        self.stage_pos_dad = [stage.opponent[0], stage.opponent[1]];
+        self.stage_pos_gf = [stage.girlfriend[0], stage.girlfriend[1]];
+        self.stage_name = stage_name.clone();
         self.camera = rustic_render::camera::GameCamera::new(self.default_cam_zoom);
         self.camera.camera_speed = stage.camera_speed as f32;
 
@@ -219,7 +223,8 @@ impl PlayScreen {
 
         // Load Lua scripts
         self.scripts.set_image_roots(paths.roots().to_vec());
-        self.scripts.set_globals(&self.song_name, false);
+        self.scripts.set_globals(&parsed.song.song, false);
+        self.scripts.set_char_names(&parsed.song.player1, &parsed.song.player2, &parsed.song.gf_version);
 
         // Stage Lua script (loaded first — builds stage visuals)
         if let Some(lua_path) = paths.stage_lua(stage_name) {
@@ -240,6 +245,13 @@ impl PlayScreen {
         self.scripts.set_on_all("defaultGirlfriendX", stage.girlfriend[0]);
         self.scripts.set_on_all("defaultGirlfriendY", stage.girlfriend[1]);
 
+        // Set character name globals (Psych Engine: boyfriendName, dadName, gfName)
+        self.scripts.set_str_on_all("boyfriendName", &parsed.song.player1);
+        self.scripts.set_str_on_all("dadName", &parsed.song.player2);
+        self.scripts.set_str_on_all("gfName", &parsed.song.gf_version);
+        // songPath = lowercased path form (for file lookups in Lua)
+        self.scripts.set_str_on_all("songPath", &self.song_name);
+
         // Call onCreate on all loaded scripts
         if self.scripts.has_scripts() {
             self.scripts.call("onCreate");
@@ -255,20 +267,29 @@ impl PlayScreen {
             Some((json_path, char_def))
         };
 
-        // Helper: try to load character sprite (may fail for unsupported atlas formats)
-        let load_char_sprite = |paths: &AssetPaths, gpu: &GpuState, json_path: &std::path::Path, char_def: &CharacterFile, stage_x: f64, stage_y: f64, is_player: bool, stage_name: &str| -> Option<CharacterSprite> {
+        // Helper: try to load character sprite — detects Adobe Animate atlas vs Sparrow XML.
+        let load_char_sprite = |paths: &AssetPaths, gpu: &GpuState, json_path: &std::path::Path, char_def: &CharacterFile, stage_x: f64, stage_y: f64, is_player: bool, stage_name: &str| -> Option<Character> {
             let effective_image = char_def.effective_image();
             if effective_image.is_empty() {
                 log::warn!("Character has empty image field, skipping sprite");
                 return None;
             }
+            // Check for Adobe Animate atlas first (directory with Animation.json)
+            if let Some(animate_dir) = paths.character_animate_dir(effective_image) {
+                log::info!("Loading Adobe Animate atlas character from {:?}", animate_dir);
+                let mut sprite = AtlasCharacterSprite::load(gpu, char_def, &animate_dir, stage_x, stage_y, is_player);
+                if let Some(&stage_scale) = char_def.stage_scale.get(stage_name) {
+                    sprite.scale = stage_scale as f32;
+                }
+                return Some(Character::Atlas(sprite));
+            }
+            // Fall back to Sparrow XML atlas
             let atlas_dir = paths.character_atlas_dir(effective_image)?;
             let mut sprite = CharacterSprite::load(gpu, json_path, &atlas_dir, stage_x, stage_y, is_player);
-            // Apply per-stage scale override
             if let Some(&stage_scale) = char_def.stage_scale.get(stage_name) {
                 sprite.scale = stage_scale as f32;
             }
-            Some(sprite)
+            Some(Character::Sparrow(sprite))
         };
 
         let srgb_to_linear = |s: f32| -> f32 {
@@ -321,16 +342,46 @@ impl PlayScreen {
             }
         }
 
-        // Load opponent note skin if character defines one
+        // Load note skins: chart arrowSkinDAD/arrowSkinBF take priority, then character JSON skin field
+        if !parsed.song.arrow_skin_dad.is_empty() {
+            self.opp_note_assets = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_dad);
+            if self.opp_note_assets.is_some() {
+                log::info!("Loaded opponent note skin from chart: {}", parsed.song.arrow_skin_dad);
+            }
+        }
+        if !parsed.song.arrow_skin_bf.is_empty() {
+            let bf_skin = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_bf);
+            if bf_skin.is_some() {
+                log::info!("Loaded player note skin from chart: {}", parsed.song.arrow_skin_bf);
+                self.note_assets = bf_skin;
+            }
+        }
+        // Fall back to character-defined skin if chart didn't specify
         if let Some((_, char_def)) = &dad_def {
-            if !char_def.skin.is_empty() {
+            if self.opp_note_assets.is_none() && !char_def.skin.is_empty() {
                 self.opp_note_assets = self.load_note_skin(gpu, &paths, &char_def.skin);
                 if self.opp_note_assets.is_some() {
-                    log::info!("Loaded opponent note skin: {}", char_def.skin);
+                    log::info!("Loaded opponent note skin from character: {}", char_def.skin);
                 }
             }
-            // Note: healthBarImg is a custom Retrospecter-fork field, not standard Psych Engine.
-            // Custom health bar images are not yet supported — using standard colored bar.
+            // Load custom health bar if character defines one (Retrospecter-fork field).
+            if !char_def.health_bar_img.is_empty() {
+                let hb_name = &char_def.health_bar_img;
+                let bar_path = paths.find(&format!("images/healthBars/{}/bar.png", hb_name));
+                let overlay_path = paths.find(&format!("images/healthBars/{}/overlay.png", hb_name));
+                if let (Some(bp), Some(op)) = (bar_path, overlay_path) {
+                    let bar_tex = gpu.load_texture_from_path(&bp);
+                    let overlay_tex = gpu.load_texture_from_path(&op);
+                    log::info!("Loaded custom health bar '{}': bar={}x{}, overlay={}x{}",
+                        hb_name, bar_tex.width, bar_tex.height, overlay_tex.width, overlay_tex.height);
+                    let mut chb = super::CustomHealthBar::new(bar_tex, overlay_tex);
+                    // Set initial opponent color from character healthbar color
+                    let hbc = char_def.healthbar_colors;
+                    chb.left_color = [hbc[0] as f32 / 255.0, hbc[1] as f32 / 255.0, hbc[2] as f32 / 255.0, 1.0];
+                    chb.color_tween_target_left = chb.left_color;
+                    self.custom_healthbar = Some(chb);
+                }
+            }
         }
 
         // Store camera offsets for dynamic recomputation at section changes
@@ -350,6 +401,9 @@ impl PlayScreen {
         };
         self.stage_cam_bf = [stage.camera_boyfriend[0] as f32, stage.camera_boyfriend[1] as f32];
         self.stage_cam_dad = [stage.camera_opponent[0] as f32, stage.camera_opponent[1] as f32];
+
+        // Apply character position adjustments from runHaxeCode (must be after chars loaded)
+        self.process_char_positions();
 
         // Camera targets — compute from current character midpoints
         self.recompute_camera_targets();
@@ -371,6 +425,12 @@ impl PlayScreen {
 
         // Disable beat zooming if stage specifies it
         self.disable_zooming = stage.disable_zooming;
+
+        // Enable character reflections and load 80s assets for nightflaid stage (Extirpatient)
+        if stage_name == "nightflaid" {
+            self.reflections_enabled = true;
+            self.load_nightflaid_assets(gpu, &paths);
+        }
 
         // Load audio
         let mut audio = AudioEngine::new();
@@ -455,6 +515,7 @@ impl PlayScreen {
             self.scripts.call("onCreatePost");
             self.process_lua_sprites(gpu);
             self.process_property_writes();
+            self.process_char_positions();
         }
     }
 }

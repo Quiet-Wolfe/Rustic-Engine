@@ -95,6 +95,11 @@ impl LuaScript {
         self.lua.globals().set(name, value).ok();
     }
 
+    /// Set a string global variable on this script's Lua VM.
+    pub fn set_global_string(&self, name: &str, value: &str) {
+        self.lua.globals().set(name, value.to_string()).ok();
+    }
+
     /// Sync shared game state from Rust into this Lua VM before a callback.
     /// Ensures all scripts see consistent strum positions, camera state, etc.
     fn sync_shared_state(&self, state: &ScriptState) {
@@ -106,6 +111,15 @@ impl LuaScript {
         globals.set("defaultCamZoom", state.default_cam_zoom as f64).ok();
         globals.set("cameraSpeed", state.camera_speed as f64).ok();
         globals.set("__health", state.health as f64).ok();
+        globals.set("__dad_anim_name", state.dad_anim_name.as_str()).ok();
+        globals.set("__bf_anim_name", state.bf_anim_name.as_str()).ok();
+        globals.set("__gf_anim_name", state.gf_anim_name.as_str()).ok();
+        globals.set("__dad_x", state.dad_pos.0 as f64).ok();
+        globals.set("__dad_y", state.dad_pos.1 as f64).ok();
+        globals.set("__bf_x", state.bf_pos.0 as f64).ok();
+        globals.set("__bf_y", state.bf_pos.1 as f64).ok();
+        globals.set("__gf_x", state.gf_pos.0 as f64).ok();
+        globals.set("__gf_y", state.gf_pos.1 as f64).ok();
 
         // Sync shared custom variables so all scripts see each other's setProperty values
         if let Ok(custom) = globals.get::<LuaTable>("__custom_vars") {
@@ -220,6 +234,35 @@ impl LuaScript {
         multi.push_back(mlua::Value::String(self.lua.create_string(tag).map_err(|e| e.to_string())?));
         multi.push_back(mlua::Value::Integer(loops as i64));
         multi.push_back(mlua::Value::Integer(left as i64));
+        func.call::<()>(multi).map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
+
+        if let Ok(closed) = self.lua.globals().get::<bool>("__script_closed") {
+            if closed { self.closed = true; }
+        }
+        self.drain_sprite_ops(state);
+        self.sync_sprite_data(state);
+        Ok(())
+    }
+
+    /// Call a note-hit-style callback: (membersIndex, noteData, noteType, isSustainNote).
+    pub fn call_note_callback(
+        &mut self, name: &str, state: &mut ScriptState,
+        members_index: usize, note_data: usize, note_type: &str, is_sustain: bool,
+    ) -> Result<(), String> {
+        if self.closed { return Ok(()); }
+        self.sync_shared_state(state);
+
+        let func: Option<LuaFunction> = self.lua.globals().get(name).ok();
+        let func = match func {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+
+        let mut multi = mlua::MultiValue::new();
+        multi.push_back(mlua::Value::Integer(members_index as i64));
+        multi.push_back(mlua::Value::Integer(note_data as i64));
+        multi.push_back(mlua::Value::String(self.lua.create_string(note_type).map_err(|e| e.to_string())?));
+        multi.push_back(mlua::Value::Boolean(is_sustain));
         func.call::<()>(multi).map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
 
         if let Ok(closed) = self.lua.globals().get::<bool>("__script_closed") {
@@ -431,6 +474,20 @@ impl LuaScript {
                                 Some(crate::script_state::LuaValue::Int(i)) => *i as f32,
                                 _ => 0.0,
                             }
+                        } else if matches!(target.as_str(), "dad" | "dadGroup" | "boyfriend" | "boyfriendGroup" | "gf" | "gfGroup") {
+                            // Character/group tween — read current position from synced state
+                            let (cx, cy) = match target.as_str() {
+                                "dad" | "dadGroup" => state.dad_pos,
+                                "boyfriend" | "boyfriendGroup" => state.bf_pos,
+                                "gf" | "gfGroup" => state.gf_pos,
+                                _ => (0.0, 0.0),
+                            };
+                            match &prop {
+                                crate::tweens::TweenProperty::X => cx,
+                                crate::tweens::TweenProperty::Y => cy,
+                                crate::tweens::TweenProperty::Alpha => 1.0,
+                                _ => 0.0,
+                            }
                         } else {
                             let s = state.lua_sprites.get(&target);
                             match &prop {
@@ -592,6 +649,22 @@ impl LuaScript {
             }
             if let Ok(new_tbl) = self.lua.create_table() {
                 globals.set("__pending_cam_sections", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_char_positions (runHaxeCode character position adjustments)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_char_positions") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    let character: String = tbl.get("character").unwrap_or_default();
+                    let field: String = tbl.get("field").unwrap_or_default();
+                    let value: f64 = tbl.get("value").unwrap_or(0.0);
+                    state.char_position_adjustments.push((character, field, value));
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_char_positions", new_tbl).ok();
             }
         }
 

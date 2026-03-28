@@ -113,6 +113,20 @@ impl AssetPaths {
         None
     }
 
+    /// Find an Adobe Animate atlas directory for a character.
+    /// The image field points to a folder (e.g. "characters/atlases/nightgflaid")
+    /// containing Animation.json + spritemap1.json + spritemap1.png.
+    pub fn character_animate_dir(&self, image_field: &str) -> Option<PathBuf> {
+        let dir = format!("images/{image_field}");
+        for root in &self.search_roots {
+            let p = root.join(&dir);
+            if p.join("Animation.json").exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
     /// Find a health bar icon.
     /// Checks both standard `icon-{name}.png` and mod-style `{name}.png` paths.
     pub fn health_icon(&self, name: &str) -> Option<PathBuf> {

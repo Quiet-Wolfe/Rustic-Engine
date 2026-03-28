@@ -19,6 +19,19 @@ pub enum NoteKind {
 }
 
 impl NoteKind {
+    /// Return the note type as a string (for Lua callbacks).
+    pub fn as_type_str(&self) -> &str {
+        match self {
+            Self::Normal => "",
+            Self::Alt => "Alt Animation",
+            Self::Hey => "Hey!",
+            Self::Hurt => "Hurt Note",
+            Self::GfSing => "GF Sing",
+            Self::NoAnim => "No Animation",
+            Self::Custom(s) => s,
+        }
+    }
+
     /// Parse from the optional 4th element of sectionNotes.
     pub fn from_chart_value(value: Option<&serde_json::Value>) -> Self {
         match value {

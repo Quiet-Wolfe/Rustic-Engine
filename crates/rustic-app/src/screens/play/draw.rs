@@ -28,6 +28,19 @@ impl PlayScreen {
     pub(super) fn draw_inner(&mut self, gpu: &mut GpuState) {
         let white = [1.0, 1.0, 1.0, 1.0];
 
+        // Update 80sNightflaid animations (needs gpu for shader uniforms)
+        self.update_nightflaid(self.last_dt, gpu);
+
+        // Process pending 80s activation/deactivation (set in update, needs gpu here)
+        if self.nightflaid_activate_pending {
+            self.nightflaid_activate_pending = false;
+            self.activate_80s_nightflaid(gpu);
+        }
+        if self.nightflaid_deactivate_pending {
+            self.nightflaid_deactivate_pending = false;
+            self.deactivate_80s_nightflaid(gpu);
+        }
+
         if !gpu.begin_frame() {
             return;
         }
@@ -35,10 +48,33 @@ impl PlayScreen {
         // Process any pending Lua sprite adds (may have been queued during update)
         self.process_lua_sprites(gpu);
 
+        // Process pending character changes (needs GPU for texture loading)
+        self.process_char_changes(gpu);
+
         // === Lua sprites behind characters ===
         let is_death = self.death.is_some();
         if !is_death {
             self.draw_lua_sprites(gpu, false);
+        }
+
+        // === Stage background color overlay (nightflaid shader handler) ===
+        if self.stage_name == "nightflaid" {
+            let lc = self.nightflaid.stage_color_left;
+            let rc = self.nightflaid.stage_color_right;
+            if lc != rc {
+                // Left half tint
+                let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
+                gpu.push_colored_quad(0.0, 0.0, GAME_W / 2.0, GAME_H, c);
+                gpu.draw_batch(None);
+                // Right half tint
+                let c = [rc[0], rc[1], rc[2], rc[3] * 0.35];
+                gpu.push_colored_quad(GAME_W / 2.0, 0.0, GAME_W / 2.0, GAME_H, c);
+                gpu.draw_batch(None);
+            } else {
+                let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
+                gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, c);
+                gpu.draw_batch(None);
+            }
         }
 
         // === Stage & Characters (draw order from stage objects) ===
@@ -52,22 +88,32 @@ impl PlayScreen {
                 DrawLayer::Gf => if !is_death {
                     if let Some(gf) = &self.char_gf {
                         gf.draw(gpu, &self.camera);
-                        gpu.draw_batch(Some(&gf.texture));
+                        gpu.draw_batch(Some(gf.texture()));
                     }
                 }
                 DrawLayer::Dad => if !is_death {
                     if let Some(dad) = &self.char_dad {
+                        // Draw reflection below character first
+                        if self.reflections_enabled {
+                            dad.draw_reflection(gpu, &self.camera, self.reflection_alpha, self.reflection_dist_y);
+                            gpu.draw_batch(Some(dad.texture()));
+                        }
                         dad.draw(gpu, &self.camera);
-                        gpu.draw_batch(Some(&dad.texture));
+                        gpu.draw_batch(Some(dad.texture()));
                     }
                 }
                 DrawLayer::Bf => {
                     if let Some(death) = &self.death {
                         death.character.draw(gpu, &self.camera);
-                        gpu.draw_batch(Some(&death.character.texture));
+                        gpu.draw_batch(Some(death.character.texture()));
                     } else if let Some(bf) = &self.char_bf {
+                        // Draw reflection below character first
+                        if self.reflections_enabled {
+                            bf.draw_reflection(gpu, &self.camera, self.reflection_alpha, self.reflection_dist_y);
+                            gpu.draw_batch(Some(bf.texture()));
+                        }
                         bf.draw(gpu, &self.camera);
-                        gpu.draw_batch(Some(&bf.texture));
+                        gpu.draw_batch(Some(bf.texture()));
                     }
                 }
             }
@@ -76,6 +122,11 @@ impl PlayScreen {
         // === Lua sprites in front of characters ===
         if !is_death {
             self.draw_lua_sprites(gpu, true);
+        }
+
+        // === 80sNightflaid overlay ===
+        if self.nightflaid.active {
+            self.draw_nightflaid_overlay(gpu);
         }
 
         // Skip HUD during death
@@ -206,65 +257,175 @@ impl PlayScreen {
 
         // === Health bar ===
         let health_pct = self.game.score.health_percent();
-        let hbx = hud_x(HEALTH_BAR_X);
-        let hby = hud_y(HEALTH_BAR_Y);
-        let hbw = hud_s(HEALTH_BAR_W);
-        let hbh = hud_s(HEALTH_BAR_H);
-        // Black border
-        gpu.push_colored_quad(hbx - 2.0, hby - 2.0, hbw + 4.0, hbh + 4.0, [0.0, 0.0, 0.0, 1.0]);
-        gpu.draw_batch(None);
-        // Colored fills: opponent on left, player on right
-        gpu.push_colored_quad(hbx, hby, hbw, hbh, self.hb_color_dad);
-        let player_w = hbw * health_pct;
-        gpu.push_colored_quad(hbx + hbw - player_w, hby, player_w, hbh, self.hb_color_bf);
-        gpu.draw_batch(None);
 
-        if self.game.song_ended {
-            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
+        if let Some(chb) = &self.custom_healthbar {
+            if chb.alpha > 0.001 {
+                // Custom health bar: overlay + clipped bar sprites
+                let a = chb.alpha;
+                let scale = chb.scale * hz;
+                let ow = chb.overlay_texture.width as f32 * scale;
+                let oh = chb.overlay_texture.height as f32 * scale;
+                let bw = chb.bar_texture.width as f32 * scale;
+                let bh = chb.bar_texture.height as f32 * scale;
+
+                // Center overlay on screen; top for downscroll, bottom for upscroll
+                let overlay_x = (GAME_W * hz - ow) / 2.0;
+                let hbar_y = if self.downscroll { GAME_H * 0.02 } else { HEALTH_BAR_Y };
+                let overlay_y = hud_y(hbar_y) - oh / 2.0;
+                // Bar centered within overlay
+                let bar_x = overlay_x + (ow - bw) / 2.0;
+                let bar_y = overlay_y + (oh - bh) / 2.0;
+
+                // Smoothed health for fill (capped at 1.7/2 = 0.85)
+                let vida = (chb.health_lerp.clamp(0.0, 1.7)) / 2.0;
+                let bar_src_w = chb.bar_texture.width as f32;
+                let bar_src_h = chb.bar_texture.height as f32;
+
+                // Opponent bar (left side): clips from x=0, width = (1-vida) of bar
+                let opp_clip_w = bar_src_w * (1.0 - vida);
+                let opp_color = [chb.left_color[0] * a, chb.left_color[1] * a, chb.left_color[2] * a, a];
+                gpu.push_texture_region(
+                    bar_src_w, bar_src_h,
+                    0.0, 0.0, opp_clip_w, bar_src_h,
+                    bar_x, bar_y, opp_clip_w * scale, bh,
+                    false, opp_color,
+                );
+                gpu.draw_batch(Some(&chb.bar_texture));
+
+                // Player bar (right side): clips from right edge, width = vida of bar
+                let player_clip_w = bar_src_w * vida;
+                let player_src_x = bar_src_w - player_clip_w;
+                let player_color = [chb.right_color[0] * a, chb.right_color[1] * a, chb.right_color[2] * a, a];
+                gpu.push_texture_region(
+                    bar_src_w, bar_src_h,
+                    player_src_x, 0.0, player_clip_w, bar_src_h,
+                    bar_x + bw - player_clip_w * scale, bar_y, player_clip_w * scale, bh,
+                    false, player_color,
+                );
+                gpu.draw_batch(Some(&chb.bar_texture));
+
+                // Overlay on top
+                let overlay_color = [a, a, a, a];
+                gpu.push_texture_region(
+                    chb.overlay_texture.width as f32, chb.overlay_texture.height as f32,
+                    0.0, 0.0, chb.overlay_texture.width as f32, chb.overlay_texture.height as f32,
+                    overlay_x, overlay_y, ow, oh,
+                    false, overlay_color,
+                );
+                gpu.draw_batch(Some(&chb.overlay_texture));
+
+                // Cut point for icons
+                let cut_x = bar_x + bw * (1.0 - vida);
+
+                if self.game.song_ended {
+                    gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
+                    gpu.draw_batch(None);
+                }
+
+                // Icons at cut point
+                let bf_losing = health_pct < 0.2;
+                let dad_losing = health_pct > 0.8;
+                let icon_size = 150.0 * 0.75;
+                let icon_spacing = -20.0 * scale;
+
+                if let Some(icon) = &self.icon_dad {
+                    let s = self.icon_scale_dad;
+                    let draw_size = hud_s(icon_size) * s;
+                    let icon_y = overlay_y + oh / 2.0 - draw_size / 2.0;
+                    let src_x = if dad_losing { 150.0 } else { 0.0 };
+                    gpu.push_texture_region(
+                        icon.width as f32, icon.height as f32,
+                        src_x, 0.0, 150.0, 150.0,
+                        cut_x - draw_size + icon_spacing, icon_y, draw_size, draw_size,
+                        false, [a, a, a, a],
+                    );
+                    gpu.draw_batch(Some(icon));
+                }
+
+                if let Some(icon) = &self.icon_bf {
+                    let s = self.icon_scale_bf;
+                    let draw_size = hud_s(icon_size) * s;
+                    let icon_y = overlay_y + oh / 2.0 - draw_size / 2.0;
+                    let src_x = if bf_losing { 150.0 } else { 0.0 };
+                    gpu.push_texture_region(
+                        icon.width as f32, icon.height as f32,
+                        src_x, 0.0, 150.0, 150.0,
+                        cut_x - icon_spacing, icon_y, draw_size, draw_size,
+                        true, [a, a, a, a],
+                    );
+                    gpu.draw_batch(Some(icon));
+                }
+
+                // Score text below overlay
+                let grade = self.game.score.grade();
+                let score_text = format!(
+                    "Score: {} | Misses: {} | Acc: {:.2}% [{}]",
+                    self.game.score.score, self.game.score.misses, self.game.score.accuracy(), grade,
+                );
+                gpu.draw_text(&score_text, overlay_x, overlay_y + oh + 6.0, 16.0, [a, a, a, a]);
+            }
+        } else {
+            // Default health bar
+            let hbx = hud_x(HEALTH_BAR_X);
+            let hby = hud_y(HEALTH_BAR_Y);
+            let hbw = hud_s(HEALTH_BAR_W);
+            let hbh = hud_s(HEALTH_BAR_H);
+            // Black border
+            gpu.push_colored_quad(hbx - 2.0, hby - 2.0, hbw + 4.0, hbh + 4.0, [0.0, 0.0, 0.0, 1.0]);
             gpu.draw_batch(None);
-        }
+            // Colored fills: opponent on left, player on right
+            gpu.push_colored_quad(hbx, hby, hbw, hbh, self.hb_color_dad);
+            let player_w = hbw * health_pct;
+            gpu.push_colored_quad(hbx + hbw - player_w, hby, player_w, hbh, self.hb_color_bf);
+            gpu.draw_batch(None);
 
-        // === Icons with bop ===
-        let divider_x = hbx + hbw * (1.0 - health_pct);
-        let bf_losing = health_pct < 0.2;
-        let dad_losing = health_pct > 0.8;
-        let icon_size = 150.0 * 0.75;
+            if self.game.song_ended {
+                gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
+                gpu.draw_batch(None);
+            }
 
-        if let Some(icon) = &self.icon_dad {
-            let s = self.icon_scale_dad;
-            let draw_size = hud_s(icon_size) * s;
-            let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
-            let src_x = if dad_losing { 150.0 } else { 0.0 };
-            gpu.push_texture_region(
-                icon.width as f32, icon.height as f32,
-                src_x, 0.0, 150.0, 150.0,
-                divider_x - draw_size + 15.0, icon_y, draw_size, draw_size,
-                false, white,
+            // Icons with bop
+            let divider_x = hbx + hbw * (1.0 - health_pct);
+            let bf_losing = health_pct < 0.2;
+            let dad_losing = health_pct > 0.8;
+            let icon_size = 150.0 * 0.75;
+
+            if let Some(icon) = &self.icon_dad {
+                let s = self.icon_scale_dad;
+                let draw_size = hud_s(icon_size) * s;
+                let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
+                let src_x = if dad_losing { 150.0 } else { 0.0 };
+                gpu.push_texture_region(
+                    icon.width as f32, icon.height as f32,
+                    src_x, 0.0, 150.0, 150.0,
+                    divider_x - draw_size + 15.0, icon_y, draw_size, draw_size,
+                    false, white,
+                );
+                gpu.draw_batch(Some(icon));
+            }
+
+            if let Some(icon) = &self.icon_bf {
+                let s = self.icon_scale_bf;
+                let draw_size = hud_s(icon_size) * s;
+                let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
+                let src_x = if bf_losing { 150.0 } else { 0.0 };
+                gpu.push_texture_region(
+                    icon.width as f32, icon.height as f32,
+                    src_x, 0.0, 150.0, 150.0,
+                    divider_x - 15.0, icon_y, draw_size, draw_size,
+                    true, white,
+                );
+                gpu.draw_batch(Some(icon));
+            }
+
+            // Score text
+            let grade = self.game.score.grade();
+            let score_text = format!(
+                "Score: {} | Misses: {} | Acc: {:.2}% [{}]",
+                self.game.score.score, self.game.score.misses, self.game.score.accuracy(), grade,
             );
-            gpu.draw_batch(Some(icon));
+            gpu.draw_text(&score_text, hbx, hby + hbh + 6.0, 16.0, white);
         }
-
-        if let Some(icon) = &self.icon_bf {
-            let s = self.icon_scale_bf;
-            let draw_size = hud_s(icon_size) * s;
-            let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
-            let src_x = if bf_losing { 150.0 } else { 0.0 };
-            gpu.push_texture_region(
-                icon.width as f32, icon.height as f32,
-                src_x, 0.0, 150.0, 150.0,
-                divider_x - 15.0, icon_y, draw_size, draw_size,
-                true, white,
-            );
-            gpu.draw_batch(Some(icon));
-        }
-
-        // === Score text ===
-        let grade = self.game.score.grade();
-        let score_text = format!(
-            "Score: {} | Misses: {} | Acc: {:.2}% [{}]",
-            self.game.score.score, self.game.score.misses, self.game.score.accuracy(), grade,
-        );
-        gpu.draw_text(&score_text, hbx, hby + hbh + 6.0, 16.0, white);
 
         // === Rating popups ===
         if let Some(assets) = &self.rating_assets {
@@ -312,6 +473,9 @@ impl PlayScreen {
                 }
             }
         }
+
+        // === Lua sprites on camHUD ===
+        self.draw_lua_sprites_hud(gpu);
 
         // === Countdown sprite ===
         if self.countdown_alpha > 0.0 {
@@ -389,7 +553,7 @@ impl PlayScreen {
         gpu.end_frame();
     }
 
-    /// Draw all Lua-created sprites in either the behind or in-front layer.
+    /// Draw all Lua-created sprites in either the behind or in-front layer (game camera only).
     fn draw_lua_sprites(&self, gpu: &mut GpuState, front: bool) {
         let tags = if front { &self.lua_front } else { &self.lua_behind };
         for tag in tags {
@@ -403,11 +567,17 @@ impl PlayScreen {
             };
             if !sprite.visible || sprite.alpha <= 0.0 { continue; }
 
+            // Skip HUD sprites — they're drawn in draw_lua_sprites_hud
+            let is_hud = sprite.camera == "camHUD" || sprite.camera == "hud";
+            if is_hud { continue; }
+
+            let a = sprite.alpha.clamp(0.0, 1.0);
+            let color = [a, a, a, a];
+
             let cam = &self.camera;
             let scroll_x = cam.x - GAME_W / 2.0;
             let scroll_y = cam.y - GAME_H / 2.0;
-            let a = sprite.alpha.clamp(0.0, 1.0);
-            let color = [a, a, a, a];
+            let zoom = cam.zoom;
 
             // Animated sprite: render current atlas frame
             if let Some(atlas) = self.lua_atlases.get(tag) {
@@ -421,9 +591,9 @@ impl PlayScreen {
                         let world_y = sprite.y - off_y;
                         let buf_x = world_x - scroll_x * sprite.scroll_x;
                         let buf_y = world_y - scroll_y * sprite.scroll_y;
-                        let dx = (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0;
-                        let dy = (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0;
-                        let scale = sprite.scale_x * cam.zoom;
+                        let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+                        let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+                        let scale = sprite.scale_x * zoom;
 
                         gpu.draw_sprite_frame(
                             frame, tex.width as f32, tex.height as f32,
@@ -440,11 +610,69 @@ impl PlayScreen {
             let h = tex.height as f32 * sprite.scale_y;
             let buf_x = sprite.x - scroll_x * sprite.scroll_x;
             let buf_y = sprite.y - scroll_y * sprite.scroll_y;
-            let dx = (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0;
-            let dy = (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0;
-            let dw = w * cam.zoom;
-            let dh = h * cam.zoom;
+            let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+            let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+            let dw = w * zoom;
+            let dh = h * zoom;
 
+            gpu.push_texture_region(
+                tex.width as f32, tex.height as f32,
+                0.0, 0.0, tex.width as f32, tex.height as f32,
+                dx, dy, dw, dh,
+                sprite.flip_x, color,
+            );
+            gpu.draw_batch(Some(tex));
+        }
+    }
+
+    /// Draw Lua sprites assigned to camHUD (rendered in HUD space with HUD zoom).
+    fn draw_lua_sprites_hud(&self, gpu: &mut GpuState) {
+        let all_tags = self.lua_behind.iter().chain(self.lua_front.iter());
+        for tag in all_tags {
+            let tex = match self.lua_textures.get(tag) {
+                Some(t) => t,
+                None => continue,
+            };
+            let sprite = match self.scripts.state.lua_sprites.get(tag) {
+                Some(s) => s,
+                None => continue,
+            };
+            if !sprite.visible || sprite.alpha <= 0.0 { continue; }
+            let is_hud = sprite.camera == "camHUD" || sprite.camera == "hud";
+            if !is_hud { continue; }
+
+            let a = sprite.alpha.clamp(0.0, 1.0);
+            let color = [a, a, a, a];
+            let zoom = self.hud_zoom;
+
+            // Animated sprite
+            if let Some(atlas) = self.lua_atlases.get(tag) {
+                if !sprite.current_anim.is_empty() {
+                    if let Some(frame) = atlas.get_frame(&sprite.current_anim, sprite.anim_frame) {
+                        let (off_x, off_y) = sprite.anim_offsets
+                            .get(&sprite.current_anim)
+                            .copied()
+                            .unwrap_or((0.0, 0.0));
+                        let dx = (sprite.x - off_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+                        let dy = (sprite.y - off_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+                        let scale = sprite.scale_x * zoom;
+                        gpu.draw_sprite_frame(
+                            frame, tex.width as f32, tex.height as f32,
+                            dx, dy, scale, sprite.flip_x, color,
+                        );
+                        gpu.draw_batch(Some(tex));
+                        continue;
+                    }
+                }
+            }
+
+            // Static sprite
+            let w = tex.width as f32 * sprite.scale_x;
+            let h = tex.height as f32 * sprite.scale_y;
+            let dx = (sprite.x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+            let dy = (sprite.y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+            let dw = w * zoom;
+            let dh = h * zoom;
             gpu.push_texture_region(
                 tex.width as f32, tex.height as f32,
                 0.0, 0.0, tex.width as f32, tex.height as f32,
@@ -647,6 +875,95 @@ impl PlayScreen {
                     ex, vis_top, ew, vis_h,
                     false, color,
                 );
+            }
+        }
+    }
+
+    /// Draw the 80sNightflaid overlay: red stripes BG, lightning bolts, scrolling needles, GF.
+    fn draw_nightflaid_overlay(&self, gpu: &mut GpuState) {
+        let nf = &self.nightflaid;
+        let a = nf.bg_alpha.clamp(0.0, 1.0);
+
+        // unbeatableBG — massive red stripes background (no camera transform, screen-space)
+        if let Some(bg_tex) = &nf.bg_texture {
+            let bg_scale = 150.0; // Matching V-Slice scale
+            let w = bg_tex.width as f32 * bg_scale;
+            let h = bg_tex.height as f32 * bg_scale;
+            let color = [a, a, a, a];
+            // Draw rotated around center
+            let cx = nf.bg_x + w / 2.0;
+            let cy = nf.bg_y + h / 2.0;
+            gpu.push_quad_rotated(
+                cx, cy, w, h,
+                0.0, 0.0, 1.0, 1.0,
+                nf.bg_angle.to_radians(),
+                false, color,
+            );
+            gpu.draw_batch(Some(bg_tex));
+        }
+
+        // Lightning bolts (animated sparrow sprites)
+        if let (Some(atlas), Some(tex)) = (&nf.lightning_atlas, &nf.lightning_texture) {
+            let anim_name = "lightning";
+            // Left lightning
+            if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
+                gpu.draw_sprite_frame(
+                    frame, nf.lightning_tex_w, nf.lightning_tex_h,
+                    nf.lightning_left_x, -50.0,
+                    1.0, false, [1.0, 1.0, 1.0, 1.0],
+                );
+            }
+            // Right lightning (flipY in Psych Engine = flipY in Haxe, but V-Slice uses flipY too)
+            if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
+                gpu.draw_sprite_frame_flip_y(
+                    frame, nf.lightning_tex_w, nf.lightning_tex_h,
+                    nf.lightning_right_x, -50.0,
+                    1.0, false, [1.0, 1.0, 1.0, 1.0],
+                );
+            }
+            gpu.draw_batch(Some(tex));
+        }
+
+        // Scrolling needles
+        if nf.needles_active {
+            if let (Some(atlas), Some(tex)) = (&nf.needle_atlas, &nf.needle_texture) {
+                let anim_name = "anim"; // needle animation prefix from V-Slice
+                // Left needles (scroll up)
+                for &ny in &nf.needle_left_y {
+                    if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
+                        gpu.draw_sprite_frame(
+                            frame, nf.needle_tex_w, nf.needle_tex_h,
+                            nf.lightning_left_x - 80.0, ny,
+                            1.0, false, [1.0, 1.0, 1.0, 1.0],
+                        );
+                    }
+                }
+                // Right needles (scroll down, flipX)
+                for &ny in &nf.needle_right_y {
+                    if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
+                        gpu.draw_sprite_frame(
+                            frame, nf.needle_tex_w, nf.needle_tex_h,
+                            nf.lightning_right_x - 80.0, ny,
+                            1.0, true, [1.0, 1.0, 1.0, 1.0],
+                        );
+                    }
+                }
+                gpu.draw_batch(Some(tex));
+            }
+        }
+
+        // GF character in 80s mode (drawn on top of everything in the 80s overlay)
+        if nf.gf_visible_80s {
+            if let Some(gf) = &self.char_gf {
+                // In 80s mode, GF is drawn in screen space (no camera transform)
+                // We temporarily override position for drawing
+                // Just draw at the 80s position using a direct approach
+                // The GF character is drawn centered on screen at gf_80s_y
+                let gf_x = (GAME_W - 300.0) / 2.0; // approximate center
+                let _ = (gf_x, nf.gf_80s_y); // GF drawing in 80s mode is complex;
+                // for now, just draw via normal camera (the camera is hidden so only 80s shows)
+                gf.draw(gpu, &self.camera);
+                gpu.draw_batch(Some(gf.texture()));
             }
         }
     }

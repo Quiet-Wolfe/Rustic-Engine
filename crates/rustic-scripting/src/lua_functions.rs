@@ -100,6 +100,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__pending_text_adds", lua.create_table()?)?;
     g.set("__pending_cam_fx", lua.create_table()?)?;
     g.set("__pending_subtitles", lua.create_table()?)?;
+    g.set("__pending_char_positions", lua.create_table()?)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -706,6 +707,36 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 };
             }
         }
+        // Character properties (animation name, position, alpha, etc.)
+        {
+            let g = lua.globals();
+            match prop.as_str() {
+                "dad.animation.curAnim.name" | "opponent.animation.curAnim.name" =>
+                    return Ok(g.get::<LuaValue>("__dad_anim_name").unwrap_or(LuaValue::String(lua.create_string("")?))),
+                "boyfriend.animation.curAnim.name" | "bf.animation.curAnim.name" =>
+                    return Ok(g.get::<LuaValue>("__bf_anim_name").unwrap_or(LuaValue::String(lua.create_string("")?))),
+                "gf.animation.curAnim.name" | "girlfriend.animation.curAnim.name" =>
+                    return Ok(g.get::<LuaValue>("__gf_anim_name").unwrap_or(LuaValue::String(lua.create_string("")?))),
+                "dad.animateAtlas.anim.curFrame" | "boyfriend.animateAtlas.anim.curFrame"
+                | "gf.animateAtlas.anim.curFrame" =>
+                    return Ok(LuaValue::Integer(0)),
+                // Character position reads — synced from game each frame
+                "dad.x" | "dadGroup.x" =>
+                    return Ok(g.get::<LuaValue>("__dad_x").unwrap_or(LuaValue::Number(0.0))),
+                "dad.y" | "dadGroup.y" =>
+                    return Ok(g.get::<LuaValue>("__dad_y").unwrap_or(LuaValue::Number(0.0))),
+                "boyfriend.x" | "bf.x" | "boyfriendGroup.x" =>
+                    return Ok(g.get::<LuaValue>("__bf_x").unwrap_or(LuaValue::Number(0.0))),
+                "boyfriend.y" | "bf.y" | "boyfriendGroup.y" =>
+                    return Ok(g.get::<LuaValue>("__bf_y").unwrap_or(LuaValue::Number(0.0))),
+                "gf.x" | "girlfriend.x" | "gfGroup.x" =>
+                    return Ok(g.get::<LuaValue>("__gf_x").unwrap_or(LuaValue::Number(0.0))),
+                "gf.y" | "girlfriend.y" | "gfGroup.y" =>
+                    return Ok(g.get::<LuaValue>("__gf_y").unwrap_or(LuaValue::Number(0.0))),
+                _ => {}
+            }
+        }
+
         // Handle dotted paths for game object arrays (e.g. "unspawnNotes.length")
         if prop == "unspawnNotes.length" || prop == "notes.length" {
             let g = lua.globals();
@@ -963,6 +994,26 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
             return Ok(LuaNil);
         }
 
+        // Pattern: switch(game.bfVersion) with game.boyfriend/dad/gf.x/y assignments
+        if code.contains("game.boyfriend.") || code.contains("game.dad.") || code.contains("game.gf.") {
+            let g = lua.globals();
+            let bf_name: String = g.get::<String>("boyfriendName").unwrap_or_default();
+            let positions = parse_haxe_char_positions(code, &bf_name);
+            if !positions.is_empty() {
+                let pending: LuaTable = g.get("__pending_char_positions")?;
+                for (char_name, field, delta) in &positions {
+                    let tbl = lua.create_table()?;
+                    tbl.set("character", *char_name)?;
+                    tbl.set("field", *field)?;
+                    tbl.set("value", *delta)?;
+                    let len = pending.len()? as i64;
+                    pending.set(len + 1, tbl)?;
+                }
+                log::info!("runHaxeCode: parsed {} char position adjustments for bf='{}'", positions.len(), bf_name);
+            }
+            return Ok(LuaNil);
+        }
+
         // Ignore: function definitions, camCharacters.shake, camVideo.zoom, etc.
         if code.contains("function ") || code.contains(".shake(") || code.contains("camVideo.") {
             return Ok(LuaNil);
@@ -988,6 +1039,21 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
                 tbl.set("value", visible)?;
                 let len = pending.len()? as i64;
                 pending.set(len + 1, tbl)?;
+            }
+            // setCameraOnThings(bool) — toggle 80sNightflaid VCR camera mode
+            // We can't replicate the shader, but we can log it for debugging
+            "setCameraOnThings" => {
+                let enabled = args.as_ref()
+                    .and_then(|t| t.get::<bool>(1).ok())
+                    .unwrap_or(false);
+                log::info!("runHaxeFunction: setCameraOnThings({})", enabled);
+                // Store as a custom var so scripts can query it
+                let custom: LuaTable = lua.globals().get("__custom_vars")?;
+                custom.set("__cameraOnThings", enabled)?;
+            }
+            // preVideoTransition — transition out of 80s mode visuals
+            "preVideoTransition" => {
+                log::info!("runHaxeFunction: preVideoTransition");
             }
             _ => {
                 log::debug!("runHaxeFunction: unhandled function '{}'", name);
@@ -1173,7 +1239,14 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // Character access
-    globals.set("characterDance", lua.create_function(|_lua, _char: String| { Ok(()) })?)?;
+    globals.set("characterDance", lua.create_function(|lua, char_type: String| {
+        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        let tbl = lua.create_table()?;
+        tbl.set("prop", format!("__charDance.{}", char_type))?;
+        tbl.set("value", true)?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
     globals.set("getCharacterX", lua.create_function(|_lua, _typ: String| -> LuaResult<f64> { Ok(0.0) })?)?;
     globals.set("getCharacterY", lua.create_function(|_lua, _typ: String| -> LuaResult<f64> { Ok(0.0) })?)?;
     globals.set("setCharacterX", lua.create_function(|_lua, (_typ, _val): (String, f64)| { Ok(()) })?)?;
@@ -1815,6 +1888,241 @@ fn parse_flx_tween_num(code: &str) -> Option<(String, f64, f64, String)> {
     };
 
     Some((var_name, end_val, duration, ease))
+}
+
+/// Parse runHaxeCode blocks that adjust character positions via switch(game.bfVersion).
+/// Returns a list of (character, field, delta) tuples where character is "boyfriend"/"dad"/"gf",
+/// field is "x" or "y", and delta is the cumulative offset to apply.
+fn parse_haxe_char_positions(code: &str, bf_name: &str) -> Vec<(&'static str, &'static str, f64)> {
+    let mut results = Vec::new();
+
+    // Parse local variable declarations: var xx:Float = 220;
+    let mut locals = std::collections::HashMap::new();
+    for line in code.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("var ") {
+            // var xx:Float = 220;  or  var xx = 220;
+            if let Some(eq_pos) = rest.find('=') {
+                let name_part = rest[..eq_pos].trim();
+                // Strip type annotation: "xx:Float" -> "xx"
+                let var_name = name_part.split(':').next().unwrap_or(name_part).trim();
+                let val_part = rest[eq_pos + 1..].trim().trim_end_matches(';').trim();
+                if let Ok(val) = val_part.parse::<f64>() {
+                    locals.insert(var_name.to_string(), val);
+                }
+            }
+        }
+    }
+
+    // Find the matching case block for switch(game.bfVersion)
+    if let Some(switch_pos) = code.find("switch(game.bfVersion)") {
+        // Find the opening brace
+        let after_switch = &code[switch_pos..];
+        if let Some(brace_pos) = after_switch.find('{') {
+            let switch_body = &after_switch[brace_pos + 1..];
+
+            // Find the case matching bf_name
+            let case_pattern = format!("case '{}':", bf_name);
+            if let Some(case_pos) = switch_body.find(&case_pattern) {
+                let case_body_start = case_pos + case_pattern.len();
+                // Case body extends until next "case '" or closing "}"
+                let case_body_end = switch_body[case_body_start..]
+                    .find("case '")
+                    .or_else(|| {
+                        // Find closing brace, accounting for nesting
+                        let mut depth = 0i32;
+                        for (i, ch) in switch_body[case_body_start..].char_indices() {
+                            match ch {
+                                '{' => depth += 1,
+                                '}' => {
+                                    if depth == 0 { return Some(i); }
+                                    depth -= 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                        None
+                    })
+                    .unwrap_or(switch_body.len() - case_body_start);
+
+                let case_body = &switch_body[case_body_start..case_body_start + case_body_end];
+                parse_char_assignment_lines(case_body, &locals, &mut results);
+            }
+        }
+    }
+
+    // Also parse direct (non-switch) game.boyfriend/dad/gf assignments
+    // These appear outside switch blocks in some stages
+    for line in code.lines() {
+        let line = line.trim();
+        if line.starts_with("//") { continue; }
+        // Only parse lines NOT inside the switch block (simple heuristic: no "case" indentation)
+        // Actually, let's just parse all direct assignments that are outside switch context
+        // The switch handler above already handles those; here we handle standalone lines
+        for (prefix, char_name) in &[
+            ("game.dad.x", "dad"), ("game.dad.y", "dad"),
+            ("game.gf.x", "gf"), ("game.gf.y", "gf"),
+        ] {
+            if line.starts_with(prefix) && !code.contains("switch(game.bfVersion)") {
+                // Only parse if there's no switch block (otherwise the switch handler covers it)
+                let field = if prefix.ends_with(".x") { "x" } else { "y" };
+                if let Some(val) = parse_assignment_value(line, prefix, &locals) {
+                    results.push((*char_name, field, val));
+                }
+            }
+        }
+    }
+
+    results
+}
+
+/// Parse character assignment lines like:
+///   game.boyfriend.x -= (xx + 300);
+///   game.boyfriend.y += 200;
+///   game.dad.x = -500;
+fn parse_char_assignment_lines(
+    body: &str,
+    locals: &std::collections::HashMap<String, f64>,
+    results: &mut Vec<(&'static str, &'static str, f64)>,
+) {
+    // Track cumulative offsets per (character, field)
+    let mut offsets: std::collections::HashMap<(&str, &str), f64> = std::collections::HashMap::new();
+
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with("//") { continue; }
+
+        for (prefix, char_name, field) in &[
+            ("game.boyfriend.x", "boyfriend", "x"),
+            ("game.boyfriend.y", "boyfriend", "y"),
+            ("game.dad.x", "dad", "x"),
+            ("game.dad.y", "dad", "y"),
+            ("game.gf.x", "gf", "x"),
+            ("game.gf.y", "gf", "y"),
+        ] {
+            if !line.starts_with(prefix) { continue; }
+            let rest = line[prefix.len()..].trim();
+
+            if let Some(expr) = rest.strip_prefix("+=") {
+                let val = eval_simple_expr(expr.trim().trim_end_matches(';'), locals);
+                *offsets.entry((*char_name, *field)).or_insert(0.0) += val;
+            } else if let Some(expr) = rest.strip_prefix("-=") {
+                let val = eval_simple_expr(expr.trim().trim_end_matches(';'), locals);
+                *offsets.entry((*char_name, *field)).or_insert(0.0) -= val;
+            } else if let Some(expr) = rest.strip_prefix("=") {
+                // Direct assignment — store as absolute value with a special marker
+                let val = eval_simple_expr(expr.trim().trim_end_matches(';'), locals);
+                // For absolute assignments, we push immediately with a large negative to indicate "set"
+                results.push((*char_name, *field, f64::NAN)); // marker: absolute follows
+                results.push((*char_name, *field, val));
+                // Reset cumulative offset since we've set absolute
+                offsets.remove(&(*char_name, *field));
+            }
+        }
+    }
+
+    // Push cumulative offsets
+    for ((char_name, field), delta) in offsets {
+        if delta.abs() > 0.001 {
+            results.push((char_name, field, delta));
+        }
+    }
+}
+
+/// Evaluate a simple arithmetic expression that may contain local variable references.
+/// Handles: numbers, variables, parenthesized groups, +, -, *.
+fn eval_simple_expr(expr: &str, locals: &std::collections::HashMap<String, f64>) -> f64 {
+    let expr = expr.trim().trim_end_matches(';');
+
+    // Strip outer parens
+    let expr = if expr.starts_with('(') && expr.ends_with(')') {
+        &expr[1..expr.len() - 1]
+    } else {
+        expr
+    };
+
+    // Try parsing as a simple number
+    if let Ok(val) = expr.parse::<f64>() {
+        return val;
+    }
+
+    // Try as a local variable
+    if let Some(&val) = locals.get(expr.trim()) {
+        return val;
+    }
+
+    // Split on + and - at the top level (outside parens)
+    let mut result = 0.0;
+    let mut current_sign = 1.0f64;
+    let mut depth = 0i32;
+    let mut start = 0;
+
+    let bytes = expr.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'+' | b'-' if depth == 0 && i > 0 => {
+                let token = expr[start..i].trim();
+                if !token.is_empty() {
+                    result += current_sign * eval_token(token, locals);
+                }
+                current_sign = if bytes[i] == b'+' { 1.0 } else { -1.0 };
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // Last token
+    let token = expr[start..].trim();
+    if !token.is_empty() {
+        result += current_sign * eval_token(token, locals);
+    }
+
+    result
+}
+
+fn eval_token(token: &str, locals: &std::collections::HashMap<String, f64>) -> f64 {
+    let token = token.trim();
+    // Handle parenthesized expression
+    if token.starts_with('(') && token.ends_with(')') {
+        return eval_simple_expr(&token[1..token.len() - 1], locals);
+    }
+    // Handle multiplication
+    if let Some(pos) = token.find('*') {
+        let left = eval_token(&token[..pos], locals);
+        let right = eval_token(&token[pos + 1..], locals);
+        return left * right;
+    }
+    // Simple number
+    if let Ok(val) = token.parse::<f64>() {
+        return val;
+    }
+    // Variable
+    if let Some(&val) = locals.get(token) {
+        return val;
+    }
+    0.0
+}
+
+/// Parse a single assignment line and return the value.
+fn parse_assignment_value(
+    line: &str,
+    prefix: &str,
+    locals: &std::collections::HashMap<String, f64>,
+) -> Option<f64> {
+    let rest = line[prefix.len()..].trim();
+    if let Some(expr) = rest.strip_prefix("+=") {
+        Some(eval_simple_expr(expr.trim().trim_end_matches(';'), locals))
+    } else if let Some(expr) = rest.strip_prefix("-=") {
+        Some(-eval_simple_expr(expr.trim().trim_end_matches(';'), locals))
+    } else if let Some(expr) = rest.strip_prefix("=") {
+        Some(eval_simple_expr(expr.trim().trim_end_matches(';'), locals))
+    } else {
+        None
+    }
 }
 
 fn lua_val_to_string(val: &LuaValue) -> String {
