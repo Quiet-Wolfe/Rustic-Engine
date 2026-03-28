@@ -80,6 +80,25 @@ pub struct ScriptState {
 
     /// Pending moveCameraSection requests: section indices to look up in chart data.
     pub camera_section_requests: Vec<i32>,
+
+    /// Lua-created text objects (tag → text data).
+    pub lua_texts: HashMap<String, LuaText>,
+    /// Text objects pending addition to the scene. (tag, in_front)
+    pub texts_to_add: Vec<(String, bool)>,
+
+    /// Camera shake requests: (camera_name, intensity, duration_seconds).
+    pub camera_shake_requests: Vec<(String, f32, f32)>,
+    /// Camera flash requests: (camera_name, color_hex, duration, alpha).
+    pub camera_flash_requests: Vec<(String, String, f32, f32)>,
+    /// Subtitle display requests: (text, font, color, size, duration, border_color).
+    pub subtitle_requests: Vec<(String, String, String, f32, f32, String)>,
+
+    /// Whether camera is locked to its current target position (isCameraOnForcedPos).
+    pub camera_forced_pos: bool,
+    /// Camera offset when pointing at opponent: (x, y).
+    pub opponent_camera_offset: (f32, f32),
+    /// Camera offset when pointing at player: (x, y).
+    pub bf_camera_offset: (f32, f32),
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -143,6 +162,38 @@ pub struct LuaSprite {
     pub anim_looping: bool,
     /// Whether current animation has finished.
     pub anim_finished: bool,
+    /// Render offset (additive displacement, separate from position).
+    pub offset_x: f32,
+    pub offset_y: f32,
+    /// Custom rotation origin. None = use sprite center (default).
+    pub origin_x: Option<f32>,
+    pub origin_y: Option<f32>,
+    /// Which camera layer: "camGame", "camHUD", "camOther".
+    pub camera: String,
+    /// Additive color transform offsets (-255..255).
+    pub color_red_offset: f32,
+    pub color_green_offset: f32,
+    pub color_blue_offset: f32,
+}
+
+/// A text object created by Lua via makeLuaText.
+pub struct LuaText {
+    pub tag: String,
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub alpha: f32,
+    pub visible: bool,
+    pub angle: f32,
+    pub font: String,
+    pub size: f32,
+    pub color: String,
+    pub border_size: f32,
+    pub border_color: String,
+    pub alignment: String,
+    pub camera: String,
+    pub antialiasing: bool,
 }
 
 pub enum LuaSpriteKind {
@@ -194,6 +245,35 @@ impl LuaSprite {
             anim_fps: 24.0,
             anim_looping: true,
             anim_finished: false,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            origin_x: None,
+            origin_y: None,
+            camera: "camGame".to_string(),
+            color_red_offset: 0.0,
+            color_green_offset: 0.0,
+            color_blue_offset: 0.0,
+        }
+    }
+}
+
+impl LuaText {
+    pub fn new(tag: &str, text: &str, width: f32, x: f32, y: f32) -> Self {
+        Self {
+            tag: tag.to_string(),
+            text: text.to_string(),
+            x, y, width,
+            alpha: 1.0,
+            visible: true,
+            angle: 0.0,
+            font: String::new(),
+            size: 16.0,
+            color: "FFFFFF".to_string(),
+            border_size: 0.0,
+            border_color: "000000".to_string(),
+            alignment: "left".to_string(),
+            camera: "camGame".to_string(),
+            antialiasing: true,
         }
     }
 }
@@ -228,6 +308,14 @@ impl ScriptState {
             note_count: 0,
             note_read_data: Vec::new(),
             camera_section_requests: Vec::new(),
+            lua_texts: HashMap::new(),
+            texts_to_add: Vec::new(),
+            camera_shake_requests: Vec::new(),
+            camera_flash_requests: Vec::new(),
+            subtitle_requests: Vec::new(),
+            camera_forced_pos: false,
+            opponent_camera_offset: (0.0, 0.0),
+            bf_camera_offset: (0.0, 0.0),
         }
     }
 }

@@ -99,8 +99,7 @@ impl ScriptManager {
                     else if target == "camHUD" { "hud.zoom" }
                     else { continue; }
                 }
-                TweenProperty::X | TweenProperty::Y | TweenProperty::Alpha
-                | TweenProperty::Angle | TweenProperty::ScaleX | TweenProperty::ScaleY => continue,
+                _ => continue,
             };
             self.state.property_writes.push((
                 prop_name.to_string(),

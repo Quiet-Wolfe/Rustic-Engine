@@ -32,6 +32,11 @@ pub enum TweenProperty {
     Zoom,
     ScaleX,
     ScaleY,
+    RedOffset,
+    GreenOffset,
+    BlueOffset,
+    OffsetX,
+    OffsetY,
 }
 
 /// Easing function type.
@@ -431,6 +436,11 @@ impl TweenManager {
                     TweenProperty::Angle => sprite.angle = val,
                     TweenProperty::ScaleX => sprite.scale_x = val,
                     TweenProperty::ScaleY => sprite.scale_y = val,
+                    TweenProperty::RedOffset => sprite.color_red_offset = val,
+                    TweenProperty::GreenOffset => sprite.color_green_offset = val,
+                    TweenProperty::BlueOffset => sprite.color_blue_offset = val,
+                    TweenProperty::OffsetX => sprite.offset_x = val,
+                    TweenProperty::OffsetY => sprite.offset_y = val,
                     TweenProperty::Zoom => {
                         game_tweens.push((tween.target.clone(), TweenProperty::Zoom, val));
                     }

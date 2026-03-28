@@ -292,7 +292,16 @@ impl LuaScript {
                         if let Ok(a) = tbl.get::<f32>("alpha") { sprite.alpha = a; }
                         if let Ok(v) = tbl.get::<bool>("visible") { sprite.visible = v; }
                         if let Ok(f) = tbl.get::<bool>("flip_x") { sprite.flip_x = f; }
+                        if let Ok(f) = tbl.get::<bool>("flip_y") { sprite.flip_y = f; }
                         if let Ok(aa) = tbl.get::<bool>("antialiasing") { sprite.antialiasing = aa; }
+                        if let Ok(cam) = tbl.get::<String>("camera") { sprite.camera = cam; }
+                        if let Ok(v) = tbl.get::<f32>("offset_x") { sprite.offset_x = v; }
+                        if let Ok(v) = tbl.get::<f32>("offset_y") { sprite.offset_y = v; }
+                        if let Ok(v) = tbl.get::<f32>("origin_x") { sprite.origin_x = Some(v); }
+                        if let Ok(v) = tbl.get::<f32>("origin_y") { sprite.origin_y = Some(v); }
+                        if let Ok(v) = tbl.get::<f32>("ct_red") { sprite.color_red_offset = v; }
+                        if let Ok(v) = tbl.get::<f32>("ct_green") { sprite.color_green_offset = v; }
+                        if let Ok(v) = tbl.get::<f32>("ct_blue") { sprite.color_blue_offset = v; }
                         state.lua_sprites.insert(tag, sprite);
                     }
                 }
@@ -321,6 +330,58 @@ impl LuaScript {
             }
         }
 
+        // Drain __pending_texts (text object creation)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_texts") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let Ok(tag) = tbl.get::<String>("tag") {
+                        let text = crate::script_state::LuaText::new(
+                            &tag,
+                            &tbl.get::<String>("text").unwrap_or_default(),
+                            tbl.get::<f32>("width").unwrap_or(0.0),
+                            tbl.get::<f32>("x").unwrap_or(0.0),
+                            tbl.get::<f32>("y").unwrap_or(0.0),
+                        );
+                        let mut t = text;
+                        if let Ok(v) = tbl.get::<f32>("alpha") { t.alpha = v; }
+                        if let Ok(v) = tbl.get::<bool>("visible") { t.visible = v; }
+                        if let Ok(v) = tbl.get::<f32>("angle") { t.angle = v; }
+                        if let Ok(v) = tbl.get::<String>("font") { t.font = v; }
+                        if let Ok(v) = tbl.get::<f32>("size") { t.size = v; }
+                        if let Ok(v) = tbl.get::<String>("color") { t.color = v; }
+                        if let Ok(v) = tbl.get::<f32>("border_size") { t.border_size = v; }
+                        if let Ok(v) = tbl.get::<String>("border_color") { t.border_color = v; }
+                        if let Ok(v) = tbl.get::<String>("alignment") { t.alignment = v; }
+                        if let Ok(v) = tbl.get::<String>("camera") { t.camera = v; }
+                        if let Ok(v) = tbl.get::<bool>("antialiasing") { t.antialiasing = v; }
+                        state.lua_texts.insert(tag, t);
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_texts", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_text_adds
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_text_adds") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(in_front)) = (
+                        tbl.get::<String>("tag"),
+                        tbl.get::<bool>("in_front"),
+                    ) {
+                        state.texts_to_add.push((tag, in_front));
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_text_adds", new_tbl).ok();
+            }
+        }
+
         // Drain __pending_tweens
         if let Ok(pending) = globals.get::<LuaTable>("__pending_tweens") {
             let len = pending.len().unwrap_or(0);
@@ -342,6 +403,11 @@ impl LuaScript {
                             "zoom" => crate::tweens::TweenProperty::Zoom,
                             "scale_x" => crate::tweens::TweenProperty::ScaleX,
                             "scale_y" => crate::tweens::TweenProperty::ScaleY,
+                            "red_offset" => crate::tweens::TweenProperty::RedOffset,
+                            "green_offset" => crate::tweens::TweenProperty::GreenOffset,
+                            "blue_offset" => crate::tweens::TweenProperty::BlueOffset,
+                            "offset_x" => crate::tweens::TweenProperty::OffsetX,
+                            "offset_y" => crate::tweens::TweenProperty::OffsetY,
                             _ => continue,
                         };
                         // Get current value as start value (explicit start overrides auto-detection)
@@ -366,14 +432,20 @@ impl LuaScript {
                                 _ => 0.0,
                             }
                         } else {
+                            let s = state.lua_sprites.get(&target);
                             match &prop {
-                                crate::tweens::TweenProperty::X => state.lua_sprites.get(&target).map(|s| s.x).unwrap_or(0.0),
-                                crate::tweens::TweenProperty::Y => state.lua_sprites.get(&target).map(|s| s.y).unwrap_or(0.0),
-                                crate::tweens::TweenProperty::Alpha => state.lua_sprites.get(&target).map(|s| s.alpha).unwrap_or(1.0),
-                                crate::tweens::TweenProperty::Angle => state.lua_sprites.get(&target).map(|s| s.angle).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::X => s.map(|s| s.x).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::Y => s.map(|s| s.y).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::Alpha => s.map(|s| s.alpha).unwrap_or(1.0),
+                                crate::tweens::TweenProperty::Angle => s.map(|s| s.angle).unwrap_or(0.0),
                                 crate::tweens::TweenProperty::Zoom => state.camera_zoom,
-                                crate::tweens::TweenProperty::ScaleX => state.lua_sprites.get(&target).map(|s| s.scale_x).unwrap_or(1.0),
-                                crate::tweens::TweenProperty::ScaleY => state.lua_sprites.get(&target).map(|s| s.scale_y).unwrap_or(1.0),
+                                crate::tweens::TweenProperty::ScaleX => s.map(|s| s.scale_x).unwrap_or(1.0),
+                                crate::tweens::TweenProperty::ScaleY => s.map(|s| s.scale_y).unwrap_or(1.0),
+                                crate::tweens::TweenProperty::RedOffset => s.map(|s| s.color_red_offset).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::GreenOffset => s.map(|s| s.color_green_offset).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::BlueOffset => s.map(|s| s.color_blue_offset).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::OffsetX => s.map(|s| s.offset_x).unwrap_or(0.0),
+                                crate::tweens::TweenProperty::OffsetY => s.map(|s| s.offset_y).unwrap_or(0.0),
                             }
                         };
                         let tween = crate::tweens::Tween {
@@ -523,6 +595,53 @@ impl LuaScript {
             }
         }
 
+        // Drain __pending_cam_fx (camera shake/flash requests)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_cam_fx") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    let kind: String = tbl.get("kind").unwrap_or_default();
+                    let camera: String = tbl.get("camera").unwrap_or_else(|_| "camGame".to_string());
+                    match kind.as_str() {
+                        "shake" => {
+                            let intensity = tbl.get::<f64>("intensity").unwrap_or(0.0) as f32;
+                            let duration = tbl.get::<f64>("duration").unwrap_or(0.0) as f32;
+                            state.camera_shake_requests.push((camera, intensity, duration));
+                        }
+                        "flash" => {
+                            let color: String = tbl.get("color").unwrap_or_else(|_| "FFFFFF".to_string());
+                            let duration = tbl.get::<f64>("duration").unwrap_or(0.5) as f32;
+                            let alpha = tbl.get::<f64>("alpha").unwrap_or(1.0) as f32;
+                            state.camera_flash_requests.push((camera, color, duration, alpha));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_cam_fx", new_tbl).ok();
+            }
+        }
+
+        // Drain __pending_subtitles
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_subtitles") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    let text: String = tbl.get("text").unwrap_or_default();
+                    let font: String = tbl.get("font").unwrap_or_default();
+                    let color: String = tbl.get("color").unwrap_or_else(|_| "FFFFFF".to_string());
+                    let size = tbl.get::<f64>("size").unwrap_or(32.0) as f32;
+                    let duration = tbl.get::<f64>("duration").unwrap_or(3.0) as f32;
+                    let border: String = tbl.get("border").unwrap_or_else(|_| "000000".to_string());
+                    state.subtitle_requests.push((text, font, color, size, duration, border));
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_subtitles", new_tbl).ok();
+            }
+        }
+
         // Sync __strum_props table to Rust state
         if let Ok(strum_tbl) = globals.get::<LuaTable>("__strum_props") {
             for i in 0..8 {
@@ -600,6 +719,7 @@ impl LuaScript {
             if let Ok(y) = tbl.get::<f32>("y") { sprite.y = y; }
             if let Ok(a) = tbl.get::<f32>("alpha") { sprite.alpha = a; }
             if let Ok(v) = tbl.get::<bool>("visible") { sprite.visible = v; }
+            if let Ok(a) = tbl.get::<f32>("angle") { sprite.angle = a; }
             if let Ok(sx) = tbl.get::<f32>("scale_x") { sprite.scale_x = sx; }
             if let Ok(sy) = tbl.get::<f32>("scale_y") { sprite.scale_y = sy; }
             if let Ok(sfx) = tbl.get::<f32>("scroll_x") { sprite.scroll_x = sfx; }
@@ -607,6 +727,14 @@ impl LuaScript {
             if let Ok(f) = tbl.get::<bool>("flip_x") { sprite.flip_x = f; }
             if let Ok(f) = tbl.get::<bool>("flip_y") { sprite.flip_y = f; }
             if let Ok(aa) = tbl.get::<bool>("antialiasing") { sprite.antialiasing = aa; }
+            if let Ok(cam) = tbl.get::<String>("camera") { sprite.camera = cam; }
+            if let Ok(v) = tbl.get::<f32>("offset_x") { sprite.offset_x = v; }
+            if let Ok(v) = tbl.get::<f32>("offset_y") { sprite.offset_y = v; }
+            if let Ok(v) = tbl.get::<f32>("origin_x") { sprite.origin_x = Some(v); }
+            if let Ok(v) = tbl.get::<f32>("origin_y") { sprite.origin_y = Some(v); }
+            if let Ok(v) = tbl.get::<f32>("ct_red") { sprite.color_red_offset = v; }
+            if let Ok(v) = tbl.get::<f32>("ct_green") { sprite.color_green_offset = v; }
+            if let Ok(v) = tbl.get::<f32>("ct_blue") { sprite.color_blue_offset = v; }
 
             // Sync animation definitions from __anims subtable
             if let Ok(anims) = tbl.get::<LuaTable>("__anims") {
@@ -659,6 +787,27 @@ impl LuaScript {
                 }
                 tbl.set("__pending_anim", mlua::Value::Nil).ok();
             }
+        }
+
+        // Sync text object properties from Lua __text_data to Rust LuaText structs
+        let Ok(text_data) = globals.get::<LuaTable>("__text_data") else { return };
+        for pair in text_data.pairs::<String, LuaTable>() {
+            let Ok((tag, tbl)) = pair else { continue };
+            let Some(text) = state.lua_texts.get_mut(&tag) else { continue };
+            if let Ok(v) = tbl.get::<String>("text") { text.text = v; }
+            if let Ok(v) = tbl.get::<f32>("x") { text.x = v; }
+            if let Ok(v) = tbl.get::<f32>("y") { text.y = v; }
+            if let Ok(v) = tbl.get::<f32>("alpha") { text.alpha = v; }
+            if let Ok(v) = tbl.get::<bool>("visible") { text.visible = v; }
+            if let Ok(v) = tbl.get::<f32>("angle") { text.angle = v; }
+            if let Ok(v) = tbl.get::<String>("font") { text.font = v; }
+            if let Ok(v) = tbl.get::<f32>("size") { text.size = v; }
+            if let Ok(v) = tbl.get::<String>("color") { text.color = v; }
+            if let Ok(v) = tbl.get::<f32>("border_size") { text.border_size = v; }
+            if let Ok(v) = tbl.get::<String>("border_color") { text.border_color = v; }
+            if let Ok(v) = tbl.get::<String>("alignment") { text.alignment = v; }
+            if let Ok(v) = tbl.get::<String>("camera") { text.camera = v; }
+            if let Ok(v) = tbl.get::<bool>("antialiasing") { text.antialiasing = v; }
         }
     }
 }

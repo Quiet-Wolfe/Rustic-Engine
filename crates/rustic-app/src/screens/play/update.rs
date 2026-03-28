@@ -463,6 +463,30 @@ impl PlayScreen {
             }
         }
 
+        // Process camera shake requests
+        for (camera, intensity, duration) in self.scripts.state.camera_shake_requests.drain(..) {
+            log::debug!("Camera shake: {} intensity={} duration={}", camera, intensity, duration);
+            if camera == "camGame" {
+                self.camera.start_shake(intensity, duration);
+            }
+            // camHUD shake would need HUD shake state — log for now
+        }
+
+        // Process camera flash requests
+        for (camera, color, duration, alpha) in self.scripts.state.camera_flash_requests.drain(..) {
+            log::debug!("Camera flash: {} color={} duration={} alpha={}", camera, color, duration, alpha);
+            if camera == "camGame" {
+                self.camera.start_flash(&color, duration, alpha);
+            }
+        }
+
+        // Process subtitle requests (display as log for now; rendering handled by text system)
+        for (text, _font, _color, _size, _duration, _border) in self.scripts.state.subtitle_requests.drain(..) {
+            if !text.trim().is_empty() {
+                log::info!("[Subtitle] {}", text);
+            }
+        }
+
         // Visual: Lua sprite animation advancement
         for (tag, sprite) in self.scripts.state.lua_sprites.iter_mut() {
             if sprite.current_anim.is_empty() || sprite.anim_finished { continue; }

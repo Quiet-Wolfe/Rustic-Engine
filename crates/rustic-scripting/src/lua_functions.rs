@@ -95,6 +95,11 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__note_overrides", lua.create_table()?)?;
     g.set("__dirty_notes", lua.create_table()?)?;
     g.set("__pending_cam_sections", lua.create_table()?)?;
+    g.set("__text_data", lua.create_table()?)?;
+    g.set("__pending_texts", lua.create_table()?)?;
+    g.set("__pending_text_adds", lua.create_table()?)?;
+    g.set("__pending_cam_fx", lua.create_table()?)?;
+    g.set("__pending_subtitles", lua.create_table()?)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -475,26 +480,56 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     // screenCenter(tag, axis)
     globals.set("screenCenter", lua.create_function(|lua, (tag, axis): (String, Option<String>)| {
         let axis = axis.unwrap_or_else(|| "xy".to_string());
+        let sw: f32 = lua.globals().get("screenWidth").unwrap_or(1280.0);
+        let sh: f32 = lua.globals().get("screenHeight").unwrap_or(720.0);
+        // Try sprite data first
         let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
             let tex_w: f32 = tbl.get("tex_w").unwrap_or(0.0);
             let tex_h: f32 = tbl.get("tex_h").unwrap_or(0.0);
             let sx: f32 = tbl.get("scale_x").unwrap_or(1.0);
             let sy: f32 = tbl.get("scale_y").unwrap_or(1.0);
-            let sw: f32 = lua.globals().get("screenWidth").unwrap_or(1280.0);
-            let sh: f32 = lua.globals().get("screenHeight").unwrap_or(720.0);
             if axis.contains('x') || axis.contains('X') {
                 tbl.set("x", (sw - tex_w * sx.abs()) / 2.0)?;
             }
             if axis.contains('y') || axis.contains('Y') {
                 tbl.set("y", (sh - tex_h * sy.abs()) / 2.0)?;
             }
+            return Ok(());
+        }
+        // Try text data
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            // Text objects don't have tex_w/tex_h; approximate with width/size
+            if axis.contains('x') || axis.contains('X') {
+                tbl.set("x", sw / 2.0)?; // center horizontally (alignment handles the rest)
+            }
+            if axis.contains('y') || axis.contains('Y') {
+                let size: f32 = tbl.get("size").unwrap_or(16.0);
+                tbl.set("y", (sh - size) / 2.0)?;
+            }
         }
         Ok(())
     })?)?;
 
     // setObjectCamera(tag, camera)
-    globals.set("setObjectCamera", lua.create_function(|_lua, (_tag, _cam): (String, Option<String>)| {
+    globals.set("setObjectCamera", lua.create_function(|lua, (tag, cam): (String, Option<String>)| {
+        let cam = cam.unwrap_or_else(|| "camGame".to_string());
+        let cam_name = match cam.to_lowercase().as_str() {
+            "camhud" | "hud" => "camHUD",
+            "camother" | "other" => "camOther",
+            _ => "camGame",
+        };
+        // Set on sprite data
+        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
+            tbl.set("camera", cam_name)?;
+        }
+        // Also set on text data
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("camera", cam_name)?;
+        }
         Ok(())
     })?)?;
 
@@ -522,7 +557,7 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
 
     // setProperty(property, value)
     globals.set("setProperty", lua.create_function(|lua, (prop, value): (String, LuaValue)| {
-        // Check if it's a sprite property (tag.field)
+        // Check if it's a sprite property (tag.field) — also handles nested like tag.origin.y
         if let Some(dot_pos) = prop.find('.') {
             let tag = &prop[..dot_pos];
             let field = &prop[dot_pos + 1..];
@@ -532,13 +567,36 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "alpha" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("alpha", n)?; } }
                     "visible" => { if let LuaValue::Boolean(b) = &value { tbl.set("visible", *b)?; } }
                     "flipX" | "flip_x" => { if let LuaValue::Boolean(b) = &value { tbl.set("flip_x", *b)?; } }
+                    "flipY" | "flip_y" => { if let LuaValue::Boolean(b) = &value { tbl.set("flip_y", *b)?; } }
                     "antialiasing" => { if let LuaValue::Boolean(b) = &value { tbl.set("antialiasing", *b)?; } }
                     "x" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("x", n)?; } }
                     "y" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("y", n)?; } }
+                    "angle" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("angle", n)?; } }
                     "scale.x" | "scaleX" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("scale_x", n)?; } }
                     "scale.y" | "scaleY" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("scale_y", n)?; } }
                     "scrollFactor.x" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("scroll_x", n)?; } }
                     "scrollFactor.y" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("scroll_y", n)?; } }
+                    "origin.x" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("origin_x", n)?; } }
+                    "origin.y" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("origin_y", n)?; } }
+                    "offset.x" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("offset_x", n)?; } }
+                    "offset.y" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("offset_y", n)?; } }
+                    "colorTransform.redOffset" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("ct_red", n)?; } }
+                    "colorTransform.greenOffset" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("ct_green", n)?; } }
+                    "colorTransform.blueOffset" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("ct_blue", n)?; } }
+                    _ => { tbl.set(format!("_prop_{field}"), value.clone())?; }
+                }
+                return Ok(());
+            }
+            // Also check text objects
+            let text_data: LuaTable = lua.globals().get("__text_data")?;
+            if let Ok(tbl) = text_data.get::<LuaTable>(tag.to_string()) {
+                match field {
+                    "alpha" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("alpha", n)?; } }
+                    "visible" => { if let LuaValue::Boolean(b) = &value { tbl.set("visible", *b)?; } }
+                    "x" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("x", n)?; } }
+                    "y" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("y", n)?; } }
+                    "angle" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("angle", n)?; } }
+                    "antialiasing" => { if let LuaValue::Boolean(b) = &value { tbl.set("antialiasing", *b)?; } }
                     _ => { tbl.set(format!("_prop_{field}"), value.clone())?; }
                 }
                 return Ok(());
@@ -550,12 +608,34 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
         // Update Lua global if it's a known game property
         match prop.as_str() {
             "defaultCamZoom" | "cameraSpeed" | "camZooming" | "camZoomingMult"
-            | "camZoomingDecay" | "gameZoomingDecay" | "crochet" | "stepCrochet" => {
+            | "camZoomingDecay" | "gameZoomingDecay" | "crochet" | "stepCrochet"
+            | "isCameraOnForcedPos" | "health" => {
                 g.set(prop.as_str(), value.clone()).ok();
+            }
+            // Array properties: split table values into separate writes
+            "opponentCameraOffset" | "boyfriendCameraOffset" => {
+                if let LuaValue::Table(tbl) = &value {
+                    let x: f64 = tbl.get(1).unwrap_or(0.0);
+                    let y: f64 = tbl.get(2).unwrap_or(0.0);
+                    let pending: LuaTable = g.get("__pending_props")?;
+                    let t1 = lua.create_table()?;
+                    t1.set("prop", format!("{}.x", prop))?;
+                    t1.set("value", x)?;
+                    let len = pending.len()? as i64;
+                    pending.set(len + 1, t1)?;
+                    let t2 = lua.create_table()?;
+                    t2.set("prop", format!("{}.y", prop))?;
+                    t2.set("value", y)?;
+                    pending.set(len + 2, t2)?;
+                    return Ok(());
+                }
+                // Fall through for non-table values
+                if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                    custom.set(prop.as_str(), value.clone()).ok();
+                }
             }
             _ => {
                 // Store in custom vars so getProperty can read it back
-                // (both for cross-script communication and for script-local state)
                 if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
                     custom.set(prop.as_str(), value.clone()).ok();
                 }
@@ -584,6 +664,7 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "y" => Ok(tbl.get::<LuaValue>("y").unwrap_or(LuaValue::Number(0.0))),
                     "alpha" => Ok(tbl.get::<LuaValue>("alpha").unwrap_or(LuaValue::Number(1.0))),
                     "visible" => Ok(tbl.get::<LuaValue>("visible").unwrap_or(LuaValue::Boolean(true))),
+                    "angle" => Ok(tbl.get::<LuaValue>("angle").unwrap_or(LuaValue::Number(0.0))),
                     "flipX" => Ok(tbl.get::<LuaValue>("flip_x").unwrap_or(LuaValue::Boolean(false))),
                     "flipY" => Ok(tbl.get::<LuaValue>("flip_y").unwrap_or(LuaValue::Boolean(false))),
                     "scale.x" | "scaleX" => Ok(tbl.get::<LuaValue>("scale_x").unwrap_or(LuaValue::Number(1.0))),
@@ -591,6 +672,13 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "scrollFactor.x" => Ok(tbl.get::<LuaValue>("scroll_x").unwrap_or(LuaValue::Number(1.0))),
                     "scrollFactor.y" => Ok(tbl.get::<LuaValue>("scroll_y").unwrap_or(LuaValue::Number(1.0))),
                     "antialiasing" => Ok(tbl.get::<LuaValue>("antialiasing").unwrap_or(LuaValue::Boolean(true))),
+                    "origin.x" => Ok(tbl.get::<LuaValue>("origin_x").unwrap_or(LuaNil)),
+                    "origin.y" => Ok(tbl.get::<LuaValue>("origin_y").unwrap_or(LuaNil)),
+                    "offset.x" => Ok(tbl.get::<LuaValue>("offset_x").unwrap_or(LuaValue::Number(0.0))),
+                    "offset.y" => Ok(tbl.get::<LuaValue>("offset_y").unwrap_or(LuaValue::Number(0.0))),
+                    "colorTransform.redOffset" => Ok(tbl.get::<LuaValue>("ct_red").unwrap_or(LuaValue::Number(0.0))),
+                    "colorTransform.greenOffset" => Ok(tbl.get::<LuaValue>("ct_green").unwrap_or(LuaValue::Number(0.0))),
+                    "colorTransform.blueOffset" => Ok(tbl.get::<LuaValue>("ct_blue").unwrap_or(LuaValue::Number(0.0))),
                     // HaxeFlixel: width = frameWidth * abs(scale.x)
                     "width" => {
                         let tex_w: f64 = tbl.get("tex_w").unwrap_or(0.0);
@@ -602,6 +690,18 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         let scale_y: f64 = tbl.get("scale_y").unwrap_or(1.0);
                         Ok(LuaValue::Number(tex_h * scale_y.abs()))
                     }
+                    _ => Ok(tbl.get::<LuaValue>(format!("_prop_{field}")).unwrap_or(LuaNil)),
+                };
+            }
+            // Also check text objects
+            let text_data: LuaTable = lua.globals().get("__text_data")?;
+            if let Ok(tbl) = text_data.get::<LuaTable>(tag.to_string()) {
+                return match field {
+                    "x" => Ok(tbl.get::<LuaValue>("x").unwrap_or(LuaValue::Number(0.0))),
+                    "y" => Ok(tbl.get::<LuaValue>("y").unwrap_or(LuaValue::Number(0.0))),
+                    "alpha" => Ok(tbl.get::<LuaValue>("alpha").unwrap_or(LuaValue::Number(1.0))),
+                    "visible" => Ok(tbl.get::<LuaValue>("visible").unwrap_or(LuaValue::Boolean(true))),
+                    "angle" => Ok(tbl.get::<LuaValue>("angle").unwrap_or(LuaValue::Number(0.0))),
                     _ => Ok(tbl.get::<LuaValue>(format!("_prop_{field}")).unwrap_or(LuaNil)),
                 };
             }
@@ -872,6 +972,30 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         Ok(LuaNil)
     })?)?;
 
+    // runHaxeFunction(name, args) — call a previously defined Haxe function
+    globals.set("runHaxeFunction", lua.create_function(|lua, (name, args): (String, Option<LuaTable>)| -> LuaResult<LuaValue> {
+        // Handle known function patterns
+        match name.as_str() {
+            "charactersCamera" => {
+                // charactersCamera(visible) — toggle character layer visibility
+                let visible = args.as_ref()
+                    .and_then(|t| t.get::<LuaValue>(1).ok())
+                    .map(|v| match v { LuaValue::Boolean(b) => b, LuaValue::Number(n) => n != 0.0, _ => true })
+                    .unwrap_or(true);
+                let pending: LuaTable = lua.globals().get("__pending_props")?;
+                let tbl = lua.create_table()?;
+                tbl.set("prop", "__camCharactersVisible")?;
+                tbl.set("value", visible)?;
+                let len = pending.len()? as i64;
+                pending.set(len + 1, tbl)?;
+            }
+            _ => {
+                log::debug!("runHaxeFunction: unhandled function '{}'", name);
+            }
+        }
+        Ok(LuaNil)
+    })?)?;
+
     // getSongPosition() — reads from Lua global kept in sync by the game
     globals.set("getSongPosition", lua.create_function(|lua, ()| -> LuaResult<f64> {
         let g = lua.globals();
@@ -1102,6 +1226,94 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
     globals.set("setRatingFC", lua.create_function(|_lua, _v: String| { Ok(()) })?)?;
     globals.set("updateScoreText", lua.create_function(|_lua, ()| { Ok(()) })?)?;
 
+    // cameraShake(camera, intensity, duration)
+    globals.set("cameraShake", lua.create_function(|lua, (cam, intensity, duration): (String, f64, f64)| {
+        let pending: LuaTable = lua.globals().get("__pending_cam_fx")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "shake")?;
+        let cam_name = match cam.to_lowercase().as_str() {
+            "camhud" | "hud" => "camHUD",
+            "camgame" | "game" => "camGame",
+            _ => &cam,
+        };
+        tbl.set("camera", cam_name)?;
+        tbl.set("intensity", intensity)?;
+        tbl.set("duration", duration)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    // cameraFlash(camera, color, duration, forced)
+    globals.set("cameraFlash", lua.create_function(|lua, (cam, color, duration, _forced): (String, Option<String>, Option<f64>, Option<bool>)| {
+        let pending: LuaTable = lua.globals().get("__pending_cam_fx")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "flash")?;
+        let cam_name = match cam.to_lowercase().as_str() {
+            "camhud" | "hud" => "camHUD",
+            "camgame" | "game" => "camGame",
+            _ => &cam,
+        };
+        tbl.set("camera", cam_name)?;
+        tbl.set("color", color.unwrap_or_else(|| "FFFFFF".to_string()))?;
+        tbl.set("duration", duration.unwrap_or(0.5))?;
+        tbl.set("alpha", 1.0)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    // setSubtitle(text, font, color, size, duration, borderColor)
+    globals.set("setSubtitle", lua.create_function(|lua, args: LuaMultiValue| {
+        let text: String = args.get(0).and_then(|v| match v { LuaValue::String(s) => Some(s.to_string_lossy().to_string()), _ => None }).unwrap_or_default();
+        let font: String = args.get(1).and_then(|v| match v { LuaValue::String(s) => Some(s.to_string_lossy().to_string()), _ => None }).unwrap_or_default();
+        let color: String = args.get(2).and_then(|v| match v { LuaValue::String(s) => Some(s.to_string_lossy().to_string()), _ => None }).unwrap_or_else(|| "0xFFFFFFFF".to_string());
+        let size: f64 = args.get(3).and_then(|v| match v { LuaValue::Number(n) => Some(*n), LuaValue::Integer(n) => Some(*n as f64), _ => None }).unwrap_or(32.0);
+        let duration: f64 = args.get(4).and_then(|v| match v { LuaValue::Number(n) => Some(*n), LuaValue::Integer(n) => Some(*n as f64), _ => None }).unwrap_or(3.0);
+        let border: String = args.get(5).and_then(|v| match v { LuaValue::String(s) => Some(s.to_string_lossy().to_string()), _ => None }).unwrap_or_else(|| "0x00000000".to_string());
+
+        let pending: LuaTable = lua.globals().get("__pending_subtitles")?;
+        let tbl = lua.create_table()?;
+        tbl.set("text", text)?;
+        tbl.set("font", font)?;
+        tbl.set("color", color)?;
+        tbl.set("size", size)?;
+        tbl.set("duration", duration)?;
+        tbl.set("border", border)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    // customFlash(camera, color, duration, options)
+    globals.set("customFlash", lua.create_function(|lua, (cam, color, duration, options): (String, Option<String>, Option<f64>, Option<LuaValue>)| {
+        let alpha = if let Some(LuaValue::Table(t)) = &options {
+            t.get::<f64>("alpha").unwrap_or(0.75)
+        } else {
+            0.75
+        };
+        let pending: LuaTable = lua.globals().get("__pending_cam_fx")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "flash")?;
+        let cam_name = match cam.to_lowercase().as_str() {
+            "camhud" | "hud" => "camHUD",
+            "camgame" | "game" => "camGame",
+            _ => &cam,
+        };
+        tbl.set("camera", cam_name)?;
+        tbl.set("color", color.unwrap_or_else(|| "FFFFFF".to_string()))?;
+        tbl.set("duration", duration.unwrap_or(0.5))?;
+        tbl.set("alpha", alpha)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    // customFade(camera, color, duration, options)
+    globals.set("customFade", lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<()> {
+        Ok(())
+    })?)?;
+
     Ok(())
 }
 
@@ -1141,8 +1353,24 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
         push_tween(lua, &tag, cam, "zoom", value, duration, ease.as_deref())
     })?)?;
 
-    // doTweenColor — simplified: just tween alpha for now, full color tween is complex
-    globals.set("doTweenColor", lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<()> {
+    // doTweenColor(tag, target, color, duration, ease)
+    globals.set("doTweenColor", lua.create_function(|lua, (tag, target, color, duration, ease): (String, String, String, f64, Option<String>)| {
+        // Parse target color from hex
+        let hex = color.trim_start_matches('#').trim_start_matches("0x").trim_start_matches("0X");
+        let color_val = u32::from_str_radix(hex, 16).unwrap_or(0xFFFFFFFF);
+        let r = ((color_val >> 16) & 0xFF) as f64;
+        let g_val = ((color_val >> 8) & 0xFF) as f64;
+        let b = (color_val & 0xFF) as f64;
+        // Convert to colorTransform offsets: offset = target_channel - 255 (when base color is white)
+        // This is approximate — full impl would read current color. Using offset approach for consistency.
+        let r_off = r - 255.0;
+        let g_off = g_val - 255.0;
+        let b_off = b - 255.0;
+        // Create 3 color transform tweens
+        let resolved = resolve_strum_target(&target);
+        push_tween(lua, &format!("{}_r", tag), &resolved, "red_offset", r_off, duration, ease.as_deref())?;
+        push_tween(lua, &format!("{}_g", tag), &resolved, "green_offset", g_off, duration, ease.as_deref())?;
+        push_tween(lua, &format!("{}_b", tag), &resolved, "blue_offset", b_off, duration, ease.as_deref())?;
         Ok(())
     })?)?;
 
@@ -1171,24 +1399,41 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
             _ => None,
         };
 
-        // Resolve target: strumLineNotes.members[N] → __strum_opponent_N / __strum_player_N
-        // Also handle: opponentStrums, playerStrums
-        let resolved_target = resolve_strum_target(&target);
+        // Handle .colorTransform suffix: "scythe.colorTransform" → target "scythe", color context
+        let (resolved_target, is_color_transform) = if let Some(prefix) = target.strip_suffix(".colorTransform") {
+            (resolve_strum_target(prefix), true)
+        } else {
+            (resolve_strum_target(&target), false)
+        };
 
         let pending: LuaTable = g.get("__pending_tweens")?;
         // Create one tween per property in the values table
         for pair in values.pairs::<String, f64>() {
             let Ok((prop_name, end_val)) = pair else { continue };
-            let prop = match prop_name.as_str() {
-                "x" => "x",
-                "y" => "y",
-                "alpha" => "alpha",
-                "angle" => "angle",
-                "scale.x" | "scaleX" => "scale_x",
-                "scale.y" | "scaleY" => "scale_y",
-                _ => {
-                    log::debug!("startTween: ignoring unknown property '{}' on '{}'", prop_name, target);
-                    continue;
+            let prop = if is_color_transform {
+                match prop_name.as_str() {
+                    "redOffset" => "red_offset",
+                    "greenOffset" => "green_offset",
+                    "blueOffset" => "blue_offset",
+                    _ => {
+                        log::debug!("startTween: ignoring unknown colorTransform property '{}'", prop_name);
+                        continue;
+                    }
+                }
+            } else {
+                match prop_name.as_str() {
+                    "x" => "x",
+                    "y" => "y",
+                    "alpha" => "alpha",
+                    "angle" => "angle",
+                    "scale.x" | "scaleX" => "scale_x",
+                    "scale.y" | "scaleY" => "scale_y",
+                    "offset.x" => "offset_x",
+                    "offset.y" => "offset_y",
+                    _ => {
+                        log::debug!("startTween: ignoring unknown property '{}' on '{}'", prop_name, target);
+                        continue;
+                    }
                 }
             };
             let tween_tag = if values.len().unwrap_or(0) > 1 {
@@ -1303,22 +1548,137 @@ fn register_text_functions(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
     // makeLuaText(tag, text, width, x, y)
-    globals.set("makeLuaText", lua.create_function(|_lua, (_tag, _text, _width, _x, _y): (String, Option<String>, Option<f64>, Option<f64>, Option<f64>)| {
+    globals.set("makeLuaText", lua.create_function(|lua, (tag, text, width, x, y): (String, Option<String>, Option<f64>, Option<f64>, Option<f64>)| {
+        let text = text.unwrap_or_default();
+        let width = width.unwrap_or(0.0) as f32;
+        let x = x.unwrap_or(0.0) as f32;
+        let y = y.unwrap_or(0.0) as f32;
+        let tbl = lua.create_table()?;
+        tbl.set("tag", tag.clone())?;
+        tbl.set("text", text)?;
+        tbl.set("x", x)?;
+        tbl.set("y", y)?;
+        tbl.set("width", width)?;
+        tbl.set("alpha", 1.0)?;
+        tbl.set("visible", true)?;
+        tbl.set("angle", 0.0)?;
+        tbl.set("font", "")?;
+        tbl.set("size", 16.0)?;
+        tbl.set("color", "FFFFFF")?;
+        tbl.set("border_size", 0.0)?;
+        tbl.set("border_color", "000000")?;
+        tbl.set("alignment", "left")?;
+        tbl.set("camera", "camGame")?;
+        tbl.set("antialiasing", true)?;
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        text_data.set(tag, tbl)?;
         Ok(())
     })?)?;
 
-    globals.set("addLuaText", lua.create_function(|_lua, _tag: String| { Ok(()) })?)?;
-    globals.set("removeLuaText", lua.create_function(|_lua, (_tag, _destroy): (String, Option<bool>)| { Ok(()) })?)?;
-    globals.set("setTextString", lua.create_function(|_lua, (_tag, _text): (String, String)| { Ok(()) })?)?;
-    globals.set("setTextSize", lua.create_function(|_lua, (_tag, _size): (String, f64)| { Ok(()) })?)?;
-    globals.set("setTextColor", lua.create_function(|_lua, (_tag, _color): (String, String)| { Ok(()) })?)?;
-    globals.set("setTextFont", lua.create_function(|_lua, (_tag, _font): (String, String)| { Ok(()) })?)?;
-    globals.set("setTextBorder", lua.create_function(|_lua, _args: LuaMultiValue| { Ok(()) })?)?;
-    globals.set("setTextAlignment", lua.create_function(|_lua, (_tag, _align): (String, String)| { Ok(()) })?)?;
-    globals.set("setTextWidth", lua.create_function(|_lua, (_tag, _w): (String, f64)| { Ok(()) })?)?;
+    // addLuaText(tag, inFront)
+    globals.set("addLuaText", lua.create_function(|lua, (tag, in_front): (String, Option<bool>)| {
+        let in_front = in_front.unwrap_or(true);
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag.clone()) {
+            let pending: LuaTable = lua.globals().get("__pending_texts")?;
+            let len = pending.len()? as i64;
+            pending.set(len + 1, tbl)?;
+        }
+        let adds: LuaTable = lua.globals().get("__pending_text_adds")?;
+        let add_tbl = lua.create_table()?;
+        add_tbl.set("tag", tag)?;
+        add_tbl.set("in_front", in_front)?;
+        let len = adds.len()? as i64;
+        adds.set(len + 1, add_tbl)?;
+        Ok(())
+    })?)?;
+
+    globals.set("removeLuaText", lua.create_function(|lua, (tag, _destroy): (String, Option<bool>)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag.clone()) {
+            tbl.set("visible", false)?;
+        }
+        // Reuse sprite remove queue
+        let pending: LuaTable = lua.globals().get("__pending_removes")?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, format!("__text_{}", tag))?;
+        Ok(())
+    })?)?;
+
+    globals.set("setTextString", lua.create_function(|lua, (tag, text): (String, String)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("text", text)?;
+        }
+        Ok(())
+    })?)?;
+
+    globals.set("setTextSize", lua.create_function(|lua, (tag, size): (String, f64)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("size", size as f32)?;
+        }
+        Ok(())
+    })?)?;
+
+    globals.set("setTextColor", lua.create_function(|lua, (tag, color): (String, String)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("color", color)?;
+        }
+        Ok(())
+    })?)?;
+
+    globals.set("setTextFont", lua.create_function(|lua, (tag, font): (String, String)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("font", font)?;
+        }
+        Ok(())
+    })?)?;
+
+    globals.set("setTextBorder", lua.create_function(|lua, args: LuaMultiValue| {
+        let tag: String = args.get(0).and_then(|v| match v { LuaValue::String(s) => Some(s.to_string_lossy().to_string()), _ => None }).unwrap_or_default();
+        let size: f32 = args.get(1).and_then(|v| match v { LuaValue::Number(n) => Some(*n as f32), LuaValue::Integer(n) => Some(*n as f32), _ => None }).unwrap_or(0.0);
+        let color: String = args.get(2).and_then(|v| match v { LuaValue::String(s) => Some(s.to_string_lossy().to_string()), _ => None }).unwrap_or_else(|| "000000".to_string());
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("border_size", size)?;
+            tbl.set("border_color", color)?;
+        }
+        Ok(())
+    })?)?;
+
+    globals.set("setTextAlignment", lua.create_function(|lua, (tag, align): (String, String)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("alignment", align)?;
+        }
+        Ok(())
+    })?)?;
+
+    globals.set("setTextWidth", lua.create_function(|lua, (tag, w): (String, f64)| {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("width", w as f32)?;
+        }
+        Ok(())
+    })?)?;
+
     globals.set("setTextAutoSize", lua.create_function(|_lua, (_tag, _v): (String, bool)| { Ok(()) })?)?;
-    globals.set("getTextString", lua.create_function(|_lua, _tag: String| -> LuaResult<String> { Ok(String::new()) })?)?;
-    globals.set("luaTextExists", lua.create_function(|_lua, _tag: String| -> LuaResult<bool> { Ok(false) })?)?;
+
+    globals.set("getTextString", lua.create_function(|lua, tag: String| -> LuaResult<String> {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            return Ok(tbl.get::<String>("text").unwrap_or_default());
+        }
+        Ok(String::new())
+    })?)?;
+
+    globals.set("luaTextExists", lua.create_function(|lua, tag: String| -> LuaResult<bool> {
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        Ok(text_data.contains_key(tag)?)
+    })?)?;
 
     Ok(())
 }
@@ -1331,7 +1691,7 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
 
     for name in [
         // Haxe integration
-        "runHaxeFunction", "runHaxeCodePost", "addHaxeLibrary",
+        "runHaxeCodePost", "addHaxeLibrary",
         // Script management
         "addLuaScript", "removeLuaScript", "addHScript", "removeHScript",
         "isRunning", "callScript", "getRunningScripts",
@@ -1344,7 +1704,7 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         // Precaching
         "precacheImage", "precacheSound", "precacheMusic",
         // Camera
-        "cameraShake", "cameraFlash", "cameraFade",
+        "cameraFade",
         "setCameraScroll", "setCameraFollowPoint",
         "addCameraScroll", "addCameraFollowPoint",
         "getCameraScrollX", "getCameraScrollY",
@@ -1381,7 +1741,7 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         "getColorFromString", "getColorFromName",
         "setHudVisible",
         "startVideo",
-        "setSubtitle", "addShake", "customFlash", "customFade",
+        "addShake",
         // Timers
         "onTweenCompleted", "onTimerCompleted", "onSoundFinished",
     ] {

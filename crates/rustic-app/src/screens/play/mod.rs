@@ -188,6 +188,8 @@ pub struct PlayScreen {
     pub(super) lua_behind: Vec<String>,  // sprite tags drawn behind characters
     pub(super) lua_front: Vec<String>,   // sprite tags drawn in front of characters
     pub(super) paths: AssetPaths,
+    /// Whether the character camera layer is visible (toggled by camCharacters.visible).
+    pub(super) cam_characters_visible: bool,
 
     // Pause
     pub(super) paused: bool,
@@ -248,6 +250,7 @@ impl PlayScreen {
             lua_behind: Vec::new(),
             lua_front: Vec::new(),
             paths: AssetPaths::psych_default(),
+            cam_characters_visible: true,
             paused: false,
             pause_selection: 0,
             skip_target_ms: 0.0,
@@ -417,6 +420,36 @@ impl PlayScreen {
                         if let Some(gf) = &mut self.char_gf {
                             gf.play_anim(anim, true);
                         }
+                    }
+                }
+                "opponentCameraOffset.x" => {
+                    if let Some(v) = as_f32 {
+                        self.scripts.state.opponent_camera_offset.0 = v;
+                    }
+                }
+                "opponentCameraOffset.y" => {
+                    if let Some(v) = as_f32 {
+                        self.scripts.state.opponent_camera_offset.1 = v;
+                    }
+                }
+                "boyfriendCameraOffset.x" => {
+                    if let Some(v) = as_f32 {
+                        self.scripts.state.bf_camera_offset.0 = v;
+                    }
+                }
+                "boyfriendCameraOffset.y" => {
+                    if let Some(v) = as_f32 {
+                        self.scripts.state.bf_camera_offset.1 = v;
+                    }
+                }
+                "__camCharactersVisible" => {
+                    if let LuaValue::Bool(b) = &val {
+                        self.cam_characters_visible = *b;
+                    }
+                }
+                "hud.zoom" => {
+                    if let Some(v) = as_f32 {
+                        self.hud_zoom = v;
                     }
                 }
                 _ => {
