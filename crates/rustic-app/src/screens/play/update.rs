@@ -8,7 +8,17 @@ use super::{
     SPLASH_FPS, SPLASH_FRAMES, GAME_W,
 };
 
-/// Parse a hex color string (e.g., "CCCCCC", "FB002D") to [R,G,B,A] floats.
+/// Convert an sRGB component (0..1) to linear space.
+fn srgb_to_linear(s: f32) -> f32 {
+    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+}
+
+/// Convert an sRGB [R,G,B,A] color to linear space (alpha unchanged).
+fn srgb_color(r: f32, g: f32, b: f32) -> [f32; 4] {
+    [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), 1.0]
+}
+
+/// Parse a hex color string (e.g., "CCCCCC", "FB002D") to [R,G,B,A] floats in linear space.
 fn parse_hex_color(hex: &str) -> [f32; 4] {
     let hex = hex.trim_start_matches('#').trim_start_matches("0x").trim_start_matches("0X");
     let hex = if hex.len() > 6 { &hex[hex.len()-6..] } else { hex };
@@ -18,10 +28,10 @@ fn parse_hex_color(hex: &str) -> [f32; 4] {
             u8::from_str_radix(&hex[2..4], 16),
             u8::from_str_radix(&hex[4..6], 16),
         ) {
-            return [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0];
+            return srgb_color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
         }
     }
-    [0.8, 0.8, 0.8, 1.0] // fallback: CCCCCC
+    srgb_color(0.8, 0.8, 0.8) // fallback: CCCCCC
 }
 
 impl PlayScreen {
@@ -280,16 +290,16 @@ impl PlayScreen {
                         // Color-tween custom health bar per opponent form
                         if let Some(chb) = &mut self.custom_healthbar {
                             let (left, right, health_reset, dur) = match v2.to_uppercase().as_str() {
-                                "DAD" => ([1.0, 0.004, 0.02, 1.0], Some([0.39, 1.0, 0.23, 1.0]), Some(1.0), 1.0),
-                                "WHITTY" => ([0.81, 0.004, 0.17, 1.0], Some(chb.saved_player_color), Some(1.0), 1.0),
-                                "RUV" => ([0.59, 0.55, 0.64, 1.0], None, Some(1.0), 1.0),
-                                "GARCELLO" => ([0.004, 1.0, 0.58, 1.0], None, Some(1.0), 1.0),
-                                "TABI" => ([0.36, 0.42, 0.51, 1.0], None, Some(2.0), 1.0),
-                                "TRICKY" => ([0.99, 0.098, 0.016, 1.0], None, Some(1.25), 1.0),
-                                "SHAGGY" => ([0.83, 0.106, 0.114, 1.0], None, Some(1.0), 1.0),
-                                "SONIC" => ([0.0, 0.345, 0.71, 1.0], None, Some(1.0), 1.0),
-                                "POKEMON" => ([0.49, 0.36, 0.56, 1.0], None, Some(1.0), 1.0),
-                                "NINTENDO" => ([0.65, 0.84, 0.96, 1.0], None, Some(1.0), 1.0),
+                                "DAD" => (srgb_color(1.0, 0.004, 0.02), Some(srgb_color(0.39, 1.0, 0.23)), Some(1.0), 1.0),
+                                "WHITTY" => (srgb_color(0.81, 0.004, 0.17), Some(chb.saved_player_color), Some(1.0), 1.0),
+                                "RUV" => (srgb_color(0.59, 0.55, 0.64), None, Some(1.0), 1.0),
+                                "GARCELLO" => (srgb_color(0.004, 1.0, 0.58), None, Some(1.0), 1.0),
+                                "TABI" => (srgb_color(0.36, 0.42, 0.51), None, Some(2.0), 1.0),
+                                "TRICKY" => (srgb_color(0.99, 0.098, 0.016), None, Some(1.25), 1.0),
+                                "SHAGGY" => (srgb_color(0.83, 0.106, 0.114), None, Some(1.0), 1.0),
+                                "SONIC" => (srgb_color(0.0, 0.345, 0.71), None, Some(1.0), 1.0),
+                                "POKEMON" => (srgb_color(0.49, 0.36, 0.56), None, Some(1.0), 1.0),
+                                "NINTENDO" => (srgb_color(0.65, 0.84, 0.96), None, Some(1.0), 1.0),
                                 "PRECUT" => ([1.0, 1.0, 1.0, 1.0], None, None, 0.5),
                                 _ => (chb.left_color, None, None, 1.0),
                             };

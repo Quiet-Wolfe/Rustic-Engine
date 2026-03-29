@@ -244,8 +244,9 @@ impl Default for NightflaidState {
             color_right_elapsed: 0.0,
             color_right_duration: 1.0,
             lights_on: true,
-            song_color: [0.984, 0.0, 0.176, 1.0], // #fb002d red (default for extirpatient)
-            dark_color: [0.051, 0.051, 0.051, 1.0], // #0d0d0d
+            // sRGB → linear: #fb002d red, #0d0d0d dark
+            song_color: [0.966, 0.0, 0.026, 1.0],
+            dark_color: [0.002, 0.002, 0.002, 1.0],
             side_swap_active: false,
             light_left_blink_time: 0.0,
             light_left_blink_count: 3.0,
@@ -638,7 +639,7 @@ impl PlayScreen {
     }
 
     /// Deactivate the 80sNightflaid phase (return to normal stage).
-    pub(super) fn deactivate_80s_nightflaid(&mut self, gpu: &mut GpuState) {
+    pub(super) fn deactivate_80s_nightflaid(&mut self, _gpu: &mut GpuState) {
         self.nightflaid.active = false;
         self.nightflaid.needles_active = false;
         self.nightflaid.gf_visible_80s = false;
@@ -652,6 +653,19 @@ impl PlayScreen {
 
         // Show game camera again
         self.cam_characters_visible = true;
+
+        // Reset all strum positions to defaults (modchart moves them during 80s phase)
+        for i in 0..8 {
+            self.scripts.state.strum_props[i].custom = false;
+            self.scripts.state.strum_props[i].alpha = 1.0;
+            self.scripts.state.strum_props[i].angle = 0.0;
+            self.scripts.state.strum_props[i].scale_x = NOTE_SCALE;
+            self.scripts.state.strum_props[i].scale_y = NOTE_SCALE;
+        }
+
+        // Cancel all active tweens (modchart tweens shouldn't persist after transition)
+        self.scripts.state.tweens.tweens.clear();
+        self.scripts.state.tweens.timers.clear();
     }
 
     /// Start a new random drift tween for unbeatableBG.
@@ -884,6 +898,8 @@ impl PlayScreen {
         let xml_str = std::fs::read_to_string(&xml_path).ok()?;
         let tex = gpu.load_texture_from_path(&png);
         let mut atlas = rustic_render::sprites::SpriteAtlas::from_xml(&xml_str);
+
+        // Try standard Psych Engine naming first (purple0, arrowLEFT, left confirm, etc.)
         for (anim, prefix) in NOTE_ANIMS.iter().zip(NOTE_PREFIXES.iter()) {
             atlas.add_by_prefix(anim, prefix);
         }
@@ -893,6 +909,41 @@ impl PlayScreen {
         {
             atlas.add_by_prefix(prefix, prefix);
         }
+
+        // If standard naming didn't find scroll notes, try direction-based naming
+        // (used by VS Retrospecter custom note skins: Left, Down, Up, Right, static Left, confirm Left, etc.)
+        let dir_names = ["Left", "Down", "Up", "Right"];
+        if atlas.get_frame(NOTE_ANIMS[0], 0).is_none() {
+            for (i, dir) in dir_names.iter().enumerate() {
+                atlas.add_by_prefix(NOTE_ANIMS[i], dir);
+            }
+        }
+        // Direction-based strum names: "static Left" etc.
+        if atlas.get_frame(STRUM_ANIMS[0], 0).is_none() {
+            for (i, dir) in dir_names.iter().enumerate() {
+                atlas.add_by_prefix(STRUM_ANIMS[i], &format!("static {}", dir));
+            }
+        }
+        // Direction-based confirm names: "confirm Left" etc.
+        if atlas.get_frame(CONFIRM_ANIMS[0], 0).is_none() {
+            for (i, dir) in dir_names.iter().enumerate() {
+                atlas.add_by_prefix(CONFIRM_ANIMS[i], &format!("confirm {}", dir));
+            }
+        }
+        // Direction-based press names: "press Left" etc.
+        if atlas.get_frame(PRESS_ANIMS[0], 0).is_none() {
+            for (i, dir) in dir_names.iter().enumerate() {
+                atlas.add_by_prefix(PRESS_ANIMS[i], &format!("press {}", dir));
+            }
+        }
+        // Shared hold pieces: "hold_piece" / "hold_end" (not per-lane)
+        if atlas.get_frame(HOLD_PIECE_ANIMS[0], 0).is_none() {
+            for i in 0..4 {
+                atlas.add_by_prefix(HOLD_PIECE_ANIMS[i], "hold_piece");
+                atlas.add_by_prefix(HOLD_END_ANIMS[i], "hold_end");
+            }
+        }
+
         Some(NoteAssets {
             tex_w: tex.width as f32,
             tex_h: tex.height as f32,

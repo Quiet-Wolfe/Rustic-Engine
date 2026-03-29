@@ -375,9 +375,14 @@ impl PlayScreen {
                     log::info!("Loaded custom health bar '{}': bar={}x{}, overlay={}x{}",
                         hb_name, bar_tex.width, bar_tex.height, overlay_tex.width, overlay_tex.height);
                     let mut chb = super::CustomHealthBar::new(bar_tex, overlay_tex);
-                    // Set initial opponent color from character healthbar color
+                    // Set initial opponent color from character healthbar color (sRGB → linear)
                     let hbc = char_def.healthbar_colors;
-                    chb.left_color = [hbc[0] as f32 / 255.0, hbc[1] as f32 / 255.0, hbc[2] as f32 / 255.0, 1.0];
+                    chb.left_color = [
+                        srgb_to_linear(hbc[0] as f32 / 255.0),
+                        srgb_to_linear(hbc[1] as f32 / 255.0),
+                        srgb_to_linear(hbc[2] as f32 / 255.0),
+                        1.0,
+                    ];
                     chb.color_tween_target_left = chb.left_color;
                     self.custom_healthbar = Some(chb);
                 }
@@ -430,12 +435,12 @@ impl PlayScreen {
         if stage_name == "nightflaid" {
             self.reflections_enabled = true;
             self.load_nightflaid_assets(gpu, &paths);
-            // Set song-specific accent color
+            // Set song-specific accent color (sRGB → linear for GPU)
             let song_lower = self.song_name.to_lowercase();
             if song_lower.contains("hexer") {
-                self.nightflaid.song_color = [0.0, 0.984, 0.235, 1.0]; // #00FB3C green
+                self.nightflaid.song_color = [srgb_to_linear(0.0), srgb_to_linear(0.984), srgb_to_linear(0.235), 1.0]; // #00FB3C green
             } else if song_lower.contains("extiraging") {
-                self.nightflaid.song_color = [0.0, 0.984, 0.808, 1.0]; // #00FBCE cyan
+                self.nightflaid.song_color = [srgb_to_linear(0.0), srgb_to_linear(0.984), srgb_to_linear(0.808), 1.0]; // #00FBCE cyan
             }
             // else: default red #fb002d
         }

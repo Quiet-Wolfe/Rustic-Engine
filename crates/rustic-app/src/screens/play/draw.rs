@@ -58,7 +58,7 @@ impl PlayScreen {
         }
 
         // === Stage background color overlay (nightflaid shader handler) ===
-        if self.stage_name == "nightflaid" {
+        if self.stage_name == "nightflaid" && !is_death {
             let lc = self.nightflaid.stage_color_left;
             let rc = self.nightflaid.stage_color_right;
             if lc != rc {
