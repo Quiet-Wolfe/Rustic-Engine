@@ -229,49 +229,24 @@ impl PlayScreen {
                 "Nightflaid color tween" if self.stage_name == "nightflaid" => {
                     let color = parse_hex_color(&v1);
                     let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.nightflaid.color_left_start = self.nightflaid.stage_color_left;
-                    self.nightflaid.color_left_target = color;
-                    self.nightflaid.color_left_elapsed = 0.0;
-                    self.nightflaid.color_left_duration = dur;
-                    self.nightflaid.color_left_tween_active = true;
-                    self.nightflaid.color_right_start = self.nightflaid.stage_color_right;
-                    self.nightflaid.color_right_target = color;
-                    self.nightflaid.color_right_elapsed = 0.0;
-                    self.nightflaid.color_right_duration = dur;
-                    self.nightflaid.color_right_tween_active = true;
+                    self.nightflaid_color_tween_both(color, dur);
                 }
                 "Nightflaid color tween left-only" if self.stage_name == "nightflaid" => {
                     let color = parse_hex_color(&v1);
                     let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.nightflaid.color_left_start = self.nightflaid.stage_color_left;
-                    self.nightflaid.color_left_target = color;
-                    self.nightflaid.color_left_elapsed = 0.0;
-                    self.nightflaid.color_left_duration = dur;
-                    self.nightflaid.color_left_tween_active = true;
+                    self.nightflaid_color_tween_left(color, dur);
                 }
                 "Nightflaid color tween right-only" if self.stage_name == "nightflaid" => {
                     let color = parse_hex_color(&v1);
                     let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.nightflaid.color_right_start = self.nightflaid.stage_color_right;
-                    self.nightflaid.color_right_target = color;
-                    self.nightflaid.color_right_elapsed = 0.0;
-                    self.nightflaid.color_right_duration = dur;
-                    self.nightflaid.color_right_tween_active = true;
+                    self.nightflaid_color_tween_right(color, dur);
                 }
                 "Nightflaid swap sides" if self.stage_name == "nightflaid" => {
                     let dur: f32 = v1.parse().unwrap_or(0.15);
                     let old_left = self.nightflaid.stage_color_left;
                     let old_right = self.nightflaid.stage_color_right;
-                    self.nightflaid.color_left_start = old_left;
-                    self.nightflaid.color_left_target = old_right;
-                    self.nightflaid.color_left_elapsed = 0.0;
-                    self.nightflaid.color_left_duration = dur;
-                    self.nightflaid.color_left_tween_active = true;
-                    self.nightflaid.color_right_start = old_right;
-                    self.nightflaid.color_right_target = old_left;
-                    self.nightflaid.color_right_elapsed = 0.0;
-                    self.nightflaid.color_right_duration = dur;
-                    self.nightflaid.color_right_tween_active = true;
+                    self.nightflaid_color_tween_left(old_right, dur);
+                    self.nightflaid_color_tween_right(old_left, dur);
                 }
                 "Nightflaid lightings" if self.stage_name == "nightflaid" => {
                     let on = matches!(v1.to_lowercase().as_str(), "on" | "1" | "");
@@ -436,6 +411,31 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::StepHit { step } => {
+                    // Nightflaid step-based stage state changes
+                    if self.stage_name == "nightflaid" {
+                        match step {
+                            1664 => self.nightflaid.side_swap_active = true,
+                            2304 => {
+                                // Both sides to dark
+                                self.nightflaid_color_tween_both(self.nightflaid.dark_color, 0.3);
+                                self.nightflaid.side_swap_active = false;
+                            }
+                            2432 => {
+                                // Left to song color, re-enable side swaps
+                                self.nightflaid_color_tween_left(self.nightflaid.song_color, 0.3);
+                                self.nightflaid.side_swap_active = true;
+                            }
+                            2944 => {
+                                self.nightflaid.side_swap_active = false;
+                                self.nightflaid.lights_on = true;
+                            }
+                            3456 => {
+                                self.nightflaid.lights_on = false;
+                                self.nightflaid_color_tween_both(self.nightflaid.dark_color, 0.3);
+                            }
+                            _ => {}
+                        }
+                    }
                     if self.scripts.has_scripts() {
                         self.scripts.call_step("onStepHit", step);
                     }
@@ -493,6 +493,25 @@ impl PlayScreen {
                     if self.cam_zooming && !self.disable_zooming && self.camera.zoom < 1.35 {
                         self.camera.zoom += 0.015;
                         self.hud_zoom += 0.03;
+                    }
+                    // Nightflaid: side-based color swaps (onMoveCamera)
+                    if self.stage_name == "nightflaid" && self.nightflaid.side_swap_active {
+                        let song_c = self.nightflaid.song_color;
+                        let dark_c = self.nightflaid.dark_color;
+                        if must_hit {
+                            // BF singing: right side gets song color, left goes dark
+                            self.nightflaid_color_tween_right(song_c, 0.3);
+                            self.nightflaid_color_tween_left(dark_c, 0.3);
+                        } else {
+                            // Dad singing: left side gets song color, right goes dark
+                            self.nightflaid_color_tween_left(song_c, 0.3);
+                            self.nightflaid_color_tween_right(dark_c, 0.3);
+                        }
+                        // Also swap the existing colors
+                        let old_left = self.nightflaid.stage_color_left;
+                        let old_right = self.nightflaid.stage_color_right;
+                        self.nightflaid.color_left_start = old_left;
+                        self.nightflaid.color_right_start = old_right;
                     }
                     // Lua: onSectionHit
                     if self.scripts.has_scripts() {

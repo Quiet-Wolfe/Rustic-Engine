@@ -365,9 +365,10 @@ impl PlayScreen {
                 gpu.draw_text(&score_text, overlay_x, overlay_y + oh + 6.0, 16.0, [a, a, a, a]);
             }
         } else {
-            // Default health bar
+            // Default health bar (bottom for upscroll, top for downscroll)
             let hbx = hud_x(HEALTH_BAR_X);
-            let hby = hud_y(HEALTH_BAR_Y);
+            let bar_base_y = if self.downscroll { 80.0 } else { HEALTH_BAR_Y };
+            let hby = hud_y(bar_base_y);
             let hbw = hud_s(HEALTH_BAR_W);
             let hbh = hud_s(HEALTH_BAR_H);
             // Black border

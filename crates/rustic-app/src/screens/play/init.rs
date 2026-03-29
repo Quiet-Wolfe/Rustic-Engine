@@ -430,6 +430,14 @@ impl PlayScreen {
         if stage_name == "nightflaid" {
             self.reflections_enabled = true;
             self.load_nightflaid_assets(gpu, &paths);
+            // Set song-specific accent color
+            let song_lower = self.song_name.to_lowercase();
+            if song_lower.contains("hexer") {
+                self.nightflaid.song_color = [0.0, 0.984, 0.235, 1.0]; // #00FB3C green
+            } else if song_lower.contains("extiraging") {
+                self.nightflaid.song_color = [0.0, 0.984, 0.808, 1.0]; // #00FBCE cyan
+            }
+            // else: default red #fb002d
         }
 
         // Load audio

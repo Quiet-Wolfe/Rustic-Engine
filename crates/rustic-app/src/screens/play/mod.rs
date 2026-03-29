@@ -172,6 +172,23 @@ pub(super) struct NightflaidState {
     pub color_right_duration: f32,
     /// Whether stage lights are visible.
     pub lights_on: bool,
+    /// Song-specific accent color (red for extirpatient, green for hexerpatient, cyan for extiraging).
+    pub song_color: [f32; 4],
+    /// Dark color constant.
+    pub dark_color: [f32; 4],
+    /// Whether the side-based color swap section is active (steps 1664-2944).
+    pub side_swap_active: bool,
+    /// Light ray blinking state.
+    pub light_left_blink_time: f32,
+    pub light_left_blink_count: f32,
+    pub light_left_visible: bool,
+    pub light_right_blink_time: f32,
+    pub light_right_blink_count: f32,
+    pub light_right_visible: bool,
+    /// Red light pulse timer.
+    pub red_light_time: f32,
+    /// Red light pulse alpha.
+    pub red_light_alpha: f32,
 }
 
 impl Default for NightflaidState {
@@ -227,6 +244,17 @@ impl Default for NightflaidState {
             color_right_elapsed: 0.0,
             color_right_duration: 1.0,
             lights_on: true,
+            song_color: [0.984, 0.0, 0.176, 1.0], // #fb002d red (default for extirpatient)
+            dark_color: [0.051, 0.051, 0.051, 1.0], // #0d0d0d
+            side_swap_active: false,
+            light_left_blink_time: 0.0,
+            light_left_blink_count: 3.0,
+            light_left_visible: true,
+            light_right_blink_time: 0.0,
+            light_right_blink_count: 3.0,
+            light_right_visible: true,
+            red_light_time: 0.0,
+            red_light_alpha: 1.0,
         }
     }
 }
@@ -641,8 +669,9 @@ impl PlayScreen {
 
     /// Update 80sNightflaid animations each frame.
     pub(super) fn update_nightflaid(&mut self, dt: f32, gpu: &mut GpuState) {
-        // Stage color tweens run regardless of 80s phase
+        // Stage color tweens and light effects run regardless of 80s phase
         self.update_nightflaid_colors(dt);
+        self.update_nightflaid_lights(dt);
 
         if !self.nightflaid.active && !self.nightflaid.vcr_tween_active {
             return;
@@ -762,6 +791,73 @@ impl PlayScreen {
             }
             if t >= 1.0 { self.nightflaid.color_right_tween_active = false; }
         }
+    }
+
+    /// Tween the left stage color.
+    pub(super) fn nightflaid_color_tween_left(&mut self, color: [f32; 4], dur: f32) {
+        self.nightflaid.color_left_start = self.nightflaid.stage_color_left;
+        self.nightflaid.color_left_target = color;
+        self.nightflaid.color_left_elapsed = 0.0;
+        self.nightflaid.color_left_duration = dur;
+        self.nightflaid.color_left_tween_active = true;
+    }
+
+    /// Tween the right stage color.
+    pub(super) fn nightflaid_color_tween_right(&mut self, color: [f32; 4], dur: f32) {
+        self.nightflaid.color_right_start = self.nightflaid.stage_color_right;
+        self.nightflaid.color_right_target = color;
+        self.nightflaid.color_right_elapsed = 0.0;
+        self.nightflaid.color_right_duration = dur;
+        self.nightflaid.color_right_tween_active = true;
+    }
+
+    /// Tween both stage colors to the same target.
+    pub(super) fn nightflaid_color_tween_both(&mut self, color: [f32; 4], dur: f32) {
+        self.nightflaid_color_tween_left(color, dur);
+        self.nightflaid_color_tween_right(color, dur);
+    }
+
+    /// Update nightflaid light blinking and pulsing effects.
+    fn update_nightflaid_lights(&mut self, dt: f32) {
+        if !self.nightflaid.lights_on { return; }
+
+        // Left light ray blinking
+        self.nightflaid.light_left_blink_time -= dt * 5.0;
+        if self.nightflaid.light_left_blink_time < 0.0 {
+            self.nightflaid.light_left_blink_count -= 1.0;
+            if self.nightflaid.light_left_blink_count <= 0.0 {
+                // Reset: random wait before next blink cycle
+                self.nightflaid.light_left_blink_count =
+                    2.0 + (self.nightflaid.red_light_time * 3.7).sin().abs() * 2.0;
+                self.nightflaid.light_left_blink_time =
+                    12.0 + (self.nightflaid.red_light_time * 5.1).sin().abs() * 8.0;
+                self.nightflaid.light_left_visible = true;
+            } else {
+                self.nightflaid.light_left_blink_time = 1.0;
+                self.nightflaid.light_left_visible = !self.nightflaid.light_left_visible;
+            }
+        }
+
+        // Right light ray blinking
+        self.nightflaid.light_right_blink_time -= dt * 5.0;
+        if self.nightflaid.light_right_blink_time < 0.0 {
+            self.nightflaid.light_right_blink_count -= 1.0;
+            if self.nightflaid.light_right_blink_count <= 0.0 {
+                self.nightflaid.light_right_blink_count =
+                    2.0 + (self.nightflaid.red_light_time * 4.3).sin().abs() * 2.0;
+                self.nightflaid.light_right_blink_time =
+                    12.0 + (self.nightflaid.red_light_time * 6.7).sin().abs() * 8.0;
+                self.nightflaid.light_right_visible = true;
+            } else {
+                self.nightflaid.light_right_blink_time = 1.0;
+                self.nightflaid.light_right_visible = !self.nightflaid.light_right_visible;
+            }
+        }
+
+        // Red light pulse
+        self.nightflaid.red_light_time += dt;
+        self.nightflaid.red_light_alpha =
+            (std::f32::consts::PI * self.nightflaid.red_light_time).sin() * 0.25 + 0.85;
     }
 
     /// Get strum position/alpha/angle/scale from modchart state. Falls back to defaults.

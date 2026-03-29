@@ -161,6 +161,10 @@ impl CharacterSprite {
     }
 
     pub fn play_sing(&mut self, lane: usize) {
+        // Don't interrupt special animations (descend, ascend, intro, etc.)
+        if self.special_anim && !self.anim.finished {
+            return;
+        }
         let base = character::SING_DIRECTIONS[lane];
         let resolved = self.resolve_anim_name(base);
         self.special_anim = false;
@@ -169,6 +173,9 @@ impl CharacterSprite {
     }
 
     pub fn play_miss(&mut self, lane: usize) {
+        if self.special_anim && !self.anim.finished {
+            return;
+        }
         let base = character::MISS_DIRECTIONS[lane];
         let resolved = self.resolve_anim_name(base);
         self.special_anim = false;
@@ -429,6 +436,9 @@ impl AtlasCharacterSprite {
     }
 
     pub fn play_sing(&mut self, lane: usize) {
+        if self.special_anim && !self.animate.finished() {
+            return;
+        }
         let base = character::SING_DIRECTIONS[lane];
         let resolved = self.resolve_anim_name(base);
         self.special_anim = false;
@@ -437,6 +447,9 @@ impl AtlasCharacterSprite {
     }
 
     pub fn play_miss(&mut self, lane: usize) {
+        if self.special_anim && !self.animate.finished() {
+            return;
+        }
         let base = character::MISS_DIRECTIONS[lane];
         let resolved = self.resolve_anim_name(base);
         self.special_anim = false;
