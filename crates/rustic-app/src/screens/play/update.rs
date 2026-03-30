@@ -232,12 +232,6 @@ impl PlayScreen {
                     // v1 = target ("dad", "bf", "gf", or "0"/"1"/"2")
                     // v2 = new character name
                     if !v2.is_empty() {
-                        // Detect 80s phase activation via character name prefix
-                        let lower = v2.to_lowercase();
-                        if lower.starts_with("80s") && self.nightflaid.bg_texture.is_some() {
-                            log::info!("80s phase activated via Change Character: {}", v2);
-                            self.nightflaid_activate_pending = true;
-                        }
                         self.char_change_requests.push((v1.clone(), v2.clone()));
                     }
                 }
@@ -287,17 +281,6 @@ impl PlayScreen {
                             dad.set_anim_suffix(&suffix);
                         }
                         // Health bar colors are handled by rustic/rustic_ext.lua via setHealthBarColor
-                    }
-                    // returner: deactivate 80sNightflaid
-                    if v1 == "returner" && self.stage_name == "nightflaid" {
-                        log::info!("80sNightflaid phase deactivated (returner)");
-                        self.nightflaid_deactivate_pending = true;
-                    }
-                    // preMidsongCutscene: slide out lightning + fade BG
-                    if v1 == "preMidsongCutscene" && self.stage_name == "nightflaid" {
-                        // GF slides down, unbeatableBG fades out, lightning slides out
-                        self.nightflaid.gf_visible_80s = false;
-                        self.nightflaid.bg_alpha = 0.0;
                     }
                 }
                 _ => {}

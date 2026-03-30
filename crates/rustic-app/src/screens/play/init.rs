@@ -432,12 +432,6 @@ impl PlayScreen {
         // Disable beat zooming if stage specifies it
         self.disable_zooming = stage.disable_zooming;
 
-        // Load 80s phase assets if the nightflaid stage has them
-        // (reflections and stage colors are now controlled via Lua scripts)
-        if stage_name == "nightflaid" {
-            self.load_nightflaid_assets(gpu, &paths);
-        }
-
         // Load audio
         let mut audio = AudioEngine::new();
         if let Some(inst) = paths.song_audio(&self.song_name, "Inst.ogg") {

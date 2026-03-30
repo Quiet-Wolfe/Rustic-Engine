@@ -608,6 +608,11 @@ impl LuaScript {
                                 let dur: f32 = tbl.get("duration").unwrap_or(1.0);
                                 state.postprocess_requests.push((enabled, dur));
                             }
+                            "postprocess_param" => {
+                                let param: String = tbl.get("param").unwrap_or_default();
+                                let value: f32 = tbl.get("value").unwrap_or(0.0);
+                                state.postprocess_param_requests.push((param, value));
+                            }
                             "healthbar_color" => {
                                 let side: String = tbl.get("side").unwrap_or_default();
                                 let r: f32 = tbl.get("r").unwrap_or(0.0);

@@ -584,6 +584,8 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "colorTransform.redOffset" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("ct_red", n)?; } }
                     "colorTransform.greenOffset" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("ct_green", n)?; } }
                     "colorTransform.blueOffset" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("ct_blue", n)?; } }
+                    "animation.frameIndex" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("anim_frame", n as i32)?; } }
+                    "animation.framerate" => { if let Some(n) = lua_val_to_f32(&value) { tbl.set("anim_fps", n)?; } }
                     _ => { tbl.set(format!("_prop_{field}"), value.clone())?; }
                 }
                 return Ok(());
@@ -691,6 +693,8 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         let scale_y: f64 = tbl.get("scale_y").unwrap_or(1.0);
                         Ok(LuaValue::Number(tex_h * scale_y.abs()))
                     }
+                    "animation.frameIndex" => Ok(tbl.get::<LuaValue>("anim_frame").unwrap_or(LuaValue::Integer(0))),
+                    "animation.framerate" => Ok(tbl.get::<LuaValue>("anim_fps").unwrap_or(LuaValue::Number(24.0))),
                     _ => Ok(tbl.get::<LuaValue>(format!("_prop_{field}")).unwrap_or(LuaNil)),
                 };
             }
@@ -1885,6 +1889,20 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?;
     lua.globals().set("setPostProcessing", set_postprocessing)?;
+
+    // setPostProcessParam(param, value) — set individual postprocess shader uniform
+    // Valid params: "scanline", "distortion", "chromatic", "vignette", "enabled", "time"
+    let set_pp_param = lua.create_function(|lua, (param, value): (String, f64)| {
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "postprocess_param")?;
+        entry.set("param", param)?;
+        entry.set("value", value as f32)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("setPostProcessParam", set_pp_param)?;
 
     // setHealthBarColor(side, hexColor, duration)
     let set_hb_color = lua.create_function(|lua, (side, hex, dur): (String, String, Option<f64>)| {

@@ -28,19 +28,6 @@ impl PlayScreen {
     pub(super) fn draw_inner(&mut self, gpu: &mut GpuState) {
         let white = [1.0, 1.0, 1.0, 1.0];
 
-        // Update 80sNightflaid animations (needs gpu for shader uniforms)
-        self.update_nightflaid(self.last_dt, gpu);
-
-        // Process pending 80s activation/deactivation (set in update, needs gpu here)
-        if self.nightflaid_activate_pending {
-            self.nightflaid_activate_pending = false;
-            self.activate_80s_nightflaid(gpu);
-        }
-        if self.nightflaid_deactivate_pending {
-            self.nightflaid_deactivate_pending = false;
-            self.deactivate_80s_nightflaid(gpu);
-        }
-
         if !gpu.begin_frame() {
             return;
         }
@@ -50,6 +37,45 @@ impl PlayScreen {
 
         // Process pending character changes (needs GPU for texture loading)
         self.process_char_changes(gpu);
+
+        // Process post-processing requests from Lua (needs gpu)
+        {
+            let pp_reqs: Vec<_> = self.scripts.state.postprocess_requests.drain(..).collect();
+            for (enabled, dur) in pp_reqs {
+                if enabled {
+                    gpu.set_postprocess_active(true);
+                    gpu.postprocess.uniforms.enabled = 1;
+                } else if dur <= 0.0 {
+                    gpu.postprocess.uniforms.enabled = 0;
+                    gpu.set_postprocess_active(false);
+                } else {
+                    // Fade out over duration — for now just disable immediately
+                    // TODO: tween fade-out
+                    gpu.postprocess.uniforms.enabled = 0;
+                    gpu.set_postprocess_active(false);
+                }
+            }
+            let pp_params: Vec<_> = self.scripts.state.postprocess_param_requests.drain(..).collect();
+            for (param, value) in pp_params {
+                match param.as_str() {
+                    "scanline" => gpu.postprocess.uniforms.scanline_intensity = value,
+                    "distortion" => gpu.postprocess.uniforms.distortion_mult = value,
+                    "chromatic" => gpu.postprocess.uniforms.chromatic_aberration = value,
+                    "vignette" => gpu.postprocess.uniforms.vignette_intensity = value,
+                    "time" => gpu.postprocess.uniforms.time = value,
+                    "enabled" => {
+                        if value > 0.5 {
+                            gpu.postprocess.uniforms.enabled = 1;
+                            gpu.set_postprocess_active(true);
+                        } else {
+                            gpu.postprocess.uniforms.enabled = 0;
+                            gpu.set_postprocess_active(false);
+                        }
+                    }
+                    _ => log::warn!("Unknown postprocess param: {}", param),
+                }
+            }
+        }
 
         // === Lua sprites behind characters ===
         let is_death = self.death.is_some();
@@ -128,11 +154,6 @@ impl PlayScreen {
         // === Lua sprites in front of characters ===
         if !is_death {
             self.draw_lua_sprites(gpu, true);
-        }
-
-        // === 80sNightflaid foreground (lightning, needles) ===
-        if self.nightflaid.active {
-            self.draw_nightflaid_foreground(gpu);
         }
 
         // Skip HUD during death
@@ -654,12 +675,24 @@ impl PlayScreen {
             let dw = w * zoom;
             let dh = h * zoom;
 
-            gpu.push_texture_region(
-                tex.width as f32, tex.height as f32,
-                0.0, 0.0, tex.width as f32, tex.height as f32,
-                dx, dy, dw, dh,
-                sprite.flip_x, color,
-            );
+            if sprite.angle.abs() > 0.01 {
+                // Rotated sprite: draw around center
+                let cx = dx + dw / 2.0;
+                let cy = dy + dh / 2.0;
+                gpu.push_quad_rotated(
+                    cx, cy, dw, dh,
+                    0.0, 0.0, 1.0, 1.0,
+                    sprite.angle.to_radians(),
+                    sprite.flip_x, color,
+                );
+            } else {
+                gpu.push_texture_region(
+                    tex.width as f32, tex.height as f32,
+                    0.0, 0.0, tex.width as f32, tex.height as f32,
+                    dx, dy, dw, dh,
+                    sprite.flip_x, color,
+                );
+            }
             gpu.draw_batch(Some(tex));
         }
     }
@@ -911,95 +944,6 @@ impl PlayScreen {
                     ex, vis_top, ew, vis_h,
                     false, color,
                 );
-            }
-        }
-    }
-
-    /// Draw the 80sNightflaid overlay: red stripes BG, lightning bolts, scrolling needles, GF.
-    fn draw_nightflaid_overlay(&self, gpu: &mut GpuState) {
-        let nf = &self.nightflaid;
-        let a = nf.bg_alpha.clamp(0.0, 1.0);
-
-        // unbeatableBG — massive red stripes background (no camera transform, screen-space)
-        if let Some(bg_tex) = &nf.bg_texture {
-            let bg_scale = 150.0; // Matching V-Slice scale
-            let w = bg_tex.width as f32 * bg_scale;
-            let h = bg_tex.height as f32 * bg_scale;
-            let color = [a, a, a, a];
-            // Draw rotated around center
-            let cx = nf.bg_x + w / 2.0;
-            let cy = nf.bg_y + h / 2.0;
-            gpu.push_quad_rotated(
-                cx, cy, w, h,
-                0.0, 0.0, 1.0, 1.0,
-                nf.bg_angle.to_radians(),
-                false, color,
-            );
-            gpu.draw_batch(Some(bg_tex));
-        }
-
-        // Lightning bolts (animated sparrow sprites)
-        if let (Some(atlas), Some(tex)) = (&nf.lightning_atlas, &nf.lightning_texture) {
-            let anim_name = "lightning";
-            // Left lightning
-            if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
-                gpu.draw_sprite_frame(
-                    frame, nf.lightning_tex_w, nf.lightning_tex_h,
-                    nf.lightning_left_x, -50.0,
-                    1.0, false, [1.0, 1.0, 1.0, 1.0],
-                );
-            }
-            // Right lightning (flipY in Psych Engine = flipY in Haxe, but V-Slice uses flipY too)
-            if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
-                gpu.draw_sprite_frame_flip_y(
-                    frame, nf.lightning_tex_w, nf.lightning_tex_h,
-                    nf.lightning_right_x, -50.0,
-                    1.0, false, [1.0, 1.0, 1.0, 1.0],
-                );
-            }
-            gpu.draw_batch(Some(tex));
-        }
-
-        // Scrolling needles
-        if nf.needles_active {
-            if let (Some(atlas), Some(tex)) = (&nf.needle_atlas, &nf.needle_texture) {
-                let anim_name = "anim"; // needle animation prefix from V-Slice
-                // Left needles (scroll up)
-                for &ny in &nf.needle_left_y {
-                    if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
-                        gpu.draw_sprite_frame(
-                            frame, nf.needle_tex_w, nf.needle_tex_h,
-                            nf.lightning_left_x - 80.0, ny,
-                            1.0, false, [1.0, 1.0, 1.0, 1.0],
-                        );
-                    }
-                }
-                // Right needles (scroll down, flipX)
-                for &ny in &nf.needle_right_y {
-                    if let Some(frame) = atlas.get_frame(anim_name, nf.lightning_frame) {
-                        gpu.draw_sprite_frame(
-                            frame, nf.needle_tex_w, nf.needle_tex_h,
-                            nf.lightning_right_x - 80.0, ny,
-                            1.0, true, [1.0, 1.0, 1.0, 1.0],
-                        );
-                    }
-                }
-                gpu.draw_batch(Some(tex));
-            }
-        }
-
-        // GF character in 80s mode (drawn on top of everything in the 80s overlay)
-        if nf.gf_visible_80s {
-            if let Some(gf) = &self.char_gf {
-                // In 80s mode, GF is drawn in screen space (no camera transform)
-                // We temporarily override position for drawing
-                // Just draw at the 80s position using a direct approach
-                // The GF character is drawn centered on screen at gf_80s_y
-                let gf_x = (GAME_W - 300.0) / 2.0; // approximate center
-                let _ = (gf_x, nf.gf_80s_y); // GF drawing in 80s mode is complex;
-                // for now, just draw via normal camera (the camera is hidden so only 80s shows)
-                gf.draw(gpu, &self.camera);
-                gpu.draw_batch(Some(gf.texture()));
             }
         }
     }

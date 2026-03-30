@@ -128,6 +128,8 @@ pub struct ScriptState {
 
     /// Post-processing toggle requests: (enabled, tween_duration).
     pub postprocess_requests: Vec<(bool, f32)>,
+    /// Post-processing parameter requests: (param_name, value).
+    pub postprocess_param_requests: Vec<(String, f32)>,
 
     /// Custom health bar color requests: (side: "left"/"right", r, g, b, a, duration).
     pub healthbar_color_requests: Vec<(String, f32, f32, f32, f32, f32)>,
@@ -367,6 +369,7 @@ impl ScriptState {
             stage_color_requests: Vec::new(),
             stage_color_swap_requests: Vec::new(),
             postprocess_requests: Vec::new(),
+            postprocess_param_requests: Vec::new(),
             healthbar_color_requests: Vec::new(),
             stage_lights_request: None,
             reflections_request: None,

@@ -145,97 +145,6 @@ impl Default for StageOverlay {
     }
 }
 
-/// 80sNightflaid visual phase state.
-pub(super) struct NightflaidState {
-    /// Whether the 80s phase is currently active.
-    pub active: bool,
-    /// unbeatableBG texture and position.
-    pub bg_texture: Option<GpuTexture>,
-    pub bg_x: f32,
-    pub bg_y: f32,
-    pub bg_angle: f32,
-    pub bg_alpha: f32,
-    /// Lightning bolt textures (animated sparrow).
-    pub lightning_atlas: Option<SpriteAtlas>,
-    pub lightning_texture: Option<GpuTexture>,
-    pub lightning_tex_w: f32,
-    pub lightning_tex_h: f32,
-    pub lightning_left_x: f32,
-    pub lightning_right_x: f32,
-    pub lightning_frame: usize,
-    pub lightning_timer: f32,
-    /// Needle textures (animated sparrow).
-    pub needle_atlas: Option<SpriteAtlas>,
-    pub needle_texture: Option<GpuTexture>,
-    pub needle_tex_w: f32,
-    pub needle_tex_h: f32,
-    pub needle_left_y: [f32; 3],
-    pub needle_right_y: [f32; 3],
-    pub needles_active: bool,
-    /// unbeatableBG drift tween state.
-    pub bg_tween_target_x: f32,
-    pub bg_tween_target_angle: f32,
-    pub bg_tween_duration: f32,
-    pub bg_tween_elapsed: f32,
-    pub bg_tween_start_x: f32,
-    pub bg_tween_start_angle: f32,
-    /// GF visible in 80s mode.
-    pub gf_visible_80s: bool,
-    /// GF position for 80s mode (slides up from below).
-    pub gf_80s_y: f32,
-    pub gf_80s_target_y: f32,
-    pub gf_80s_tween_elapsed: f32,
-    pub gf_80s_tween_duration: f32,
-    /// VCR shader parameters being tweened.
-    pub vcr_tween_elapsed: f32,
-    pub vcr_tween_duration: f32,
-    pub vcr_tween_active: bool,
-    pub vcr_target_enabled: bool,
-}
-
-impl Default for NightflaidState {
-    fn default() -> Self {
-        Self {
-            active: false,
-            bg_texture: None,
-            bg_x: -1000.0,
-            bg_y: -900.0,
-            bg_angle: 0.0,
-            bg_alpha: 0.0,
-            lightning_atlas: None,
-            lightning_texture: None,
-            lightning_tex_w: 0.0,
-            lightning_tex_h: 0.0,
-            lightning_left_x: 110.0 - 500.0,
-            lightning_right_x: 1020.0 + 500.0,
-            lightning_frame: 0,
-            lightning_timer: 0.0,
-            needle_atlas: None,
-            needle_texture: None,
-            needle_tex_w: 0.0,
-            needle_tex_h: 0.0,
-            needle_left_y: [0.0, 360.0, 720.0],
-            needle_right_y: [0.0, 360.0, 720.0],
-            needles_active: false,
-            bg_tween_target_x: -1000.0,
-            bg_tween_target_angle: 0.0,
-            bg_tween_duration: 3.0,
-            bg_tween_elapsed: 0.0,
-            bg_tween_start_x: -1000.0,
-            bg_tween_start_angle: 0.0,
-            gf_visible_80s: false,
-            gf_80s_y: 820.0, // off screen
-            gf_80s_target_y: 100.0,
-            gf_80s_tween_elapsed: 0.0,
-            gf_80s_tween_duration: 0.75,
-            vcr_tween_elapsed: 0.0,
-            vcr_tween_duration: 1.0,
-            vcr_tween_active: false,
-            vcr_target_enabled: false,
-        }
-    }
-}
-
 /// Custom health bar (overlay + bar sprites, clipRect-style fill, color tweens).
 /// Loaded when the opponent character has a `healthBarImg` field pointing to
 /// `images/healthBars/<name>/` with bar.png and overlay.png.
@@ -429,11 +338,6 @@ pub struct PlayScreen {
     /// Generic stage overlay: split left/right color tint drawn over the game world.
     /// Controlled via setStageColor() Lua API. Any stage can use this.
     pub(super) stage_overlay: StageOverlay,
-    /// 80sNightflaid visual phase state (only used for nightflaid stage).
-    pub(super) nightflaid: NightflaidState,
-    /// Pending flags for 80s activation/deactivation (set in update, consumed in draw where gpu is available).
-    pub(super) nightflaid_activate_pending: bool,
-    pub(super) nightflaid_deactivate_pending: bool,
 
     /// Pending character change requests: (target, new_char_name)
     pub(super) char_change_requests: Vec<(String, String)>,
@@ -513,9 +417,6 @@ impl PlayScreen {
             reflection_alpha: 0.35,
             reflection_dist_y: -30.0,
             stage_overlay: StageOverlay::default(),
-            nightflaid: NightflaidState::default(),
-            nightflaid_activate_pending: false,
-            nightflaid_deactivate_pending: false,
             char_change_requests: Vec::new(),
             stage_pos_bf: [0.0; 2],
             stage_pos_dad: [0.0; 2],
@@ -542,221 +443,6 @@ impl PlayScreen {
     pub(super) fn strum_x(lane: usize, player: bool) -> f32 {
         let base = STRUM_X + 50.0 + NOTE_WIDTH * lane as f32;
         if player { base + GAME_W / 2.0 } else { base }
-    }
-
-    /// Load 80sNightflaid visual assets (unbeatableBG, lightning, needles).
-    pub(super) fn load_nightflaid_assets(&mut self, gpu: &GpuState, paths: &AssetPaths) {
-        // Load unbeatableBG (pixel art — use nearest filtering to avoid blurry upscale)
-        if let Some(p) = paths.find("images/nightflaid/unbeatableBG.png") {
-            self.nightflaid.bg_texture = Some(gpu.load_texture_from_path_nearest(&p));
-        }
-        // Load lightning sparrow atlas
-        if let Some(png_path) = paths.find("images/nightflaid/ycbu_lightning.png") {
-            if let Some(xml_path) = paths.find("images/nightflaid/ycbu_lightning.xml") {
-                let xml_str = std::fs::read_to_string(&xml_path).ok();
-                if let Some(xml) = xml_str {
-                    let tex = gpu.load_texture_from_path(&png_path);
-                    let atlas = SpriteAtlas::from_xml(&xml);
-                    // Register lightning animation
-                    self.nightflaid.lightning_tex_w = tex.width as f32;
-                    self.nightflaid.lightning_tex_h = tex.height as f32;
-                    self.nightflaid.lightning_atlas = Some(atlas);
-                    self.nightflaid.lightning_texture = Some(tex);
-                }
-            }
-        }
-        // Load needle sparrow atlas
-        if let Some(png_path) = paths.find("images/nightflaid/needle.png") {
-            if let Some(xml_path) = paths.find("images/nightflaid/needle.xml") {
-                let xml_str = std::fs::read_to_string(&xml_path).ok();
-                if let Some(xml) = xml_str {
-                    let tex = gpu.load_texture_from_path(&png_path);
-                    let atlas = SpriteAtlas::from_xml(&xml);
-                    self.nightflaid.needle_tex_w = tex.width as f32;
-                    self.nightflaid.needle_tex_h = tex.height as f32;
-                    self.nightflaid.needle_atlas = Some(atlas);
-                    self.nightflaid.needle_texture = Some(tex);
-                }
-            }
-        }
-        log::info!("Loaded 80sNightflaid assets: bg={}, lightning={}, needle={}",
-            self.nightflaid.bg_texture.is_some(),
-            self.nightflaid.lightning_texture.is_some(),
-            self.nightflaid.needle_texture.is_some(),
-        );
-    }
-
-    /// Activate the 80sNightflaid visual phase.
-    pub(super) fn activate_80s_nightflaid(&mut self, gpu: &mut GpuState) {
-        self.nightflaid.active = true;
-        self.nightflaid.bg_alpha = 0.0; // Will tween to 1.0
-        self.nightflaid.needles_active = true;
-        self.nightflaid.gf_visible_80s = true;
-        self.nightflaid.gf_80s_y = GAME_H + 100.0;
-        self.nightflaid.gf_80s_target_y = 100.0;
-        self.nightflaid.gf_80s_tween_elapsed = 0.0;
-        self.nightflaid.gf_80s_tween_duration = 0.75;
-
-        // Slide lightning bolts in from sides
-        self.nightflaid.lightning_left_x = 110.0 - 500.0;
-        self.nightflaid.lightning_right_x = 1020.0 + 500.0;
-
-        // Start VCR shader tween
-        self.nightflaid.vcr_tween_active = true;
-        self.nightflaid.vcr_tween_elapsed = 0.0;
-        self.nightflaid.vcr_tween_duration = 1.0;
-        self.nightflaid.vcr_target_enabled = true;
-
-        // Start unbeatableBG drift
-        self.start_unbeatable_tween();
-
-        // Enable post-processing
-        gpu.set_postprocess_active(true);
-        gpu.postprocess.uniforms.enabled = 1;
-
-        // Characters remain visible — they're drawn ON TOP of the 80s BG overlay
-    }
-
-    /// Deactivate the 80sNightflaid phase (return to normal stage).
-    pub(super) fn deactivate_80s_nightflaid(&mut self, _gpu: &mut GpuState) {
-        self.nightflaid.active = false;
-        self.nightflaid.needles_active = false;
-        self.nightflaid.gf_visible_80s = false;
-        self.nightflaid.bg_alpha = 0.0;
-
-        // Disable VCR
-        self.nightflaid.vcr_tween_active = true;
-        self.nightflaid.vcr_tween_elapsed = 0.0;
-        self.nightflaid.vcr_tween_duration = 0.5;
-        self.nightflaid.vcr_target_enabled = false;
-
-        // (Characters were always visible, no toggle needed)
-
-        // Reset all strum positions to defaults (modchart moves them during 80s phase)
-        for i in 0..8 {
-            self.scripts.state.strum_props[i].custom = false;
-            self.scripts.state.strum_props[i].alpha = 1.0;
-            self.scripts.state.strum_props[i].angle = 0.0;
-            self.scripts.state.strum_props[i].scale_x = NOTE_SCALE;
-            self.scripts.state.strum_props[i].scale_y = NOTE_SCALE;
-        }
-
-        // Cancel all active tweens (modchart tweens shouldn't persist after transition)
-        self.scripts.state.tweens.tweens.clear();
-        self.scripts.state.tweens.timers.clear();
-    }
-
-    /// Start a new random drift tween for unbeatableBG.
-    fn start_unbeatable_tween(&mut self) {
-        self.nightflaid.bg_tween_start_x = self.nightflaid.bg_x;
-        self.nightflaid.bg_tween_start_angle = self.nightflaid.bg_angle;
-        // Random target (matching V-Slice ranges)
-        let seed = (self.game.conductor.song_position * 7.3).sin().abs() as f32;
-        self.nightflaid.bg_tween_target_x = -1000.0 + (seed * 2.0 - 1.0) * 400.0;
-        let seed2 = (self.game.conductor.song_position * 11.1).cos().abs() as f32;
-        self.nightflaid.bg_tween_target_angle = (seed2 * 2.0 - 1.0) * 25.0;
-        self.nightflaid.bg_tween_duration = 2.5 + seed * 2.0;
-        self.nightflaid.bg_tween_elapsed = 0.0;
-    }
-
-    /// Update 80sNightflaid animations each frame.
-    pub(super) fn update_nightflaid(&mut self, dt: f32, gpu: &mut GpuState) {
-        if !self.nightflaid.active && !self.nightflaid.vcr_tween_active {
-            return;
-        }
-
-        // VCR shader tween
-        if self.nightflaid.vcr_tween_active {
-            self.nightflaid.vcr_tween_elapsed += dt;
-            let t = (self.nightflaid.vcr_tween_elapsed / self.nightflaid.vcr_tween_duration).min(1.0);
-            // quadOut ease
-            let eased = 1.0 - (1.0 - t) * (1.0 - t);
-            if self.nightflaid.vcr_target_enabled {
-                gpu.postprocess.uniforms.scanline_intensity = eased;
-                gpu.postprocess.uniforms.distortion_mult = eased;
-                gpu.postprocess.uniforms.chromatic_aberration = eased;
-                gpu.postprocess.uniforms.vignette_intensity = eased * 0.5;
-            } else {
-                gpu.postprocess.uniforms.scanline_intensity = 1.0 - eased;
-                gpu.postprocess.uniforms.distortion_mult = 1.0 - eased;
-                gpu.postprocess.uniforms.chromatic_aberration = 1.0 - eased;
-                gpu.postprocess.uniforms.vignette_intensity = (1.0 - eased) * 0.5;
-            }
-            if t >= 1.0 {
-                self.nightflaid.vcr_tween_active = false;
-                if !self.nightflaid.vcr_target_enabled {
-                    gpu.postprocess.uniforms.enabled = 0;
-                    gpu.set_postprocess_active(false);
-                }
-            }
-        }
-
-        if !self.nightflaid.active {
-            return;
-        }
-
-        // Update time for shader
-        gpu.postprocess.uniforms.time += dt;
-
-        // unbeatableBG alpha fade in
-        if self.nightflaid.bg_alpha < 1.0 {
-            self.nightflaid.bg_alpha = (self.nightflaid.bg_alpha + dt / 0.75).min(1.0);
-        }
-
-        // unbeatableBG drift tween
-        self.nightflaid.bg_tween_elapsed += dt;
-        let t = (self.nightflaid.bg_tween_elapsed / self.nightflaid.bg_tween_duration).min(1.0);
-        self.nightflaid.bg_x = self.nightflaid.bg_tween_start_x
-            + (self.nightflaid.bg_tween_target_x - self.nightflaid.bg_tween_start_x) * t;
-        self.nightflaid.bg_angle = self.nightflaid.bg_tween_start_angle
-            + (self.nightflaid.bg_tween_target_angle - self.nightflaid.bg_tween_start_angle) * t;
-        if t >= 1.0 {
-            self.start_unbeatable_tween();
-        }
-
-        // Lightning animation (24 fps)
-        self.nightflaid.lightning_timer += dt;
-        if self.nightflaid.lightning_timer >= 1.0 / 24.0 {
-            self.nightflaid.lightning_timer -= 1.0 / 24.0;
-            self.nightflaid.lightning_frame += 1;
-        }
-
-        // Lightning slide in (from offscreen to visible)
-        let lightning_target_left = 110.0;
-        let lightning_target_right = 1020.0;
-        if self.nightflaid.lightning_left_x < lightning_target_left {
-            // quadOut ease towards target
-            self.nightflaid.lightning_left_x += (lightning_target_left - self.nightflaid.lightning_left_x) * dt * 3.0;
-        }
-        if self.nightflaid.lightning_right_x > lightning_target_right {
-            self.nightflaid.lightning_right_x += (lightning_target_right - self.nightflaid.lightning_right_x) * dt * 3.0;
-        }
-
-        // Needle scrolling
-        if self.nightflaid.needles_active {
-            for y in &mut self.nightflaid.needle_left_y {
-                *y -= 360.0 * dt;
-                if *y < -200.0 {
-                    *y += (720.0 / 2.0) * 3.0;
-                }
-            }
-            for y in &mut self.nightflaid.needle_right_y {
-                *y += 360.0 * dt;
-                if *y > GAME_H {
-                    *y -= (720.0 / 2.0) * 3.0;
-                }
-            }
-        }
-
-        // GF slide-up tween
-        if self.nightflaid.gf_visible_80s && self.nightflaid.gf_80s_tween_elapsed < self.nightflaid.gf_80s_tween_duration {
-            self.nightflaid.gf_80s_tween_elapsed += dt;
-            let t = (self.nightflaid.gf_80s_tween_elapsed / self.nightflaid.gf_80s_tween_duration).min(1.0);
-            // circOut ease
-            let eased = (1.0 - (1.0 - t) * (1.0 - t)).sqrt();
-            let start_y = GAME_H + 100.0;
-            self.nightflaid.gf_80s_y = start_y + (self.nightflaid.gf_80s_target_y - start_y) * eased;
-        }
     }
 
     // === Generic stage overlay methods ===
@@ -867,9 +553,8 @@ impl PlayScreen {
         }
 
         // Post-processing requests
-        // (handled in draw since it needs gpu — store as pending)
-        // For now, store in nightflaid state since that's where VCR tween lives
-        // TODO: make post-processing a generic engine feature
+        // postprocess_requests (enable/disable) is handled in draw where gpu is available
+        // postprocess_param_requests (individual params) is also handled in draw
     }
 
     /// Get strum position/alpha/angle/scale from modchart state. Falls back to defaults.
@@ -1344,7 +1029,11 @@ impl PlayScreen {
             let tex = match &sprite.kind {
                 LuaSpriteKind::Image(image) => {
                     if let Some(png) = self.paths.image(image) {
-                        gpu.load_texture_from_path(&png)
+                        if sprite.antialiasing {
+                            gpu.load_texture_from_path(&png)
+                        } else {
+                            gpu.load_texture_from_path_nearest(&png)
+                        }
                     } else {
                         log::warn!("Lua sprite '{}': image '{}' not found", tag, image);
                         continue;
@@ -1372,7 +1061,11 @@ impl PlayScreen {
                                 self.lua_atlases.insert(tag.clone(), atlas);
                             }
                         }
-                        gpu.load_texture_from_path(&png)
+                        if sprite.antialiasing {
+                            gpu.load_texture_from_path(&png)
+                        } else {
+                            gpu.load_texture_from_path_nearest(&png)
+                        }
                     } else {
                         log::warn!("Lua sprite '{}': animated image '{}' not found", tag, image);
                         continue;
