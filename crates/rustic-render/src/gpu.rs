@@ -66,6 +66,8 @@ pub struct GpuState {
     pub postprocess: PostProcessor,
     /// When true, scene renders to offscreen target and post-process applies to surface.
     pp_active: bool,
+    /// Pending postprocess state change (deferred to next frame to avoid mid-frame state inconsistency).
+    pp_pending: Option<bool>,
     surface_view_for_pp: Option<wgpu::TextureView>,
     surface_output_for_pp: Option<wgpu::SurfaceTexture>,
 }
@@ -305,6 +307,7 @@ impl GpuState {
             frame_cleared: false,
             postprocess,
             pp_active: false,
+            pp_pending: None,
             surface_view_for_pp: None,
             surface_output_for_pp: None,
         }
@@ -818,12 +821,23 @@ impl GpuState {
     }
 
     /// Enable or disable post-processing for subsequent frames.
+    /// Queue a postprocess active state change for the next frame (not the current one).
     pub fn set_postprocess_active(&mut self, active: bool) {
-        self.pp_active = active;
+        self.pp_pending = Some(active);
+    }
+
+    /// Apply any pending postprocess state change before the next frame begins.
+    fn apply_pending_pp(&mut self) {
+        if let Some(active) = self.pp_pending.take() {
+            self.pp_active = active;
+        }
     }
 
     /// Begin a multi-batch frame. Call draw_batch() for each texture layer, then end_frame().
     pub fn begin_frame(&mut self) -> bool {
+        // Apply deferred postprocess state change before acquiring surface
+        self.apply_pending_pp();
+
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
