@@ -47,6 +47,7 @@ pub struct GpuState {
     proj_bind_group: wgpu::BindGroup,
     pub texture_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     // Batch
     vertices: Vec<SpriteVertex>,
     indices: Vec<u32>,
@@ -184,6 +185,12 @@ impl GpuState {
             ..Default::default()
         });
 
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         // Pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sprite Pipeline Layout"),
@@ -286,6 +293,7 @@ impl GpuState {
             proj_bind_group,
             texture_layout,
             sampler,
+            nearest_sampler,
             vertices: Vec::with_capacity(MAX_VERTICES),
             indices: Vec::with_capacity(MAX_INDICES),
             white_texture,
@@ -346,6 +354,48 @@ impl GpuState {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        });
+
+        GpuTexture { bind_group, width, height }
+    }
+
+    /// Load a texture with nearest-neighbor (point) filtering — for pixel art.
+    pub fn load_texture_from_path_nearest(&self, path: &Path) -> GpuTexture {
+        let mut img = image::open(path)
+            .unwrap_or_else(|e| panic!("Failed to load image {:?}: {}", path, e))
+            .to_rgba8();
+        for pixel in img.pixels_mut() {
+            let a = pixel[3] as f32 / 255.0;
+            pixel[0] = (pixel[0] as f32 * a + 0.5) as u8;
+            pixel[1] = (pixel[1] as f32 * a + 0.5) as u8;
+            pixel[2] = (pixel[2] as f32 * a + 0.5) as u8;
+        }
+        let (width, height) = img.dimensions();
+
+        let texture = self.device.create_texture_with_data(
+            &self.queue,
+            &wgpu::TextureDescriptor {
+                label: Some(path.to_str().unwrap_or("texture")),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &img,
+        );
+
+        let view = texture.create_view(&Default::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group (nearest)"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.nearest_sampler) },
             ],
         });
 

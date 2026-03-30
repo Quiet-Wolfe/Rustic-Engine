@@ -178,9 +178,12 @@ impl AssetPaths {
 
     /// Discover all Lua scripts for a song.
     /// Psych Engine loads: data/{song}/*.lua (script.lua, modchart.lua, eventScript.lua, etc.)
+    /// Rustic extension: if data/{song}/rustic/{file}.lua exists, it replaces the original.
+    /// Additionally, any .lua files that ONLY exist in rustic/ are also loaded (rustic-only scripts).
     pub fn song_scripts(&self, song_name: &str) -> Vec<PathBuf> {
         let relative_dir = format!("data/{song_name}");
         let mut scripts = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
         // Check each root for a data/{song}/ directory
         for root in &self.search_roots {
             let dir = root.join(&relative_dir);
@@ -189,7 +192,33 @@ impl AssetPaths {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.extension().and_then(|e| e.to_str()) == Some("lua") {
-                            scripts.push(path);
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            seen_names.insert(name);
+                            // Prefer rustic/ override: if data/{song}/rustic/{file}.lua exists, use it
+                            let rustic_path = dir.join("rustic").join(entry.file_name());
+                            if rustic_path.exists() {
+                                eprintln!("[rustic] Using override: {:?}", rustic_path);
+                                scripts.push(rustic_path);
+                            } else {
+                                scripts.push(path);
+                            }
+                        }
+                    }
+                }
+                // Also discover rustic-only scripts (no corresponding file in parent dir)
+                let rustic_dir = dir.join("rustic");
+                if rustic_dir.is_dir() {
+                    if let Ok(entries) = std::fs::read_dir(&rustic_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if !seen_names.contains(&name) {
+                                    eprintln!("[rustic] Loading rustic-only script: {:?}", path);
+                                    scripts.push(path);
+                                    seen_names.insert(name);
+                                }
+                            }
                         }
                     }
                 }

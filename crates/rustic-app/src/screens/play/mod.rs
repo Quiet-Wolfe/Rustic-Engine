@@ -106,6 +106,45 @@ pub(super) enum DrawLayer {
     Bf,
 }
 
+/// Generic stage overlay: split left/right color tint system.
+/// Controlled via setStageColor/swapStageColors Lua API functions.
+pub(super) struct StageOverlay {
+    pub color_left: [f32; 4],
+    pub color_right: [f32; 4],
+    pub tween_left_active: bool,
+    pub tween_left_start: [f32; 4],
+    pub tween_left_target: [f32; 4],
+    pub tween_left_elapsed: f32,
+    pub tween_left_duration: f32,
+    pub tween_right_active: bool,
+    pub tween_right_start: [f32; 4],
+    pub tween_right_target: [f32; 4],
+    pub tween_right_elapsed: f32,
+    pub tween_right_duration: f32,
+    /// Whether the overlay is enabled (any non-transparent color activates it).
+    pub lights_on: bool,
+}
+
+impl Default for StageOverlay {
+    fn default() -> Self {
+        Self {
+            color_left: [0.0; 4],
+            color_right: [0.0; 4],
+            tween_left_active: false,
+            tween_left_start: [0.0; 4],
+            tween_left_target: [0.0; 4],
+            tween_left_elapsed: 0.0,
+            tween_left_duration: 1.0,
+            tween_right_active: false,
+            tween_right_start: [0.0; 4],
+            tween_right_target: [0.0; 4],
+            tween_right_elapsed: 0.0,
+            tween_right_duration: 1.0,
+            lights_on: true,
+        }
+    }
+}
+
 /// 80sNightflaid visual phase state.
 pub(super) struct NightflaidState {
     /// Whether the 80s phase is currently active.
@@ -152,43 +191,6 @@ pub(super) struct NightflaidState {
     pub vcr_tween_duration: f32,
     pub vcr_tween_active: bool,
     pub vcr_target_enabled: bool,
-
-    // Stage background color overlay (left/right halves, like NightflaidShaderHandler).
-    /// Current left-side stage background color [R,G,B,A].
-    pub stage_color_left: [f32; 4],
-    /// Current right-side stage background color [R,G,B,A].
-    pub stage_color_right: [f32; 4],
-    /// Color tween state for left side.
-    pub color_left_tween_active: bool,
-    pub color_left_start: [f32; 4],
-    pub color_left_target: [f32; 4],
-    pub color_left_elapsed: f32,
-    pub color_left_duration: f32,
-    /// Color tween state for right side.
-    pub color_right_tween_active: bool,
-    pub color_right_start: [f32; 4],
-    pub color_right_target: [f32; 4],
-    pub color_right_elapsed: f32,
-    pub color_right_duration: f32,
-    /// Whether stage lights are visible.
-    pub lights_on: bool,
-    /// Song-specific accent color (red for extirpatient, green for hexerpatient, cyan for extiraging).
-    pub song_color: [f32; 4],
-    /// Dark color constant.
-    pub dark_color: [f32; 4],
-    /// Whether the side-based color swap section is active (steps 1664-2944).
-    pub side_swap_active: bool,
-    /// Light ray blinking state.
-    pub light_left_blink_time: f32,
-    pub light_left_blink_count: f32,
-    pub light_left_visible: bool,
-    pub light_right_blink_time: f32,
-    pub light_right_blink_count: f32,
-    pub light_right_visible: bool,
-    /// Red light pulse timer.
-    pub red_light_time: f32,
-    /// Red light pulse alpha.
-    pub red_light_alpha: f32,
 }
 
 impl Default for NightflaidState {
@@ -230,32 +232,6 @@ impl Default for NightflaidState {
             vcr_tween_duration: 1.0,
             vcr_tween_active: false,
             vcr_target_enabled: false,
-            // Default stage colors: transparent until a color tween event fires
-            stage_color_left: [0.0, 0.0, 0.0, 0.0],
-            stage_color_right: [0.0, 0.0, 0.0, 0.0],
-            color_left_tween_active: false,
-            color_left_start: [0.0, 0.0, 0.0, 0.0],
-            color_left_target: [0.0, 0.0, 0.0, 0.0],
-            color_left_elapsed: 0.0,
-            color_left_duration: 1.0,
-            color_right_tween_active: false,
-            color_right_start: [0.0, 0.0, 0.0, 0.0],
-            color_right_target: [0.0, 0.0, 0.0, 0.0],
-            color_right_elapsed: 0.0,
-            color_right_duration: 1.0,
-            lights_on: true,
-            // sRGB → linear: #fb002d red, #0d0d0d dark
-            song_color: [0.966, 0.0, 0.026, 1.0],
-            dark_color: [0.002, 0.002, 0.002, 1.0],
-            side_swap_active: false,
-            light_left_blink_time: 0.0,
-            light_left_blink_count: 3.0,
-            light_left_visible: true,
-            light_right_blink_time: 0.0,
-            light_right_blink_count: 3.0,
-            light_right_visible: true,
-            red_light_time: 0.0,
-            red_light_alpha: 1.0,
         }
     }
 }
@@ -450,6 +426,9 @@ pub struct PlayScreen {
     pub(super) reflection_alpha: f32,
     /// Reflection Y offset from bottom of character (-30 in V-Slice).
     pub(super) reflection_dist_y: f32,
+    /// Generic stage overlay: split left/right color tint drawn over the game world.
+    /// Controlled via setStageColor() Lua API. Any stage can use this.
+    pub(super) stage_overlay: StageOverlay,
     /// 80sNightflaid visual phase state (only used for nightflaid stage).
     pub(super) nightflaid: NightflaidState,
     /// Pending flags for 80s activation/deactivation (set in update, consumed in draw where gpu is available).
@@ -533,6 +512,7 @@ impl PlayScreen {
             reflections_enabled: false,
             reflection_alpha: 0.35,
             reflection_dist_y: -30.0,
+            stage_overlay: StageOverlay::default(),
             nightflaid: NightflaidState::default(),
             nightflaid_activate_pending: false,
             nightflaid_deactivate_pending: false,
@@ -566,9 +546,9 @@ impl PlayScreen {
 
     /// Load 80sNightflaid visual assets (unbeatableBG, lightning, needles).
     pub(super) fn load_nightflaid_assets(&mut self, gpu: &GpuState, paths: &AssetPaths) {
-        // Load unbeatableBG
+        // Load unbeatableBG (pixel art — use nearest filtering to avoid blurry upscale)
         if let Some(p) = paths.find("images/nightflaid/unbeatableBG.png") {
-            self.nightflaid.bg_texture = Some(gpu.load_texture_from_path(&p));
+            self.nightflaid.bg_texture = Some(gpu.load_texture_from_path_nearest(&p));
         }
         // Load lightning sparrow atlas
         if let Some(png_path) = paths.find("images/nightflaid/ycbu_lightning.png") {
@@ -634,8 +614,7 @@ impl PlayScreen {
         gpu.set_postprocess_active(true);
         gpu.postprocess.uniforms.enabled = 1;
 
-        // Hide game camera (characters render in 80s overlay)
-        self.cam_characters_visible = false;
+        // Characters remain visible — they're drawn ON TOP of the 80s BG overlay
     }
 
     /// Deactivate the 80sNightflaid phase (return to normal stage).
@@ -651,8 +630,7 @@ impl PlayScreen {
         self.nightflaid.vcr_tween_duration = 0.5;
         self.nightflaid.vcr_target_enabled = false;
 
-        // Show game camera again
-        self.cam_characters_visible = true;
+        // (Characters were always visible, no toggle needed)
 
         // Reset all strum positions to defaults (modchart moves them during 80s phase)
         for i in 0..8 {
@@ -683,10 +661,6 @@ impl PlayScreen {
 
     /// Update 80sNightflaid animations each frame.
     pub(super) fn update_nightflaid(&mut self, dt: f32, gpu: &mut GpuState) {
-        // Stage color tweens and light effects run regardless of 80s phase
-        self.update_nightflaid_colors(dt);
-        self.update_nightflaid_lights(dt);
-
         if !self.nightflaid.active && !self.nightflaid.vcr_tween_active {
             return;
         }
@@ -785,93 +759,117 @@ impl PlayScreen {
         }
     }
 
-    /// Update nightflaid stage background color tweens.
-    fn update_nightflaid_colors(&mut self, dt: f32) {
-        if self.nightflaid.color_left_tween_active {
-            self.nightflaid.color_left_elapsed += dt;
-            let t = (self.nightflaid.color_left_elapsed / self.nightflaid.color_left_duration).min(1.0);
+    // === Generic stage overlay methods ===
+
+    /// Tween the left stage overlay color.
+    pub(super) fn stage_color_left(&mut self, color: [f32; 4], dur: f32) {
+        self.stage_overlay.tween_left_start = self.stage_overlay.color_left;
+        self.stage_overlay.tween_left_target = color;
+        self.stage_overlay.tween_left_elapsed = 0.0;
+        self.stage_overlay.tween_left_duration = dur;
+        self.stage_overlay.tween_left_active = true;
+    }
+
+    /// Tween the right stage overlay color.
+    pub(super) fn stage_color_right(&mut self, color: [f32; 4], dur: f32) {
+        self.stage_overlay.tween_right_start = self.stage_overlay.color_right;
+        self.stage_overlay.tween_right_target = color;
+        self.stage_overlay.tween_right_elapsed = 0.0;
+        self.stage_overlay.tween_right_duration = dur;
+        self.stage_overlay.tween_right_active = true;
+    }
+
+    /// Tween both stage overlay colors to the same target.
+    pub(super) fn stage_color_both(&mut self, color: [f32; 4], dur: f32) {
+        self.stage_color_left(color, dur);
+        self.stage_color_right(color, dur);
+    }
+
+    /// Update stage overlay color tweens.
+    pub(super) fn update_stage_overlay(&mut self, dt: f32) {
+        if self.stage_overlay.tween_left_active {
+            self.stage_overlay.tween_left_elapsed += dt;
+            let t = (self.stage_overlay.tween_left_elapsed / self.stage_overlay.tween_left_duration).min(1.0);
             for i in 0..4 {
-                self.nightflaid.stage_color_left[i] = self.nightflaid.color_left_start[i]
-                    + (self.nightflaid.color_left_target[i] - self.nightflaid.color_left_start[i]) * t;
+                self.stage_overlay.color_left[i] = self.stage_overlay.tween_left_start[i]
+                    + (self.stage_overlay.tween_left_target[i] - self.stage_overlay.tween_left_start[i]) * t;
             }
-            if t >= 1.0 { self.nightflaid.color_left_tween_active = false; }
+            if t >= 1.0 { self.stage_overlay.tween_left_active = false; }
         }
-        if self.nightflaid.color_right_tween_active {
-            self.nightflaid.color_right_elapsed += dt;
-            let t = (self.nightflaid.color_right_elapsed / self.nightflaid.color_right_duration).min(1.0);
+        if self.stage_overlay.tween_right_active {
+            self.stage_overlay.tween_right_elapsed += dt;
+            let t = (self.stage_overlay.tween_right_elapsed / self.stage_overlay.tween_right_duration).min(1.0);
             for i in 0..4 {
-                self.nightflaid.stage_color_right[i] = self.nightflaid.color_right_start[i]
-                    + (self.nightflaid.color_right_target[i] - self.nightflaid.color_right_start[i]) * t;
+                self.stage_overlay.color_right[i] = self.stage_overlay.tween_right_start[i]
+                    + (self.stage_overlay.tween_right_target[i] - self.stage_overlay.tween_right_start[i]) * t;
             }
-            if t >= 1.0 { self.nightflaid.color_right_tween_active = false; }
+            if t >= 1.0 { self.stage_overlay.tween_right_active = false; }
         }
     }
 
-    /// Tween the left stage color.
-    pub(super) fn nightflaid_color_tween_left(&mut self, color: [f32; 4], dur: f32) {
-        self.nightflaid.color_left_start = self.nightflaid.stage_color_left;
-        self.nightflaid.color_left_target = color;
-        self.nightflaid.color_left_elapsed = 0.0;
-        self.nightflaid.color_left_duration = dur;
-        self.nightflaid.color_left_tween_active = true;
-    }
+    /// Process Lua extension requests (stage color, post-processing, health bar, etc.).
+    pub(super) fn process_lua_extensions(&mut self) {
+        let srgb = |s: f32| -> f32 {
+            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        };
 
-    /// Tween the right stage color.
-    pub(super) fn nightflaid_color_tween_right(&mut self, color: [f32; 4], dur: f32) {
-        self.nightflaid.color_right_start = self.nightflaid.stage_color_right;
-        self.nightflaid.color_right_target = color;
-        self.nightflaid.color_right_elapsed = 0.0;
-        self.nightflaid.color_right_duration = dur;
-        self.nightflaid.color_right_tween_active = true;
-    }
-
-    /// Tween both stage colors to the same target.
-    pub(super) fn nightflaid_color_tween_both(&mut self, color: [f32; 4], dur: f32) {
-        self.nightflaid_color_tween_left(color, dur);
-        self.nightflaid_color_tween_right(color, dur);
-    }
-
-    /// Update nightflaid light blinking and pulsing effects.
-    fn update_nightflaid_lights(&mut self, dt: f32) {
-        if !self.nightflaid.lights_on { return; }
-
-        // Left light ray blinking
-        self.nightflaid.light_left_blink_time -= dt * 5.0;
-        if self.nightflaid.light_left_blink_time < 0.0 {
-            self.nightflaid.light_left_blink_count -= 1.0;
-            if self.nightflaid.light_left_blink_count <= 0.0 {
-                // Reset: random wait before next blink cycle
-                self.nightflaid.light_left_blink_count =
-                    2.0 + (self.nightflaid.red_light_time * 3.7).sin().abs() * 2.0;
-                self.nightflaid.light_left_blink_time =
-                    12.0 + (self.nightflaid.red_light_time * 5.1).sin().abs() * 8.0;
-                self.nightflaid.light_left_visible = true;
-            } else {
-                self.nightflaid.light_left_blink_time = 1.0;
-                self.nightflaid.light_left_visible = !self.nightflaid.light_left_visible;
+        // Stage color requests (collect first to avoid borrow conflict)
+        let color_reqs: Vec<_> = self.scripts.state.stage_color_requests.drain(..).collect();
+        for (side, r, g, b, a, dur) in color_reqs {
+            let color = [srgb(r), srgb(g), srgb(b), a];
+            match side.as_str() {
+                "left" => self.stage_color_left(color, dur),
+                "right" => self.stage_color_right(color, dur),
+                _ => self.stage_color_both(color, dur),
             }
         }
 
-        // Right light ray blinking
-        self.nightflaid.light_right_blink_time -= dt * 5.0;
-        if self.nightflaid.light_right_blink_time < 0.0 {
-            self.nightflaid.light_right_blink_count -= 1.0;
-            if self.nightflaid.light_right_blink_count <= 0.0 {
-                self.nightflaid.light_right_blink_count =
-                    2.0 + (self.nightflaid.red_light_time * 4.3).sin().abs() * 2.0;
-                self.nightflaid.light_right_blink_time =
-                    12.0 + (self.nightflaid.red_light_time * 6.7).sin().abs() * 8.0;
-                self.nightflaid.light_right_visible = true;
-            } else {
-                self.nightflaid.light_right_blink_time = 1.0;
-                self.nightflaid.light_right_visible = !self.nightflaid.light_right_visible;
+        // Stage color swap requests
+        let swap_reqs: Vec<_> = self.scripts.state.stage_color_swap_requests.drain(..).collect();
+        for dur in swap_reqs {
+            let old_left = self.stage_overlay.color_left;
+            let old_right = self.stage_overlay.color_right;
+            self.stage_color_left(old_right, dur);
+            self.stage_color_right(old_left, dur);
+        }
+
+        // Stage lights toggle
+        if let Some(on) = self.scripts.state.stage_lights_request.take() {
+            self.stage_overlay.lights_on = on;
+        }
+
+        // Reflections toggle
+        if let Some(enabled) = self.scripts.state.reflections_request.take() {
+            self.reflections_enabled = enabled;
+        }
+
+        // Custom health bar color requests
+        // Accumulate targets so multiple requests in the same frame don't overwrite each other
+        let hb_reqs: Vec<_> = self.scripts.state.healthbar_color_requests.drain(..).collect();
+        if !hb_reqs.is_empty() {
+            if let Some(chb) = &mut self.custom_healthbar {
+                let mut new_left: Option<[f32; 4]> = None;
+                let mut new_right: Option<[f32; 4]> = None;
+                let mut dur = 1.0f32;
+                for (side, r, g, b, a, d) in hb_reqs {
+                    let color = [srgb(r), srgb(g), srgb(b), a];
+                    dur = d;
+                    match side.as_str() {
+                        "left" => new_left = Some(color),
+                        "right" => new_right = Some(color),
+                        _ => { new_left = Some(color); new_right = Some(color); }
+                    }
+                }
+                let left = new_left.unwrap_or(chb.left_color);
+                let right = new_right.unwrap_or(chb.right_color);
+                chb.tween_colors(left, Some(right), dur);
             }
         }
 
-        // Red light pulse
-        self.nightflaid.red_light_time += dt;
-        self.nightflaid.red_light_alpha =
-            (std::f32::consts::PI * self.nightflaid.red_light_time).sin() * 0.25 + 0.85;
+        // Post-processing requests
+        // (handled in draw since it needs gpu — store as pending)
+        // For now, store in nightflaid state since that's where VCR tween lives
+        // TODO: make post-processing a generic engine feature
     }
 
     /// Get strum position/alpha/angle/scale from modchart state. Falls back to defaults.

@@ -118,6 +118,25 @@ pub struct ScriptState {
     /// Each entry: (character: "boyfriend"/"dad"/"gf", field: "x"/"y", value: f64).
     /// NaN value means the next entry is an absolute set; otherwise it's a delta (+=/-=).
     pub char_position_adjustments: Vec<(String, String, f64)>,
+
+    /// Stage overlay color requests: (side: "left"/"right"/"both", r, g, b, a, duration).
+    /// Consumed by the game engine each frame.
+    pub stage_color_requests: Vec<(String, f32, f32, f32, f32, f32)>,
+
+    /// Stage overlay swap request: (duration,). Swaps left/right colors.
+    pub stage_color_swap_requests: Vec<f32>,
+
+    /// Post-processing toggle requests: (enabled, tween_duration).
+    pub postprocess_requests: Vec<(bool, f32)>,
+
+    /// Custom health bar color requests: (side: "left"/"right", r, g, b, a, duration).
+    pub healthbar_color_requests: Vec<(String, f32, f32, f32, f32, f32)>,
+
+    /// Stage lights toggle: Some(true/false) when set, consumed each frame.
+    pub stage_lights_request: Option<bool>,
+
+    /// Reflections toggle: Some(true/false) when set, consumed each frame.
+    pub reflections_request: Option<bool>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -345,6 +364,12 @@ impl ScriptState {
             bf_pos: (0.0, 0.0),
             gf_pos: (0.0, 0.0),
             char_position_adjustments: Vec::new(),
+            stage_color_requests: Vec::new(),
+            stage_color_swap_requests: Vec::new(),
+            postprocess_requests: Vec::new(),
+            healthbar_color_requests: Vec::new(),
+            stage_lights_request: None,
+            reflections_request: None,
         }
     }
 }

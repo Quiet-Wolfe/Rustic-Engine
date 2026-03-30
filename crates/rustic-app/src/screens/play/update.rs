@@ -232,42 +232,41 @@ impl PlayScreen {
                     // v1 = target ("dad", "bf", "gf", or "0"/"1"/"2")
                     // v2 = new character name
                     if !v2.is_empty() {
+                        // Detect 80s phase activation via character name prefix
+                        let lower = v2.to_lowercase();
+                        if lower.starts_with("80s") && self.nightflaid.bg_texture.is_some() {
+                            log::info!("80s phase activated via Change Character: {}", v2);
+                            self.nightflaid_activate_pending = true;
+                        }
                         self.char_change_requests.push((v1.clone(), v2.clone()));
                     }
                 }
-                // Nightflaid stage color events (normally handled via runHaxeCode, implemented natively)
-                "Nightflaid color tween" if self.stage_name == "nightflaid" => {
+                // Stage color events (data-driven from events.json, use generic overlay)
+                "Nightflaid color tween" => {
                     let color = parse_hex_color(&v1);
                     let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.nightflaid_color_tween_both(color, dur);
+                    self.stage_color_both(color, dur);
                 }
-                "Nightflaid color tween left-only" if self.stage_name == "nightflaid" => {
+                "Nightflaid color tween left-only" => {
                     let color = parse_hex_color(&v1);
                     let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.nightflaid_color_tween_left(color, dur);
+                    self.stage_color_left(color, dur);
                 }
-                "Nightflaid color tween right-only" if self.stage_name == "nightflaid" => {
+                "Nightflaid color tween right-only" => {
                     let color = parse_hex_color(&v1);
                     let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.nightflaid_color_tween_right(color, dur);
+                    self.stage_color_right(color, dur);
                 }
-                "Nightflaid swap sides" if self.stage_name == "nightflaid" => {
+                "Nightflaid swap sides" => {
                     let dur: f32 = v1.parse().unwrap_or(0.15);
-                    let old_left = self.nightflaid.stage_color_left;
-                    let old_right = self.nightflaid.stage_color_right;
-                    self.nightflaid_color_tween_left(old_right, dur);
-                    self.nightflaid_color_tween_right(old_left, dur);
+                    let old_left = self.stage_overlay.color_left;
+                    let old_right = self.stage_overlay.color_right;
+                    self.stage_color_left(old_right, dur);
+                    self.stage_color_right(old_left, dur);
                 }
-                "Nightflaid lightings" if self.stage_name == "nightflaid" => {
+                "Nightflaid lightings" => {
                     let on = matches!(v1.to_lowercase().as_str(), "on" | "1" | "");
-                    self.nightflaid.lights_on = on;
-                }
-                "NINTENDO" => {
-                    // VS Retrospecter custom event: triggers 80sNightflaid phase
-                    if v2 == "80snightflaid" && self.stage_name == "nightflaid" {
-                        log::info!("80sNightflaid phase activated!");
-                        self.nightflaid_activate_pending = true;
-                    }
+                    self.stage_overlay.lights_on = on;
                 }
                 "Wildcard" => {
                     // VS Retrospecter custom event: calls Lua function by name.
@@ -276,7 +275,7 @@ impl PlayScreen {
                         self.scripts.call_lua_function(&v1, &v2);
                         self.process_property_writes();
                     }
-                    // setOppAnimation: also set the opponent's animation suffix
+                    // setOppAnimation: set the opponent's animation suffix
                     if v1 == "setOppAnimation" {
                         if let Some(dad) = &mut self.char_dad {
                             let suffix = if v2.is_empty() {
@@ -287,27 +286,7 @@ impl PlayScreen {
                             log::info!("Setting opponent anim suffix to '{}'", suffix);
                             dad.set_anim_suffix(&suffix);
                         }
-                        // Color-tween custom health bar per opponent form
-                        if let Some(chb) = &mut self.custom_healthbar {
-                            let (left, right, health_reset, dur) = match v2.to_uppercase().as_str() {
-                                "DAD" => (srgb_color(1.0, 0.004, 0.02), Some(srgb_color(0.39, 1.0, 0.23)), Some(1.0), 1.0),
-                                "WHITTY" => (srgb_color(0.81, 0.004, 0.17), Some(chb.saved_player_color), Some(1.0), 1.0),
-                                "RUV" => (srgb_color(0.59, 0.55, 0.64), None, Some(1.0), 1.0),
-                                "GARCELLO" => (srgb_color(0.004, 1.0, 0.58), None, Some(1.0), 1.0),
-                                "TABI" => (srgb_color(0.36, 0.42, 0.51), None, Some(2.0), 1.0),
-                                "TRICKY" => (srgb_color(0.99, 0.098, 0.016), None, Some(1.25), 1.0),
-                                "SHAGGY" => (srgb_color(0.83, 0.106, 0.114), None, Some(1.0), 1.0),
-                                "SONIC" => (srgb_color(0.0, 0.345, 0.71), None, Some(1.0), 1.0),
-                                "POKEMON" => (srgb_color(0.49, 0.36, 0.56), None, Some(1.0), 1.0),
-                                "NINTENDO" => (srgb_color(0.65, 0.84, 0.96), None, Some(1.0), 1.0),
-                                "PRECUT" => ([1.0, 1.0, 1.0, 1.0], None, None, 0.5),
-                                _ => (chb.left_color, None, None, 1.0),
-                            };
-                            chb.tween_colors(left, right, dur);
-                            if let Some(h) = health_reset {
-                                self.game.score.health = h;
-                            }
-                        }
+                        // Health bar colors are handled by rustic/rustic_ext.lua via setHealthBarColor
                     }
                     // returner: deactivate 80sNightflaid
                     if v1 == "returner" && self.stage_name == "nightflaid" {
@@ -421,31 +400,6 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::StepHit { step } => {
-                    // Nightflaid step-based stage state changes
-                    if self.stage_name == "nightflaid" {
-                        match step {
-                            1664 => self.nightflaid.side_swap_active = true,
-                            2304 => {
-                                // Both sides to dark
-                                self.nightflaid_color_tween_both(self.nightflaid.dark_color, 0.3);
-                                self.nightflaid.side_swap_active = false;
-                            }
-                            2432 => {
-                                // Left to song color, re-enable side swaps
-                                self.nightflaid_color_tween_left(self.nightflaid.song_color, 0.3);
-                                self.nightflaid.side_swap_active = true;
-                            }
-                            2944 => {
-                                self.nightflaid.side_swap_active = false;
-                                self.nightflaid.lights_on = true;
-                            }
-                            3456 => {
-                                self.nightflaid.lights_on = false;
-                                self.nightflaid_color_tween_both(self.nightflaid.dark_color, 0.3);
-                            }
-                            _ => {}
-                        }
-                    }
                     if self.scripts.has_scripts() {
                         self.scripts.call_step("onStepHit", step);
                     }
@@ -503,25 +457,6 @@ impl PlayScreen {
                     if self.cam_zooming && !self.disable_zooming && self.camera.zoom < 1.35 {
                         self.camera.zoom += 0.015;
                         self.hud_zoom += 0.03;
-                    }
-                    // Nightflaid: side-based color swaps (onMoveCamera)
-                    if self.stage_name == "nightflaid" && self.nightflaid.side_swap_active {
-                        let song_c = self.nightflaid.song_color;
-                        let dark_c = self.nightflaid.dark_color;
-                        if must_hit {
-                            // BF singing: right side gets song color, left goes dark
-                            self.nightflaid_color_tween_right(song_c, 0.3);
-                            self.nightflaid_color_tween_left(dark_c, 0.3);
-                        } else {
-                            // Dad singing: left side gets song color, right goes dark
-                            self.nightflaid_color_tween_left(song_c, 0.3);
-                            self.nightflaid_color_tween_right(dark_c, 0.3);
-                        }
-                        // Also swap the existing colors
-                        let old_left = self.nightflaid.stage_color_left;
-                        let old_right = self.nightflaid.stage_color_right;
-                        self.nightflaid.color_left_start = old_left;
-                        self.nightflaid.color_right_start = old_right;
                     }
                     // Lua: onSectionHit
                     if self.scripts.has_scripts() {
@@ -631,6 +566,12 @@ impl PlayScreen {
 
         // Process game-level property writes from Lua scripts
         self.process_property_writes();
+
+        // Process Lua extension requests (stage colors, health bar colors, etc.)
+        self.process_lua_extensions();
+
+        // Update generic stage overlay color tweens
+        self.update_stage_overlay(dt);
 
         // Process moveCameraSection requests from scripts (runHaxeCode / moveCameraSection)
         let cam_sections: Vec<i32> = self.scripts.state.camera_section_requests.drain(..).collect();

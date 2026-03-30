@@ -257,6 +257,7 @@ impl PlayScreen {
             self.scripts.call("onCreate");
             self.process_lua_sprites(gpu);
             self.process_property_writes();
+            self.process_lua_extensions();
         }
 
         // Helper: parse character JSON and extract metadata
@@ -431,18 +432,10 @@ impl PlayScreen {
         // Disable beat zooming if stage specifies it
         self.disable_zooming = stage.disable_zooming;
 
-        // Enable character reflections and load 80s assets for nightflaid stage (Extirpatient)
+        // Load 80s phase assets if the nightflaid stage has them
+        // (reflections and stage colors are now controlled via Lua scripts)
         if stage_name == "nightflaid" {
-            self.reflections_enabled = true;
             self.load_nightflaid_assets(gpu, &paths);
-            // Set song-specific accent color (sRGB → linear for GPU)
-            let song_lower = self.song_name.to_lowercase();
-            if song_lower.contains("hexer") {
-                self.nightflaid.song_color = [srgb_to_linear(0.0), srgb_to_linear(0.984), srgb_to_linear(0.235), 1.0]; // #00FB3C green
-            } else if song_lower.contains("extiraging") {
-                self.nightflaid.song_color = [srgb_to_linear(0.0), srgb_to_linear(0.984), srgb_to_linear(0.808), 1.0]; // #00FBCE cyan
-            }
-            // else: default red #fb002d
         }
 
         // Load audio
@@ -528,6 +521,7 @@ impl PlayScreen {
             self.scripts.call("onCreatePost");
             self.process_lua_sprites(gpu);
             self.process_property_writes();
+            self.process_lua_extensions();
             self.process_char_positions();
         }
     }

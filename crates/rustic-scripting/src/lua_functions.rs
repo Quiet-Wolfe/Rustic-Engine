@@ -1824,10 +1824,119 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         }
     }
 
+    // === Rustic extensions: stage overlay, post-processing, health bar ===
+
+    // setStageColor(side, hexColor, duration)
+    // side: "left", "right", or "both"
+    let set_stage_color = lua.create_function(|lua, (side, hex, dur): (String, String, Option<f64>)| {
+        let hex = hex.trim_start_matches('#').trim_start_matches("0x");
+        let (r, g, b, a) = parse_hex_rgba(hex);
+        let dur = dur.unwrap_or(0.3) as f32;
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "stage_color")?;
+        entry.set("side", side)?;
+        entry.set("r", r)?;
+        entry.set("g", g)?;
+        entry.set("b", b)?;
+        entry.set("a", a)?;
+        entry.set("duration", dur)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("setStageColor", set_stage_color)?;
+
+    // swapStageColors(duration)
+    let swap_stage_colors = lua.create_function(|lua, dur: Option<f64>| {
+        let dur = dur.unwrap_or(0.15) as f32;
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "stage_color_swap")?;
+        entry.set("duration", dur)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("swapStageColors", swap_stage_colors)?;
+
+    // setStageLights(on)
+    let set_stage_lights = lua.create_function(|lua, on: bool| {
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "stage_lights")?;
+        entry.set("on", on)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("setStageLights", set_stage_lights)?;
+
+    // setPostProcessing(enabled, tweenDuration)
+    let set_postprocessing = lua.create_function(|lua, (enabled, dur): (bool, Option<f64>)| {
+        let dur = dur.unwrap_or(1.0) as f32;
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "postprocess")?;
+        entry.set("enabled", enabled)?;
+        entry.set("duration", dur)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("setPostProcessing", set_postprocessing)?;
+
+    // setHealthBarColor(side, hexColor, duration)
+    let set_hb_color = lua.create_function(|lua, (side, hex, dur): (String, String, Option<f64>)| {
+        let hex = hex.trim_start_matches('#').trim_start_matches("0x");
+        let (r, g, b, a) = parse_hex_rgba(hex);
+        let dur = dur.unwrap_or(1.0) as f32;
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "healthbar_color")?;
+        entry.set("side", side)?;
+        entry.set("r", r)?;
+        entry.set("g", g)?;
+        entry.set("b", b)?;
+        entry.set("a", a)?;
+        entry.set("duration", dur)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("setHealthBarColor", set_hb_color)?;
+
+    // setReflections(enabled)
+    let set_reflections = lua.create_function(|lua, enabled: bool| {
+        let props: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "reflections")?;
+        entry.set("enabled", enabled)?;
+        let len = props.len()? + 1;
+        props.set(len, entry)?;
+        Ok(())
+    })?;
+    lua.globals().set("setReflections", set_reflections)?;
+
     Ok(())
 }
 
 // === Helpers ===
+
+/// Parse a hex color string to (r, g, b, a) as 0..1 floats.
+fn parse_hex_rgba(hex: &str) -> (f32, f32, f32, f32) {
+    let hex = if hex.len() > 6 { &hex[hex.len()-6..] } else { hex };
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
+        }
+    }
+    (0.8, 0.8, 0.8, 1.0)
+}
 
 fn lua_to_f32(val: &Option<LuaValue>) -> f32 {
     match val {

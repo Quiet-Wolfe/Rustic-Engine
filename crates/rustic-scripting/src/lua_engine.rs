@@ -578,12 +578,52 @@ impl LuaScript {
             }
         }
 
-        // Drain __pending_prop_writes (game-level property writes, not sprite properties)
+        // Drain __pending_prop_writes (game-level property writes + rustic extension commands)
         if let Ok(pending) = globals.get::<LuaTable>("__pending_props") {
             let len = pending.len().unwrap_or(0);
             for i in 1..=len {
                 if let Ok(tbl) = pending.get::<LuaTable>(i) {
-                    if let Ok(prop) = tbl.get::<String>("prop") {
+                    // Check for rustic extension type first
+                    if let Ok(ty) = tbl.get::<String>("type") {
+                        match ty.as_str() {
+                            "stage_color" => {
+                                let side: String = tbl.get("side").unwrap_or_default();
+                                let r: f32 = tbl.get("r").unwrap_or(0.0);
+                                let g: f32 = tbl.get("g").unwrap_or(0.0);
+                                let b: f32 = tbl.get("b").unwrap_or(0.0);
+                                let a: f32 = tbl.get("a").unwrap_or(1.0);
+                                let dur: f32 = tbl.get("duration").unwrap_or(0.3);
+                                state.stage_color_requests.push((side, r, g, b, a, dur));
+                            }
+                            "stage_color_swap" => {
+                                let dur: f32 = tbl.get("duration").unwrap_or(0.15);
+                                state.stage_color_swap_requests.push(dur);
+                            }
+                            "stage_lights" => {
+                                let on: bool = tbl.get("on").unwrap_or(true);
+                                state.stage_lights_request = Some(on);
+                            }
+                            "postprocess" => {
+                                let enabled: bool = tbl.get("enabled").unwrap_or(false);
+                                let dur: f32 = tbl.get("duration").unwrap_or(1.0);
+                                state.postprocess_requests.push((enabled, dur));
+                            }
+                            "healthbar_color" => {
+                                let side: String = tbl.get("side").unwrap_or_default();
+                                let r: f32 = tbl.get("r").unwrap_or(0.0);
+                                let g: f32 = tbl.get("g").unwrap_or(0.0);
+                                let b: f32 = tbl.get("b").unwrap_or(0.0);
+                                let a: f32 = tbl.get("a").unwrap_or(1.0);
+                                let dur: f32 = tbl.get("duration").unwrap_or(1.0);
+                                state.healthbar_color_requests.push((side, r, g, b, a, dur));
+                            }
+                            "reflections" => {
+                                let enabled: bool = tbl.get("enabled").unwrap_or(false);
+                                state.reflections_request = Some(enabled);
+                            }
+                            _ => {}
+                        }
+                    } else if let Ok(prop) = tbl.get::<String>("prop") {
                         let val = tbl_to_lua_value(&tbl, "value");
                         state.property_writes.push((prop, val));
                     }

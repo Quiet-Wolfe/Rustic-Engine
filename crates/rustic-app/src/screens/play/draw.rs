@@ -57,23 +57,29 @@ impl PlayScreen {
             self.draw_lua_sprites(gpu, false);
         }
 
-        // === Stage background color overlay (nightflaid shader handler) ===
-        if self.stage_name == "nightflaid" && !is_death {
-            let lc = self.nightflaid.stage_color_left;
-            let rc = self.nightflaid.stage_color_right;
-            if lc != rc {
-                // Left half tint
-                let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
-                gpu.push_colored_quad(0.0, 0.0, GAME_W / 2.0, GAME_H, c);
-                gpu.draw_batch(None);
-                // Right half tint
-                let c = [rc[0], rc[1], rc[2], rc[3] * 0.35];
-                gpu.push_colored_quad(GAME_W / 2.0, 0.0, GAME_W / 2.0, GAME_H, c);
-                gpu.draw_batch(None);
-            } else {
-                let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
-                gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, c);
-                gpu.draw_batch(None);
+        // === Stage background color overlay (generic, controlled via setStageColor Lua API) ===
+        if !is_death {
+            let lc = self.stage_overlay.color_left;
+            let rc = self.stage_overlay.color_right;
+            let has_left = lc[3] > 0.001;
+            let has_right = rc[3] > 0.001;
+            if has_left || has_right {
+                if lc != rc {
+                    if has_left {
+                        let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
+                        gpu.push_colored_quad(0.0, 0.0, GAME_W / 2.0, GAME_H, c);
+                        gpu.draw_batch(None);
+                    }
+                    if has_right {
+                        let c = [rc[0], rc[1], rc[2], rc[3] * 0.35];
+                        gpu.push_colored_quad(GAME_W / 2.0, 0.0, GAME_W / 2.0, GAME_H, c);
+                        gpu.draw_batch(None);
+                    }
+                } else {
+                    let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
+                    gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, c);
+                    gpu.draw_batch(None);
+                }
             }
         }
 
@@ -124,9 +130,9 @@ impl PlayScreen {
             self.draw_lua_sprites(gpu, true);
         }
 
-        // === 80sNightflaid overlay ===
+        // === 80sNightflaid foreground (lightning, needles) ===
         if self.nightflaid.active {
-            self.draw_nightflaid_overlay(gpu);
+            self.draw_nightflaid_foreground(gpu);
         }
 
         // Skip HUD during death
@@ -183,10 +189,26 @@ impl PlayScreen {
             let note_scale = NOTE_SCALE * (nd.scale_x / 0.7); // scale relative to default 0.7
             let assets = self.opp_note_assets.as_ref().or(self.note_assets.as_ref());
             if let Some(assets) = assets {
+                // Center note on lane midpoint (same as strum centering)
+                let ref_size = NOTE_WIDTH / NOTE_SCALE;
+                let cx = sx + nd.offset_x + ref_size * NOTE_SCALE / 2.0;
+                let cy = y_pos + nd.offset_y + ref_size * NOTE_SCALE / 2.0;
                 let color = note_color(nd, a);
-                self.draw_note_sprite_colored(gpu, assets, NOTE_ANIMS[nd.lane],
-                    hud_x(sx + nd.offset_x), hud_y(y_pos + nd.offset_y),
-                    hud_s(note_scale), color, note_ang);
+                if let Some(frame) = assets.atlas.get_frame(NOTE_ANIMS[nd.lane], 0) {
+                    let draw_x = cx - frame.frame_w * note_scale / 2.0;
+                    let draw_y = cy - frame.frame_h * note_scale / 2.0;
+                    if note_ang.abs() > 0.01 {
+                        gpu.draw_sprite_frame_rotated(
+                            frame, assets.tex_w, assets.tex_h,
+                            draw_x, draw_y, note_scale, false, note_ang, color,
+                        );
+                    } else {
+                        gpu.draw_sprite_frame(
+                            frame, assets.tex_w, assets.tex_h,
+                            draw_x, draw_y, note_scale, false, color,
+                        );
+                    }
+                }
             }
         }
         // Flush opponent batch
@@ -224,10 +246,26 @@ impl PlayScreen {
             let note_ang = ang + nd.angle;
             let note_scale = NOTE_SCALE * (nd.scale_x / 0.7);
             if let Some(assets) = &self.note_assets {
+                // Center note on lane midpoint (same as strum centering)
+                let ref_size = NOTE_WIDTH / NOTE_SCALE;
+                let cx = sx + nd.offset_x + ref_size * NOTE_SCALE / 2.0;
+                let cy = y_pos + nd.offset_y + ref_size * NOTE_SCALE / 2.0;
                 let color = note_color(nd, a);
-                self.draw_note_sprite_colored(gpu, assets, NOTE_ANIMS[nd.lane],
-                    hud_x(sx + nd.offset_x), hud_y(y_pos + nd.offset_y),
-                    hud_s(note_scale), color, note_ang);
+                if let Some(frame) = assets.atlas.get_frame(NOTE_ANIMS[nd.lane], 0) {
+                    let draw_x = cx - frame.frame_w * note_scale / 2.0;
+                    let draw_y = cy - frame.frame_h * note_scale / 2.0;
+                    if note_ang.abs() > 0.01 {
+                        gpu.draw_sprite_frame_rotated(
+                            frame, assets.tex_w, assets.tex_h,
+                            draw_x, draw_y, note_scale, false, note_ang, color,
+                        );
+                    } else {
+                        gpu.draw_sprite_frame(
+                            frame, assets.tex_w, assets.tex_h,
+                            draw_x, draw_y, note_scale, false, color,
+                        );
+                    }
+                }
             }
         }
         // Flush player batch
@@ -775,13 +813,10 @@ impl PlayScreen {
             self.note_assets.as_ref()
         };
         if let Some(assets) = assets {
-            let static_frame = assets.atlas.get_frame(STRUM_ANIMS[lane], 0);
-            let (ref_w, ref_h) = static_frame
-                .map(|f| (f.frame_w, f.frame_h))
-                .unwrap_or((NOTE_WIDTH / NOTE_SCALE, NOTE_WIDTH / NOTE_SCALE));
-            // Center using default NOTE_SCALE so modchart scale pulses around the strum center
-            let cx = x + ref_w * NOTE_SCALE / 2.0;
-            let cy = y + ref_h * NOTE_SCALE / 2.0;
+            // Center on the lane's midpoint (fixed reference size, skin-independent)
+            let ref_size = NOTE_WIDTH / NOTE_SCALE; // 160 — standard Psych frame size
+            let cx = x + ref_size * NOTE_SCALE / 2.0;
+            let cy = y + ref_size * NOTE_SCALE / 2.0;
 
             let count = assets.atlas.frame_count(anim);
             let clamped = if count > 0 { frame_idx.min(count - 1) } else { 0 };
