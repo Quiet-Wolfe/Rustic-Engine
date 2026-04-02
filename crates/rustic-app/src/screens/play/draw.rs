@@ -610,7 +610,44 @@ impl PlayScreen {
             gpu.draw_text(&results, GAME_W / 2.0 - 180.0, 200.0, 24.0, white);
         }
 
+        // Touch lane indicators (Android only — subtle FNF-style pads at bottom)
+        if cfg!(target_os = "android") && !self.paused && self.death.is_none() && !self.game.song_ended {
+            self.draw_touch_ui(gpu);
+        }
+
         gpu.end_frame();
+    }
+
+    /// Draw FNF-style semi-transparent arrow touch pads at the bottom of the screen.
+    fn draw_touch_ui(&self, gpu: &mut GpuState) {
+        let Some(assets) = self.note_assets.as_ref() else { return };
+        let col_w = GAME_W / 4.0;
+        let pad_scale = NOTE_SCALE * 1.1;
+        let ref_size = NOTE_WIDTH / NOTE_SCALE; // 160 standard frame size
+        let pad_y = GAME_H - ref_size * pad_scale - 10.0;
+        let alpha = 0.25;
+
+        for lane in 0..4usize {
+            let anim = STRUM_ANIMS[lane];
+            if let Some(frame) = assets.atlas.get_frame(anim, 0) {
+                let cx = col_w * lane as f32 + col_w / 2.0;
+                let draw_x = cx - frame.frame_w * pad_scale / 2.0;
+                let draw_y = pad_y + (ref_size * pad_scale - frame.frame_h * pad_scale) / 2.0;
+                let color = [alpha, alpha, alpha, alpha];
+                gpu.draw_sprite_frame(
+                    frame, assets.tex_w, assets.tex_h,
+                    draw_x, draw_y, pad_scale, false, color,
+                );
+            }
+        }
+        gpu.draw_batch(Some(&assets.texture));
+
+        // Thin lane dividers
+        for lane in 1..4 {
+            let x = col_w * lane as f32;
+            gpu.push_colored_quad(x - 0.5, pad_y, 1.0, ref_size * pad_scale, [1.0, 1.0, 1.0, 0.06]);
+        }
+        gpu.draw_batch(None);
     }
 
     /// Draw all Lua-created sprites in either the behind or in-front layer (game camera only).

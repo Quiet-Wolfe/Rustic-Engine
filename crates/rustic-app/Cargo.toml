@@ -3,6 +3,15 @@ name = "rustic-app"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "rustic_app"
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustic-app"
+path = "src/main.rs"
+
 [dependencies]
 rustic-core = { workspace = true }
 rustic-render = { workspace = true }
@@ -18,3 +27,4 @@ serde_json = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6.0", features = ["native-activity"] }
+android_logger = "0.14"

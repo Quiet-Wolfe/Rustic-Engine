@@ -149,6 +149,106 @@ impl NoteData {
     }
 }
 
+/// Configuration for a custom note type — gameplay behavior and asset overrides.
+#[derive(Debug, Clone)]
+pub struct NoteTypeConfig {
+    /// If true, hitting this note damages the player instead of scoring.
+    pub hit_causes_miss: bool,
+    /// Health penalty when hit (0.0–1.0, as fraction of max health).
+    pub hit_damage: f32,
+    /// If true, letting this note pass (missing) does NOT penalize the player.
+    pub ignore_miss: bool,
+    /// Custom note skin atlas path (relative to images dir), e.g. "notes/Scythe_Note_Assets".
+    pub note_skin: Option<String>,
+    /// Custom note animation names for the 4 directions [Left, Down, Up, Right].
+    pub note_anims: Option<[String; 4]>,
+    /// Custom strum static animation names for the 4 directions.
+    pub strum_anims: Option<[String; 4]>,
+    /// Custom strum confirm (hit) animation names for the 4 directions.
+    pub confirm_anims: Option<[String; 4]>,
+}
+
+impl NoteTypeConfig {
+    /// Default config: normal note behavior, no skin override.
+    fn default_config() -> Self {
+        Self {
+            hit_causes_miss: false,
+            hit_damage: 0.0,
+            ignore_miss: false,
+            note_skin: None,
+            note_anims: None,
+            strum_anims: None,
+            confirm_anims: None,
+        }
+    }
+
+    /// Look up config for a known note type name. Returns None for unknown types.
+    pub fn for_type(name: &str) -> Option<Self> {
+        match name {
+            "Hurt Note" => Some(Self {
+                hit_causes_miss: true,
+                hit_damage: 0.1,
+                ignore_miss: false,
+                ..Self::default_config()
+            }),
+            "scytheNote" => Some(Self {
+                hit_causes_miss: true,
+                hit_damage: 0.15,
+                ignore_miss: true,
+                note_skin: Some("nightflaid/Scythe_Note_Assets".into()),
+                note_anims: Some([
+                    "Scythe_Note_Left".into(),
+                    "Scythe_Note_Down".into(),
+                    "Scythe_Note_Up".into(),
+                    "Scythe_Note_Right".into(),
+                ]),
+                strum_anims: Some([
+                    "Strum_Left".into(),
+                    "Strum_Down".into(),
+                    "Strum_Up".into(),
+                    "Strum_Right".into(),
+                ]),
+                confirm_anims: Some([
+                    "StrumHit_Left".into(),
+                    "StrumHit_Down".into(),
+                    "StrumHit_Up".into(),
+                    "StrumHit_Right".into(),
+                ]),
+            }),
+            "insatianNote" => Some(Self {
+                hit_causes_miss: true,
+                hit_damage: 0.12,
+                ignore_miss: true,
+                note_skin: Some("notes/Gluttony_Note_Assets".into()),
+                note_anims: Some([
+                    "Left(Up)".into(),
+                    "Down(Up)".into(),
+                    "Up(Up)".into(),
+                    "Right(Up)".into(),
+                ]),
+                strum_anims: Some([
+                    "static Left".into(),
+                    "static Down".into(),
+                    "static Up".into(),
+                    "static Right".into(),
+                ]),
+                confirm_anims: Some([
+                    "confirm Left".into(),
+                    "confirm Down".into(),
+                    "confirm Up".into(),
+                    "confirm Right".into(),
+                ]),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Convenience: check if a note type name is a known harmful type.
+    pub fn is_harmful(name: &str) -> bool {
+        Self::for_type(name).map_or(false, |c| c.hit_causes_miss)
+    }
+}
+
 /// An event note parsed from the chart events array.
 #[derive(Debug, Clone)]
 pub struct EventNote {

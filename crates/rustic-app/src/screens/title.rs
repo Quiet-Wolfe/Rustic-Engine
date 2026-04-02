@@ -1,8 +1,8 @@
-use std::path::Path;
-
+use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
+use rustic_core::paths::AssetPaths;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
@@ -169,74 +169,76 @@ impl TitleScreen {
 
 impl Screen for TitleScreen {
     fn init(&mut self, gpu: &GpuState) {
-        let img_dir = Path::new("references/FNF-PsychEngine/assets/shared/images");
+        let paths = AssetPaths::platform_default();
 
         // Parse GF config JSON for positions and BPM
-        let gf_config_path = img_dir.join("gfDanceTitle.json");
-        if let Ok(json_str) = std::fs::read_to_string(&gf_config_path) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                self.title_x = val["titlex"].as_f64().unwrap_or(-150.0) as f32;
-                self.title_y = val["titley"].as_f64().unwrap_or(-100.0) as f32;
-                self.gf_x = val["gfx"].as_f64().unwrap_or(512.0) as f32;
-                self.gf_y = val["gfy"].as_f64().unwrap_or(40.0) as f32;
-                self.start_x = val["startx"].as_f64().unwrap_or(100.0) as f32;
-                self.start_y = val["starty"].as_f64().unwrap_or(576.0) as f32;
-                self.bpm = val["bpm"].as_f64().unwrap_or(102.0);
+        if let Some(gf_config_path) = paths.find("images/gfDanceTitle.json") {
+            if let Ok(json_str) = std::fs::read_to_string(&gf_config_path) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    self.title_x = val["titlex"].as_f64().unwrap_or(-150.0) as f32;
+                    self.title_y = val["titley"].as_f64().unwrap_or(-100.0) as f32;
+                    self.gf_x = val["gfx"].as_f64().unwrap_or(512.0) as f32;
+                    self.gf_y = val["gfy"].as_f64().unwrap_or(40.0) as f32;
+                    self.start_x = val["startx"].as_f64().unwrap_or(100.0) as f32;
+                    self.start_y = val["starty"].as_f64().unwrap_or(576.0) as f32;
+                    self.bpm = val["bpm"].as_f64().unwrap_or(102.0);
 
-                // GF dance animations from config indices
-                let gf_xml = std::fs::read_to_string(img_dir.join("gfDanceTitle.xml"))
-                    .unwrap_or_default();
-                self.gf_atlas = SpriteAtlas::from_xml(&gf_xml);
+                    // GF dance animations from config indices
+                    if let Some(gf_xml_path) = paths.image_xml("gfDanceTitle") {
+                        let gf_xml = std::fs::read_to_string(gf_xml_path).unwrap_or_default();
+                        self.gf_atlas = SpriteAtlas::from_xml(&gf_xml);
+                    }
 
-                let prefix = val["animation"].as_str().unwrap_or("gfDance");
-                let parse_indices = |arr: &serde_json::Value| -> Vec<i32> {
-                    arr.as_array()
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|v| v.as_i64().map(|n| n as i32))
-                                .collect::<Vec<i32>>()
-                        })
-                        .unwrap_or_default()
-                };
-                let left_indices = parse_indices(&val["dance_left"]);
-                let right_indices = parse_indices(&val["dance_right"]);
-                self.gf_atlas.add_by_indices("danceLeft", prefix, &left_indices);
-                self.gf_atlas.add_by_indices("danceRight", prefix, &right_indices);
+                    let prefix = val["animation"].as_str().unwrap_or("gfDance");
+                    let parse_indices = |arr: &serde_json::Value| -> Vec<i32> {
+                        arr.as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_i64().map(|n| n as i32))
+                                    .collect::<Vec<i32>>()
+                            })
+                            .unwrap_or_default()
+                    };
+                    let left_indices = parse_indices(&val["dance_left"]);
+                    let right_indices = parse_indices(&val["dance_right"]);
+                    self.gf_atlas.add_by_indices("danceLeft", prefix, &left_indices);
+                    self.gf_atlas.add_by_indices("danceRight", prefix, &right_indices);
+                }
             }
         }
-        let gf_tex_path = img_dir.join("gfDanceTitle.png");
-        if gf_tex_path.exists() {
+        if let Some(gf_tex_path) = paths.image("gfDanceTitle") {
             self.gf_tex = Some(gpu.load_texture_from_path(&gf_tex_path));
         }
 
         // Logo
-        let logo_xml = std::fs::read_to_string(img_dir.join("logoBumpin.xml"))
-            .unwrap_or_default();
-        self.logo_atlas = SpriteAtlas::from_xml(&logo_xml);
+        if let Some(logo_xml_path) = paths.image_xml("logoBumpin") {
+            let logo_xml = std::fs::read_to_string(logo_xml_path).unwrap_or_default();
+            self.logo_atlas = SpriteAtlas::from_xml(&logo_xml);
+        }
         self.logo_atlas.add_by_prefix("bump", "logo bumpin");
-        let logo_tex_path = img_dir.join("logoBumpin.png");
-        if logo_tex_path.exists() {
+        if let Some(logo_tex_path) = paths.image("logoBumpin") {
             self.logo_tex = Some(gpu.load_texture_from_path(&logo_tex_path));
         }
 
         // Title Enter text
-        let enter_xml = std::fs::read_to_string(img_dir.join("titleEnter.xml"))
-            .unwrap_or_default();
-        self.enter_atlas = SpriteAtlas::from_xml(&enter_xml);
+        if let Some(enter_xml_path) = paths.image_xml("titleEnter") {
+            let enter_xml = std::fs::read_to_string(enter_xml_path).unwrap_or_default();
+            self.enter_atlas = SpriteAtlas::from_xml(&enter_xml);
+        }
         self.enter_atlas.add_by_prefix("idle", "ENTER IDLE");
         self.enter_atlas.add_by_prefix("press", "ENTER PRESSED");
-        let enter_tex_path = img_dir.join("titleEnter.png");
-        if enter_tex_path.exists() {
+        if let Some(enter_tex_path) = paths.image("titleEnter") {
             self.enter_tex = Some(gpu.load_texture_from_path(&enter_tex_path));
         }
         self.enter_anim.play("idle", 24.0, true);
 
         // Audio — play freakyMenu at 0.7 volume (skip if already passed from previous screen)
         if self.audio.is_none() {
-            let music = Path::new("references/FNF-PsychEngine/assets/shared/music/freakyMenu.ogg");
-            let mut audio = AudioEngine::new();
-            audio.play_loop_music_vol(music, 0.7);
-            self.audio = Some(audio);
+            if let Some(music) = paths.music("freakyMenu") {
+                let mut audio = AudioEngine::new();
+                audio.play_loop_music_vol(&music, 0.7);
+                self.audio = Some(audio);
+            }
         }
 
         // Initial animations — match Psych Engine's startIntro()
@@ -255,10 +257,18 @@ impl Screen for TitleScreen {
                 self.confirmed = true;
                 self.enter_anim.play("press", 24.0, false);
                 if let Some(audio) = &mut self.audio {
-                    let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/confirmMenu.ogg");
-                    audio.play_sound(sfx, 0.7);
+                    let paths = AssetPaths::platform_default();
+                    if let Some(sfx) = paths.sound("confirmMenu") {
+                        audio.play_sound(&sfx, 0.7);
+                    }
                 }
             }
+        }
+    }
+
+    fn handle_touch(&mut self, _id: u64, phase: TouchPhase, _x: f64, _y: f64) {
+        if phase == TouchPhase::Started {
+            self.handle_key(KeyCode::Enter);
         }
     }
 

@@ -26,7 +26,7 @@ impl TextSystem {
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) -> Self {
-        let font_system = FontSystem::new();
+        let font_system = Self::create_font_system();
         let swash_cache = SwashCache::new();
         let cache = Cache::new(device);
         let mut atlas = TextAtlas::new(device, queue, &cache, format);
@@ -140,5 +140,21 @@ impl TextSystem {
             .expect("Failed to render text");
 
         self.pending.clear();
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn create_font_system() -> FontSystem {
+        FontSystem::new()
+    }
+
+    #[cfg(target_os = "android")]
+    fn create_font_system() -> FontSystem {
+        let mut db = glyphon::fontdb::Database::new();
+        // Android doesn't have fontconfig — load system fonts manually
+        db.load_fonts_dir("/system/fonts");
+        db.set_monospace_family("Droid Sans Mono");
+        db.set_sans_serif_family("Roboto");
+        db.set_serif_family("Roboto");
+        FontSystem::new_with_locale_and_db("en-US".to_string(), db)
     }
 }

@@ -73,7 +73,7 @@ pub struct GpuState {
 }
 
 impl GpuState {
-    pub async fn new(window: Arc<Window>, game_w: f32, game_h: f32) -> Self {
+    pub async fn new(window: Arc<Window>, mut game_w: f32, game_h: f32) -> Self {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
@@ -90,11 +90,18 @@ impl GpuState {
             .await
             .expect("Failed to find a suitable GPU adapter");
 
+        // Log adapter info for debugging
+        let adapter_info = adapter.get_info();
+        log::info!("GPU: {} ({:?})", adapter_info.name, adapter_info.backend);
+        log::info!("Driver: {}", adapter_info.driver);
+
+        let limits = wgpu::Limits::default();
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("RusticV2"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: limits,
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
                 ..Default::default()
@@ -117,9 +124,18 @@ impl GpuState {
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
+
+        // On Android, expand game width to fill the screen's aspect ratio (no letterboxing).
+        // Content designed for 1280x720 stays centered; extra width is usable space.
+        #[cfg(target_os = "android")]
+        {
+            let aspect = config.width as f32 / config.height as f32;
+            game_w = (game_h * aspect).max(game_w);
+            log::info!("Android: game_w adjusted to {:.0} for {:.2} aspect ratio", game_w, aspect);
+        }
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -321,6 +337,19 @@ impl GpuState {
         }
     }
 
+    /// Resize image if it exceeds GPU max texture dimension.
+    fn clamp_image_size(&self, img: &mut image::RgbaImage) {
+        let max_dim = self.device.limits().max_texture_dimension_2d;
+        let (w, h) = img.dimensions();
+        if w > max_dim || h > max_dim {
+            let scale = if w > h { max_dim as f32 / w as f32 } else { max_dim as f32 / h as f32 };
+            let new_w = (w as f32 * scale) as u32;
+            let new_h = (h as f32 * scale) as u32;
+            log::warn!("Image {}x{} exceeds GPU max texture dimension {}, resizing to {}x{}", w, h, max_dim, new_w, new_h);
+            *img = image::imageops::resize(img, new_w, new_h, image::imageops::FilterType::Triangle);
+        }
+    }
+
     pub fn load_texture_from_path(&self, path: &Path) -> GpuTexture {
         let mut img = image::open(path)
             .unwrap_or_else(|e| panic!("Failed to load image {:?}: {}", path, e))
@@ -332,6 +361,7 @@ impl GpuState {
             pixel[1] = (pixel[1] as f32 * a + 0.5) as u8;
             pixel[2] = (pixel[2] as f32 * a + 0.5) as u8;
         }
+        self.clamp_image_size(&mut img);
         let (width, height) = img.dimensions();
 
         let texture = self.device.create_texture_with_data(
@@ -374,6 +404,7 @@ impl GpuState {
             pixel[1] = (pixel[1] as f32 * a + 0.5) as u8;
             pixel[2] = (pixel[2] as f32 * a + 0.5) as u8;
         }
+        self.clamp_image_size(&mut img);
         let (width, height) = img.dimensions();
 
         let texture = self.device.create_texture_with_data(
@@ -818,6 +849,19 @@ impl GpuState {
         let vp_x = (win_w - vp_w) / 2.0;
         let vp_y = (win_h - vp_h) / 2.0;
         (vp_x, vp_y, vp_w, vp_h)
+    }
+
+    /// Convert physical pixel coordinates to game-space coordinates (1280x720).
+    /// Returns None if the point is outside the letterboxed viewport.
+    pub fn physical_to_game(&self, px: f64, py: f64) -> Option<(f32, f32)> {
+        let (vp_x, vp_y, vp_w, vp_h) = self.viewport_rect();
+        let gx = (px as f32 - vp_x) / vp_w * self.game_w;
+        let gy = (py as f32 - vp_y) / vp_h * self.game_h;
+        if gx >= 0.0 && gx <= self.game_w && gy >= 0.0 && gy <= self.game_h {
+            Some((gx, gy))
+        } else {
+            None
+        }
     }
 
     /// Enable or disable post-processing for subsequent frames.

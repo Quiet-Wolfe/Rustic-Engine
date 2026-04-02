@@ -16,7 +16,7 @@ use super::super::characters::{AtlasCharacterSprite, Character, CharacterSprite,
 
 impl PlayScreen {
     pub(super) fn init_inner(&mut self, gpu: &GpuState) {
-        let paths = AssetPaths::psych_default();
+        let paths = AssetPaths::platform_default();
 
         // Load note atlas
         let note_png = paths.image("noteSkins/NOTE_assets")

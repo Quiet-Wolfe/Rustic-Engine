@@ -1,5 +1,5 @@
 use rustic_core::conductor::Conductor;
-use rustic_core::note::NoteData;
+use rustic_core::note::{NoteData, NoteTypeConfig};
 use rustic_core::rating::{self, Rating};
 use rustic_core::scoring::{self, ScoreState};
 
@@ -107,22 +107,47 @@ impl PlayState {
             let diff = (self.notes[idx].strum_time - self.conductor.song_position).abs();
             if let Some(judgment) = rating::judge_note(&self.ratings, diff) {
                 self.notes[idx].was_good_hit = true;
-                self.score.note_hit(
-                    judgment.score, judgment.rating_mod,
-                    judgment.health_gain, &judgment.name,
-                );
-                self.player_confirm[lane] = f64::MIN_POSITIVE;
+                let type_str = self.notes[idx].kind.as_type_str().to_string();
+                let hit_causes_miss = NoteTypeConfig::is_harmful(&type_str);
 
-                self.events.push(GameEvent::NoteHit {
-                    lane,
-                    rating: judgment.name.clone(),
-                    combo: self.score.combo,
-                    score: judgment.score,
-                    note_type: self.notes[idx].kind.as_type_str().to_string(),
-                    is_sustain: self.notes[idx].sustain_length > 0.0,
-                    members_index: idx,
-                });
-                self.events.push(GameEvent::UnmuteVocals);
+                if hit_causes_miss {
+                    // Harmful note: damage player, no score gain
+                    let dmg = NoteTypeConfig::for_type(&type_str)
+                        .map(|c| c.hit_damage)
+                        .unwrap_or(0.1);
+                    self.score.change_health(-dmg);
+                    self.player_confirm[lane] = f64::MIN_POSITIVE;
+
+                    self.events.push(GameEvent::NoteHit {
+                        lane,
+                        rating: judgment.name.clone(),
+                        combo: self.score.combo,
+                        score: 0,
+                        note_type: type_str,
+                        is_sustain: self.notes[idx].sustain_length > 0.0,
+                        members_index: idx,
+                        hit_causes_miss: true,
+                    });
+                    self.events.push(GameEvent::MuteVocals);
+                } else {
+                    self.score.note_hit(
+                        judgment.score, judgment.rating_mod,
+                        judgment.health_gain, &judgment.name,
+                    );
+                    self.player_confirm[lane] = f64::MIN_POSITIVE;
+
+                    self.events.push(GameEvent::NoteHit {
+                        lane,
+                        rating: judgment.name.clone(),
+                        combo: self.score.combo,
+                        score: judgment.score,
+                        note_type: type_str,
+                        is_sustain: self.notes[idx].sustain_length > 0.0,
+                        members_index: idx,
+                        hit_causes_miss: false,
+                    });
+                    self.events.push(GameEvent::UnmuteVocals);
+                }
             }
         }
     }
@@ -169,10 +194,13 @@ impl PlayState {
             }
         } else if let Some(audio_pos) = audio_position_ms {
             let diff = audio_pos - self.conductor.song_position;
-            if diff.abs() > 50.0 {
+            if diff.abs() > 200.0 {
+                // Only hard-snap on very large desync (seek, lag spike)
                 self.conductor.song_position = audio_pos;
             } else {
-                self.conductor.song_position += dt_ms + diff * 0.02;
+                // Smooth correction: advance by dt plus a fraction of the drift
+                // Higher correction factor (0.15) keeps sync tight without visible jumps
+                self.conductor.song_position += dt_ms + diff * 0.15;
             }
         }
 
@@ -186,11 +214,14 @@ impl PlayState {
             if !self.notes[i].must_press && self.conductor.song_position >= self.notes[i].strum_time {
                 self.notes[i].was_good_hit = true;
                 self.opponent_confirm[self.notes[i].lane] = f64::MIN_POSITIVE;
+                let type_str = self.notes[i].kind.as_type_str().to_string();
+                let hit_causes_miss = NoteTypeConfig::is_harmful(&type_str);
                 self.events.push(GameEvent::OpponentNoteHit {
                     lane: self.notes[i].lane,
-                    note_type: self.notes[i].kind.as_type_str().to_string(),
+                    note_type: type_str,
                     is_sustain: self.notes[i].sustain_length > 0.0,
                     members_index: i,
+                    hit_causes_miss,
                 });
             }
 
@@ -199,15 +230,22 @@ impl PlayState {
                 && self.conductor.song_position - self.notes[i].strum_time > KILL_OFFSET_MS
             {
                 self.notes[i].too_late = true;
-                self.score.note_miss(scoring::HEALTH_MISS);
+                let type_str = self.notes[i].kind.as_type_str().to_string();
+                let ignored = NoteTypeConfig::for_type(&type_str)
+                    .map_or(false, |c| c.ignore_miss);
+
+                if !ignored {
+                    self.score.note_miss(scoring::HEALTH_MISS);
+                    self.events.push(GameEvent::MuteVocals);
+                    self.events.push(GameEvent::PlayMissSound);
+                }
                 let lane = self.notes[i].lane;
                 self.events.push(GameEvent::NoteMiss {
                     lane,
-                    note_type: self.notes[i].kind.as_type_str().to_string(),
+                    note_type: type_str,
                     members_index: i,
+                    ignored,
                 });
-                self.events.push(GameEvent::MuteVocals);
-                self.events.push(GameEvent::PlayMissSound);
             }
         }
 

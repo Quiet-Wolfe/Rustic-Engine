@@ -5,6 +5,7 @@ mod draw;
 
 use std::collections::HashMap;
 
+use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
@@ -327,6 +328,8 @@ pub struct PlayScreen {
     pub(super) lua_behind: Vec<String>,  // sprite tags drawn behind characters
     pub(super) lua_front: Vec<String>,   // sprite tags drawn in front of characters
     pub(super) paths: AssetPaths,
+    /// Per-note-type custom skin assets, keyed by type string (e.g. "scytheNote").
+    pub(super) custom_note_assets: HashMap<String, NoteAssets>,
     /// Whether the character camera layer is visible (toggled by camCharacters.visible).
     pub(super) cam_characters_visible: bool,
     /// Whether character reflections are drawn (flipY copies below characters).
@@ -411,7 +414,7 @@ impl PlayScreen {
             lua_atlases: HashMap::new(),
             lua_behind: Vec::new(),
             lua_front: Vec::new(),
-            paths: AssetPaths::psych_default(),
+            paths: AssetPaths::platform_default(),
             cam_characters_visible: true,
             reflections_enabled: false,
             reflection_alpha: 0.35,
@@ -1131,6 +1134,43 @@ impl Screen for PlayScreen {
     fn handle_key_release(&mut self, key: KeyCode) {
         if let Some(lane) = Self::key_to_lane(key) {
             self.game.key_release(lane);
+        }
+    }
+
+    fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
+        let (x, y) = (x as f32, y as f32);
+
+        // Pause menu / death screen
+        if self.paused || self.death.is_some() {
+            if phase == TouchPhase::Started {
+                if y < GAME_H * 0.33 {
+                    self.handle_key_inner(KeyCode::ArrowUp);
+                } else if y > GAME_H * 0.67 {
+                    self.handle_key_inner(KeyCode::ArrowDown);
+                } else {
+                    self.handle_key_inner(KeyCode::Enter);
+                }
+            }
+            return;
+        }
+
+        // Pause: top center strip (top 12%, middle 50% of width)
+        if phase == TouchPhase::Started
+            && y < GAME_H * 0.12
+            && x > GAME_W * 0.25
+            && x < GAME_W * 0.75
+        {
+            self.handle_key_inner(KeyCode::Escape);
+            return;
+        }
+
+        // Gameplay: full screen divided into 4 equal lane columns
+        let lane = ((x / GAME_W) * 4.0) as usize;
+        let lane = lane.min(3);
+        match phase {
+            TouchPhase::Started => self.game.key_press(lane),
+            TouchPhase::Ended | TouchPhase::Cancelled => self.game.key_release(lane),
+            _ => {}
         }
     }
 

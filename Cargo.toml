@@ -19,7 +19,7 @@ rustic-scripting = { path = "crates/rustic-scripting" }
 
 wgpu = "28"
 naga = { version = "28", features = ["glsl-in", "wgsl-out"] }
-winit = "0.30"
+winit = { version = "0.30", features = ["android-native-activity"] }
 glyphon = "0.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
 bytemuck = { version = "1", features = ["derive"] }

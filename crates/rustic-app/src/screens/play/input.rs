@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use winit::keyboard::KeyCode;
 
 use super::{PlayScreen, DeathPhase};
@@ -83,8 +81,9 @@ impl PlayScreen {
                 self.skip_target_ms = self.game.conductor.song_position.max(0.0);
                 if let Some(audio) = &mut self.audio {
                     audio.pause();
-                    let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/cancelMenu.ogg");
-                    audio.play_sound(sfx, 0.6);
+                    if let Some(sfx) = self.paths.sound("cancelMenu") {
+                        audio.play_sound(&sfx, 0.6);
+                    }
                 }
                 return;
             }
@@ -182,8 +181,9 @@ impl PlayScreen {
             death.character.play_anim("deathConfirm", true);
             if let Some(audio) = &mut self.audio {
                 audio.stop_loop_music();
-                let sfx = Path::new("references/FNF-PsychEngine/assets/shared/music/gameOverEnd.ogg");
-                audio.play_sound(sfx, 1.0);
+                if let Some(sfx) = self.paths.music("gameOverEnd") {
+                    audio.play_sound(&sfx, 1.0);
+                }
             }
         }
     }

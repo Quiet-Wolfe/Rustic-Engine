@@ -10,12 +10,16 @@ pub enum GameEvent {
         note_type: String,
         is_sustain: bool,
         members_index: usize,
+        /// If true, this note type damages the player on hit (like Hurt Note).
+        hit_causes_miss: bool,
     },
     /// Player missed a note (too late or ghost tap).
     NoteMiss {
         lane: usize,
         note_type: String,
         members_index: usize,
+        /// If true, this miss should not penalize the player (safe to ignore).
+        ignored: bool,
     },
     /// Opponent auto-hit a note.
     OpponentNoteHit {
@@ -23,6 +27,8 @@ pub enum GameEvent {
         note_type: String,
         is_sustain: bool,
         members_index: usize,
+        /// If true, this note type causes damage on hit.
+        hit_causes_miss: bool,
     },
     /// Strum confirm should be shown (player or opponent).
     StrumConfirm {

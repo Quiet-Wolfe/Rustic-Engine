@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use rustic_gameplay::events::GameEvent;
 
 use super::{
@@ -51,8 +49,9 @@ impl PlayScreen {
                         death.phase = DeathPhase::Loop;
                         death.character.play_anim("deathLoop", false);
                         if let Some(audio) = &mut self.audio {
-                            let music = Path::new("references/FNF-PsychEngine/assets/shared/music/gameOver.ogg");
-                            audio.play_loop_music(music);
+                            if let Some(music) = self.paths.music("gameOver") {
+                                audio.play_loop_music(&music);
+                            }
                         }
                     }
                 }
@@ -291,49 +290,65 @@ impl PlayScreen {
         let events = self.game.drain_events();
         for event in events {
             match event {
-                GameEvent::NoteHit { lane, rating, combo, note_type, is_sustain, members_index, .. } => {
-                    // Visual: spawn rating popup
-                    self.rating_popups.push(RatingPopup {
-                        rating_name: rating.clone(),
-                        combo,
-                        y: 0.0,
-                        vel_y: RATING_VEL_Y,
-                        age_ms: 0.0,
-                        fade_delay: self.game.conductor.crochet,
-                        alpha: 1.0,
-                    });
-                    // Visual: note splash on sick hits
-                    if rating == "sick" {
-                        self.splashes.push(NoteSplash {
-                            lane, player: true, frame: 0, timer: 0.0,
+                GameEvent::NoteHit { lane, rating, combo, note_type, is_sustain, members_index, hit_causes_miss, .. } => {
+                    if hit_causes_miss {
+                        // Harmful note: play miss animation, show miss popup
+                        self.rating_popups.push(RatingPopup {
+                            rating_name: "miss".into(), combo: 0,
+                            y: 0.0, vel_y: RATING_VEL_Y,
+                            age_ms: 0.0,
+                            fade_delay: self.game.conductor.crochet,
+                            alpha: 1.0,
                         });
-                    }
-                    // Character: BF sing
-                    if let Some(bf) = &mut self.char_bf {
-                        bf.play_sing(lane);
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.play_miss(lane);
+                        }
+                    } else {
+                        // Normal hit: show rating popup
+                        self.rating_popups.push(RatingPopup {
+                            rating_name: rating.clone(),
+                            combo,
+                            y: 0.0,
+                            vel_y: RATING_VEL_Y,
+                            age_ms: 0.0,
+                            fade_delay: self.game.conductor.crochet,
+                            alpha: 1.0,
+                        });
+                        // Visual: note splash on sick hits
+                        if rating == "sick" {
+                            self.splashes.push(NoteSplash {
+                                lane, player: true, frame: 0, timer: 0.0,
+                            });
+                        }
+                        // Character: BF sing
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.play_sing(lane);
+                        }
                     }
                     // Lua: goodNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
                         self.scripts.call_note_hit("goodNoteHit", members_index, lane, &note_type, is_sustain);
                     }
                 }
-                GameEvent::NoteMiss { lane, note_type, members_index } => {
-                    self.rating_popups.push(RatingPopup {
-                        rating_name: "miss".into(), combo: 0,
-                        y: 0.0, vel_y: RATING_VEL_Y,
-                        age_ms: 0.0,
-                        fade_delay: self.game.conductor.crochet,
-                        alpha: 1.0,
-                    });
-                    if let Some(bf) = &mut self.char_bf {
-                        bf.play_miss(lane);
+                GameEvent::NoteMiss { lane, note_type, members_index, ignored } => {
+                    if !ignored {
+                        self.rating_popups.push(RatingPopup {
+                            rating_name: "miss".into(), combo: 0,
+                            y: 0.0, vel_y: RATING_VEL_Y,
+                            age_ms: 0.0,
+                            fade_delay: self.game.conductor.crochet,
+                            alpha: 1.0,
+                        });
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.play_miss(lane);
+                        }
                     }
                     // Lua: noteMiss(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
                         self.scripts.call_note_hit("noteMiss", members_index, lane, &note_type, false);
                     }
                 }
-                GameEvent::OpponentNoteHit { lane, note_type, is_sustain, members_index } => {
+                GameEvent::OpponentNoteHit { lane, note_type, is_sustain, members_index, hit_causes_miss: _ } => {
                     if !self.disable_zooming {
                         self.cam_zooming = true;
                     }
@@ -346,25 +361,23 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::CountdownBeat { swag } => {
-                    let sfx_dir = Path::new("references/FNF-PsychEngine/assets/shared/sounds");
                     if let Some(audio) = &mut self.audio {
+                        let sfx_name = match swag {
+                            0 => Some("intro3"),
+                            1 => Some("intro2"),
+                            2 => Some("intro1"),
+                            3 => Some("introGo"),
+                            _ => None,
+                        };
+                        if let Some(name) = sfx_name {
+                            if let Some(sfx) = self.paths.sound(name) {
+                                audio.play_sound(&sfx, 0.6);
+                            }
+                        }
                         match swag {
-                            0 => audio.play_sound(&sfx_dir.join("intro3.ogg"), 0.6),
-                            1 => {
-                                audio.play_sound(&sfx_dir.join("intro2.ogg"), 0.6);
-                                self.countdown_swag = 1;
-                                self.countdown_alpha = 1.0;
-                            }
-                            2 => {
-                                audio.play_sound(&sfx_dir.join("intro1.ogg"), 0.6);
-                                self.countdown_swag = 2;
-                                self.countdown_alpha = 1.0;
-                            }
-                            3 => {
-                                audio.play_sound(&sfx_dir.join("introGo.ogg"), 0.6);
-                                self.countdown_swag = 3;
-                                self.countdown_alpha = 1.0;
-                            }
+                            1 => { self.countdown_swag = 1; self.countdown_alpha = 1.0; }
+                            2 => { self.countdown_swag = 2; self.countdown_alpha = 1.0; }
+                            3 => { self.countdown_swag = 3; self.countdown_alpha = 1.0; }
                             _ => {}
                         }
                     }
@@ -464,8 +477,9 @@ impl PlayScreen {
                 GameEvent::Death => {
                     if let Some(audio) = &mut self.audio {
                         audio.pause();
-                        let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/fnf_loss_sfx.ogg");
-                        audio.play_sound(sfx, 1.0);
+                        if let Some(sfx) = self.paths.sound("fnf_loss_sfx") {
+                            audio.play_sound(&sfx, 1.0);
+                        }
                     }
                     if let Some(mut death_char) = self.death_char_preloaded.take() {
                         if let Some(bf) = &self.char_bf {

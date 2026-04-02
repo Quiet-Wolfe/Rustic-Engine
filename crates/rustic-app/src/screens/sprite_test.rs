@@ -46,7 +46,7 @@ impl SpriteTestScreen {
 
 impl Screen for SpriteTestScreen {
     fn init(&mut self, gpu: &GpuState) {
-        let assets = AssetPaths::psych_default();
+        let assets = AssetPaths::platform_default();
 
         let char_path = assets.character_json("bf")
             .expect("bf.json not found");

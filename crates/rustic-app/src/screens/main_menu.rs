@@ -1,8 +1,8 @@
-use std::path::Path;
-
+use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
+use rustic_core::paths::AssetPaths;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
@@ -59,8 +59,10 @@ impl MainMenuScreen {
         self.update_cam_target();
 
         if let Some(audio) = &mut self.audio {
-            let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/scrollMenu.ogg");
-            audio.play_sound(sfx, 0.7);
+            let paths = AssetPaths::platform_default();
+            if let Some(sfx) = paths.sound("scrollMenu") {
+                audio.play_sound(&sfx, 0.7);
+            }
         }
     }
 
@@ -90,22 +92,20 @@ impl MainMenuScreen {
 
 impl Screen for MainMenuScreen {
     fn init(&mut self, gpu: &GpuState) {
-        let img_dir = Path::new("references/FNF-PsychEngine/assets/shared/images");
+        let paths = AssetPaths::platform_default();
 
         // Background — scaled 1.175x
-        let bg_path = img_dir.join("menuBG.png");
-        if bg_path.exists() {
+        if let Some(bg_path) = paths.image("menuBG") {
             self.bg_tex = Some(gpu.load_texture_from_path(&bg_path));
         }
 
         // Menu items
-        let menu_dir = img_dir.join("mainmenu");
         let item_count = MENU_ITEMS.len();
 
         for (i, &name) in MENU_ITEMS.iter().enumerate() {
-            let xml_path = menu_dir.join(format!("menu_{}.xml", name));
-            let png_path = menu_dir.join(format!("menu_{}.png", name));
-            if !xml_path.exists() || !png_path.exists() { continue; }
+            let xml_path = paths.find(&format!("images/mainmenu/menu_{}.xml", name));
+            let png_path = paths.find(&format!("images/mainmenu/menu_{}.png", name));
+            let (Some(xml_path), Some(png_path)) = (xml_path, png_path) else { continue };
 
             let xml = std::fs::read_to_string(&xml_path).unwrap_or_default();
             let mut atlas = SpriteAtlas::from_xml(&xml);
@@ -131,10 +131,11 @@ impl Screen for MainMenuScreen {
 
         // Audio — freakyMenu continues (skip if already passed from previous screen)
         if self.audio.is_none() {
-            let music = Path::new("references/FNF-PsychEngine/assets/shared/music/freakyMenu.ogg");
-            let mut audio = AudioEngine::new();
-            audio.play_loop_music_vol(music, 0.7);
-            self.audio = Some(audio);
+            if let Some(music) = paths.music("freakyMenu") {
+                let mut audio = AudioEngine::new();
+                audio.play_loop_music_vol(&music, 0.7);
+                self.audio = Some(audio);
+            }
         }
     }
 
@@ -147,18 +148,51 @@ impl Screen for MainMenuScreen {
             KeyCode::Enter | KeyCode::Space => {
                 self.confirmed = true;
                 if let Some(audio) = &mut self.audio {
-                    let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/confirmMenu.ogg");
-                    audio.play_sound(sfx, 0.7);
+                    let paths = AssetPaths::platform_default();
+                    if let Some(sfx) = paths.sound("confirmMenu") {
+                        audio.play_sound(&sfx, 0.7);
+                    }
                 }
             }
             KeyCode::Escape | KeyCode::Backspace => {
                 if let Some(audio) = &mut self.audio {
-                    let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/cancelMenu.ogg");
-                    audio.play_sound(sfx, 0.7);
+                    let paths = AssetPaths::platform_default();
+                    if let Some(sfx) = paths.sound("cancelMenu") {
+                        audio.play_sound(&sfx, 0.7);
+                    }
                 }
                 self.next = Some(Box::new(super::title::TitleScreen::new()));
             }
             _ => {}
+        }
+    }
+
+    fn handle_touch(&mut self, _id: u64, phase: TouchPhase, _x: f64, y: f64) {
+        if phase != TouchPhase::Started || self.confirmed { return; }
+        let y = y as f32;
+
+        // Detect which menu item was tapped by Y position
+        for (i, item) in self.items.iter().enumerate() {
+            let item_screen_y = item.y - self.cam_y;
+            // Each item is roughly 140px tall
+            if y >= item_screen_y && y < item_screen_y + 140.0 {
+                if i == self.cur_selected {
+                    // Already selected — confirm
+                    self.handle_key(KeyCode::Enter);
+                } else {
+                    // Select this item
+                    self.cur_selected = i;
+                    self.update_item_anims();
+                    self.update_cam_target();
+                    if let Some(audio) = &mut self.audio {
+                        let paths = AssetPaths::platform_default();
+                        if let Some(sfx) = paths.sound("scrollMenu") {
+                            audio.play_sound(&sfx, 0.7);
+                        }
+                    }
+                }
+                return;
+            }
         }
     }
 

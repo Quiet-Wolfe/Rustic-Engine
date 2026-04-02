@@ -16,6 +16,61 @@ impl AssetPaths {
         }
     }
 
+    /// Cross-platform default: psych_default() on desktop, android_default() on Android.
+    pub fn platform_default() -> Self {
+        #[cfg(target_os = "android")]
+        { Self::android_default() }
+        #[cfg(not(target_os = "android"))]
+        { Self::psych_default() }
+    }
+
+    /// Build the default path resolver for Android.
+    /// Assets at /sdcard/RusticV2/assets/, mods at /sdcard/RusticV2/mods/.
+    #[cfg(target_os = "android")]
+    pub fn android_default() -> Self {
+        let mut paths = Self::new();
+        let base = PathBuf::from("/sdcard/RusticV2");
+
+        // Mods: each subfolder under mods/ gets highest priority
+        let mods_dir = base.join("mods");
+        if mods_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&mods_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        // Check for assets/ subdirectory (Psych Engine mod structure)
+                        let assets = p.join("assets");
+                        if assets.is_dir() {
+                            paths.add_root(assets.clone());
+                            let shared = assets.join("shared");
+                            if shared.exists() {
+                                paths.add_root(shared);
+                            }
+                        } else {
+                            // Flat mod (files directly in mod folder)
+                            paths.add_root(p.clone());
+                            let shared = p.join("shared");
+                            if shared.exists() {
+                                paths.add_root(shared);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Engine shared
+        paths.add_root(base.join("assets/shared"));
+        // Base game shared
+        paths.add_root(base.join("assets/base_game/shared"));
+        // Base game root
+        paths.add_root(base.join("assets/base_game"));
+        // Engine fallback
+        paths.add_root(base.join("assets"));
+
+        paths
+    }
+
     /// Build the default path resolver for Psych Engine + mods.
     /// Roots are added highest priority first.
     pub fn psych_default() -> Self {

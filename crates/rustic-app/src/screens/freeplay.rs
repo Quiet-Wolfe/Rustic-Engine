@@ -1,5 +1,4 @@
-use std::path::Path;
-
+use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
@@ -71,8 +70,10 @@ impl FreeplayScreen {
         self.bg_color_target = self.songs[song_idx].color;
 
         if let Some(audio) = &mut self.audio {
-            let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/scrollMenu.ogg");
-            audio.play_sound(sfx, 0.4);
+            let paths = AssetPaths::platform_default();
+            if let Some(sfx) = paths.sound("scrollMenu") {
+                audio.play_sound(&sfx, 0.4);
+            }
         }
     }
 
@@ -95,6 +96,20 @@ impl FreeplayScreen {
             self.bg_color_target = self.songs[song_idx].color;
         }
         self.lerp_selected = self.cur_selected as f32;
+    }
+
+    fn jump_to_letter(&mut self, letter: char) {
+        let letter_lower = letter.to_lowercase().next().unwrap_or('a');
+        // Find first song in filtered list starting with this letter
+        for (i, &song_idx) in self.filtered.iter().enumerate() {
+            if self.songs[song_idx].name.to_lowercase().starts_with(letter_lower) {
+                let delta = i as i32 - self.cur_selected as i32;
+                if delta != 0 {
+                    self.change_selection(delta);
+                }
+                return;
+            }
+        }
     }
 
     fn key_to_char(key: KeyCode) -> Option<char> {
@@ -125,7 +140,7 @@ impl FreeplayScreen {
 
 impl Screen for FreeplayScreen {
     fn init(&mut self, gpu: &GpuState) {
-        let paths = AssetPaths::psych_default();
+        let paths = AssetPaths::platform_default();
 
         // Background (desaturated, tinted per-song)
         if let Some(bg_path) = paths.image("menuDesat") {
@@ -203,8 +218,10 @@ impl Screen for FreeplayScreen {
                 if !self.filtered.is_empty() {
                     self.confirmed = true;
                     if let Some(audio) = &mut self.audio {
-                        let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/confirmMenu.ogg");
-                        audio.play_sound(sfx, 0.7);
+                        let paths = AssetPaths::platform_default();
+                        if let Some(sfx) = paths.sound("confirmMenu") {
+                            audio.play_sound(&sfx, 0.7);
+                        }
                     }
                     let song_idx = self.filtered[self.cur_selected];
                     let song = &self.songs[song_idx];
@@ -220,8 +237,10 @@ impl Screen for FreeplayScreen {
                     self.rebuild_filter();
                 } else {
                     if let Some(audio) = &mut self.audio {
-                        let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/cancelMenu.ogg");
-                        audio.play_sound(sfx, 0.7);
+                        let paths = AssetPaths::platform_default();
+                        if let Some(sfx) = paths.sound("cancelMenu") {
+                            audio.play_sound(&sfx, 0.7);
+                        }
                     }
                     self.next = Some(Box::new(super::main_menu::MainMenuScreen::new()));
                 }
@@ -232,8 +251,10 @@ impl Screen for FreeplayScreen {
                     self.rebuild_filter();
                 } else {
                     if let Some(audio) = &mut self.audio {
-                        let sfx = Path::new("references/FNF-PsychEngine/assets/shared/sounds/cancelMenu.ogg");
-                        audio.play_sound(sfx, 0.7);
+                        let paths = AssetPaths::platform_default();
+                        if let Some(sfx) = paths.sound("cancelMenu") {
+                            audio.play_sound(&sfx, 0.7);
+                        }
                     }
                     self.next = Some(Box::new(super::main_menu::MainMenuScreen::new()));
                 }
@@ -243,6 +264,48 @@ impl Screen for FreeplayScreen {
                     self.search.push(ch);
                     self.rebuild_filter();
                 }
+            }
+        }
+    }
+
+    fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
+        if phase != TouchPhase::Started || self.confirmed { return; }
+        let (x, y) = (x as f32, y as f32);
+
+        // Alphabet strip on the left edge (0-30px, from y=70 to y=GAME_H-30)
+        if x < 30.0 && y > 70.0 && y < GAME_H - 30.0 {
+            let strip_h = GAME_H - 100.0;
+            let t = (y - 70.0) / strip_h;
+            let letter_idx = (t * 26.0) as usize;
+            let letter = (b'A' + letter_idx.min(25) as u8) as char;
+            // Jump to first song starting with this letter
+            self.jump_to_letter(letter);
+            return;
+        }
+
+        // Difficulty area (top-right score box)
+        if y < 66.0 && x > GAME_W * 0.7 {
+            if x < GAME_W * 0.85 {
+                self.handle_key(KeyCode::ArrowLeft);
+            } else {
+                self.handle_key(KeyCode::ArrowRight);
+            }
+            return;
+        }
+
+        // Tap on a song in the list
+        let draw_dist = 6;
+        for (i, &_song_idx) in self.filtered.iter().enumerate() {
+            let target_y = i as f32 - self.lerp_selected;
+            if target_y.abs() > draw_dist as f32 { continue; }
+            let item_y = target_y * 1.3 * 120.0 + 320.0;
+            if y >= item_y - 15.0 && y < item_y + 35.0 {
+                if i == self.cur_selected {
+                    self.handle_key(KeyCode::Enter);
+                } else {
+                    self.change_selection(i as i32 - self.cur_selected as i32);
+                }
+                return;
             }
         }
     }
@@ -307,14 +370,17 @@ impl Screen for FreeplayScreen {
         gpu.push_colored_quad(score_x - 6.0, 0.0, score_bg_w, 66.0, [0.0, 0.0, 0.0, 0.6]);
         gpu.draw_batch(None);
 
-        // Difficulty display
+        // Difficulty display with tappable arrows
         let diff_name = DIFFICULTIES[self.cur_difficulty].to_uppercase();
-        let diff_text = if DIFFICULTIES.len() > 1 {
-            format!("< {} >", diff_name)
+        if DIFFICULTIES.len() > 1 {
+            // Draw < and > as separate tappable-looking buttons
+            gpu.draw_text("<", score_x, 41.0, 24.0, [1.0, 1.0, 0.4, 0.9]);
+            gpu.draw_text(&diff_name, score_x + 20.0, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
+            let arrow_x = GAME_W - 20.0;
+            gpu.draw_text(">", arrow_x, 41.0, 24.0, [1.0, 1.0, 0.4, 0.9]);
         } else {
-            diff_name.clone()
-        };
-        gpu.draw_text(&diff_text, score_x, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
+            gpu.draw_text(&diff_name, score_x, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
+        }
 
         // Score display
         gpu.draw_text("PERSONAL BEST: 0 (0%)", score_x, 5.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
@@ -328,7 +394,9 @@ impl Screen for FreeplayScreen {
         }
 
         // Bottom bar
-        let count_text = if self.search.is_empty() {
+        let count_text = if cfg!(target_os = "android") {
+            format!("{} songs | Tap song to play | Tap difficulty to change", self.filtered.len())
+        } else if self.search.is_empty() {
             format!("{} songs | Type to search | ENTER to play | LEFT-RIGHT difficulty", self.filtered.len())
         } else {
             format!("{}/{} songs | ESC to clear search | ENTER to play", self.filtered.len(), self.songs.len())
@@ -336,6 +404,26 @@ impl Screen for FreeplayScreen {
         gpu.push_colored_quad(0.0, GAME_H - 26.0, GAME_W, 26.0, [0.0, 0.0, 0.0, 0.6]);
         gpu.draw_batch(None);
         gpu.draw_text(&count_text, 10.0, GAME_H - 22.0, 16.0, [1.0, 1.0, 1.0, 1.0]);
+
+        // Alphabet quick-jump strip (Android touch UI)
+        if cfg!(target_os = "android") {
+            let strip_x = 2.0;
+            let strip_top = 70.0;
+            let strip_h = GAME_H - 100.0;
+            let letter_h = strip_h / 26.0;
+            // Semi-transparent background
+            gpu.push_colored_quad(0.0, strip_top, 28.0, strip_h, [0.0, 0.0, 0.0, 0.3]);
+            gpu.draw_batch(None);
+            for i in 0..26u8 {
+                let letter = (b'A' + i) as char;
+                let y = strip_top + i as f32 * letter_h;
+                gpu.draw_text(
+                    &letter.to_string(),
+                    strip_x + 4.0, y, letter_h.min(18.0),
+                    [1.0, 1.0, 1.0, 0.7],
+                );
+            }
+        }
 
         gpu.end_frame();
     }
