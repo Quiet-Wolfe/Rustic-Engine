@@ -18,6 +18,7 @@ use rustic_scripting::{ScriptManager, LuaSpriteKind};
 
 use crate::screen::Screen;
 use super::characters::{Character, StageBgSprite};
+use super::video::VideoPlayer;
 
 // === Psych Engine constants ===
 pub const GAME_W: f32 = 1280.0;
@@ -96,6 +97,16 @@ pub(super) const SPLASH_PREFIXES: [&str; 4] = [
     "note splash purple 1", "note splash blue 1",
     "note splash green 1", "note splash red 1",
 ];
+
+/// Animated health drain state (e.g. for scythe notes).
+/// Health slides from `start` down to `target` over `duration` seconds.
+pub(super) struct HealthDrain {
+    pub start: f32,
+    pub target: f32,
+    pub elapsed: f32,
+    pub duration: f32,
+    pub death_safe: bool,
+}
 
 /// Draw order layer — determines what gets drawn when.
 /// Built from stage `objects` array or hardcoded fallback.
@@ -321,6 +332,9 @@ pub struct PlayScreen {
     pub(super) death: Option<DeathState>,
     pub(super) death_char_preloaded: Option<Character>,
 
+    // Health drain (animated slide for harmful notes)
+    pub(super) health_drain: Option<HealthDrain>,
+
     // Lua scripting
     pub(super) scripts: ScriptManager,
     pub(super) lua_textures: HashMap<String, GpuTexture>,
@@ -360,6 +374,9 @@ pub struct PlayScreen {
     pub(super) pause_selection: usize,
     pub(super) skip_target_ms: f64,
     pub(super) wants_restart: bool,
+
+    /// Active video playback (when a cutscene is playing).
+    pub(super) video: Option<VideoPlayer>,
 }
 
 impl PlayScreen {
@@ -409,12 +426,14 @@ impl PlayScreen {
             event_index: 0,
             death: None,
             death_char_preloaded: None,
+            health_drain: None,
             scripts: ScriptManager::new(),
             lua_textures: HashMap::new(),
             lua_atlases: HashMap::new(),
             lua_behind: Vec::new(),
             lua_front: Vec::new(),
             paths: AssetPaths::platform_default(),
+            custom_note_assets: HashMap::new(),
             cam_characters_visible: true,
             reflections_enabled: false,
             reflection_alpha: 0.35,
@@ -431,6 +450,7 @@ impl PlayScreen {
             pause_selection: 0,
             skip_target_ms: 0.0,
             wants_restart: false,
+            video: None,
         }
     }
 
@@ -731,6 +751,25 @@ impl PlayScreen {
     /// Process game-level property writes from Lua (defaultCamZoom, cameraSpeed, etc.).
     pub(super) fn process_property_writes(&mut self) {
         use rustic_scripting::LuaValue;
+
+        // Process pending note type registrations from Lua scripts
+        let note_regs: Vec<_> = self.scripts.state.note_type_registrations.drain(..).collect();
+        for (name, hit_causes_miss, hit_damage, ignore_miss, note_skin, hit_sfx, drain_pct, death_safe) in note_regs {
+            rustic_core::note::register_note_type(&name, rustic_core::note::NoteTypeConfig {
+                hit_causes_miss,
+                hit_damage,
+                ignore_miss,
+                note_skin,
+                note_anims: None, // TODO: parse from separate Lua table
+                strum_anims: None,
+                confirm_anims: None,
+                hit_sfx,
+                health_drain_pct: drain_pct,
+                drain_death_safe: death_safe,
+            });
+            log::info!("Registered note type '{}' from Lua", name);
+        }
+
         let writes: Vec<(String, LuaValue)> = self.scripts.state.property_writes.drain(..).collect();
         for (prop, val) in writes {
             let as_f32 = match &val {

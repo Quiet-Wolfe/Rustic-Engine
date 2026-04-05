@@ -139,6 +139,14 @@ pub struct ScriptState {
 
     /// Reflections toggle: Some(true/false) when set, consumed each frame.
     pub reflections_request: Option<bool>,
+
+    /// Pending note type registrations from Lua (registerNoteType calls).
+    /// Each tuple: (name, hit_causes_miss, hit_damage, ignore_miss, note_skin, hit_sfx, drain_pct, death_safe)
+    pub note_type_registrations: Vec<(String, bool, f32, bool, Option<String>, Option<String>, f32, bool)>,
+
+    /// Pending video playback requests: (video_path, on_finish_callback_name).
+    /// Consumed by the game engine each frame.
+    pub video_requests: Vec<(String, Option<String>)>,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -373,6 +381,8 @@ impl ScriptState {
             healthbar_color_requests: Vec::new(),
             stage_lights_request: None,
             reflections_request: None,
+            note_type_registrations: Vec::new(),
+            video_requests: Vec::new(),
         }
     }
 }

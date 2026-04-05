@@ -626,6 +626,13 @@ impl LuaScript {
                                 let enabled: bool = tbl.get("enabled").unwrap_or(false);
                                 state.reflections_request = Some(enabled);
                             }
+                            "video" => {
+                                let filename: String = tbl.get("filename").unwrap_or_default();
+                                let callback: Option<String> = tbl.get("callback").ok();
+                                if !filename.is_empty() {
+                                    state.video_requests.push((filename, callback));
+                                }
+                            }
                             _ => {}
                         }
                     } else if let Ok(prop) = tbl.get::<String>("prop") {
@@ -819,6 +826,30 @@ impl LuaScript {
                     };
                     state.custom_vars.insert(key, lua_val);
                 }
+            }
+        }
+
+        // Drain __pending_note_types (registerNoteType calls)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_note_types") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    let name: String = tbl.get("name").unwrap_or_default();
+                    if name.is_empty() { continue; }
+                    state.note_type_registrations.push((
+                        name,
+                        tbl.get::<bool>("hitCausesMiss").unwrap_or(false),
+                        tbl.get::<f64>("hitDamage").unwrap_or(0.0) as f32,
+                        tbl.get::<bool>("ignoreMiss").unwrap_or(false),
+                        tbl.get::<String>("noteSkin").ok(),
+                        tbl.get::<String>("hitSfx").ok(),
+                        tbl.get::<f64>("healthDrainPct").unwrap_or(0.0) as f32,
+                        tbl.get::<bool>("drainDeathSafe").unwrap_or(false),
+                    ));
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_note_types", new_tbl).ok();
             }
         }
     }

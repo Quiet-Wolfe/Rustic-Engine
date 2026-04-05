@@ -315,6 +315,15 @@ impl AssetPaths {
         self.find(&format!("images/{name}.xml"))
     }
 
+    /// Find a video file (tries common extensions).
+    pub fn video(&self, name: &str) -> Option<PathBuf> {
+        self.find_any(&[
+            format!("videos/{name}.mp4"),
+            format!("videos/{name}.webm"),
+            format!("videos/{name}.ogv"),
+        ])
+    }
+
     /// Find a sound effect.
     pub fn sound(&self, name: &str) -> Option<PathBuf> {
         self.find_any(&[

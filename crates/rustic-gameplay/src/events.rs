@@ -64,4 +64,13 @@ pub enum GameEvent {
     UnmuteVocals,
     /// Play a miss sound effect.
     PlayMissSound,
+    /// A harmful note was hit: play custom SFX and start health drain.
+    HarmfulNoteHit {
+        /// Path to SFX file (relative to sounds dir, without extension).
+        sfx_path: String,
+        /// Fraction of max health to drain (0.0–1.0). 0.0 = instant damage only.
+        drain_pct: f32,
+        /// If true, drain cannot kill (stops just above death threshold).
+        death_safe: bool,
+    },
 }

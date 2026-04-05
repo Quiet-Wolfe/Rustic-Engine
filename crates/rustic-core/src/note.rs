@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// All note types supported by Psych Engine.
@@ -150,6 +151,7 @@ impl NoteData {
 }
 
 /// Configuration for a custom note type — gameplay behavior and asset overrides.
+/// Note types are registered at runtime (typically from Lua scripts) via `register_note_type`.
 #[derive(Debug, Clone)]
 pub struct NoteTypeConfig {
     /// If true, hitting this note damages the player instead of scoring.
@@ -166,11 +168,18 @@ pub struct NoteTypeConfig {
     pub strum_anims: Option<[String; 4]>,
     /// Custom strum confirm (hit) animation names for the 4 directions.
     pub confirm_anims: Option<[String; 4]>,
+    /// SFX to play when this note type is hit (path relative to sounds dir, without extension).
+    pub hit_sfx: Option<String>,
+    /// If > 0.0, health drains by this fraction over time instead of instantly.
+    /// E.g. 0.5 means health slides down by 50% of max (1.0) over ~0.5s.
+    pub health_drain_pct: f32,
+    /// If true, the health drain cannot kill — it stops just above the death threshold
+    /// on the first hit. A second hit while already near death IS lethal.
+    pub drain_death_safe: bool,
 }
 
-impl NoteTypeConfig {
-    /// Default config: normal note behavior, no skin override.
-    fn default_config() -> Self {
+impl Default for NoteTypeConfig {
+    fn default() -> Self {
         Self {
             hit_causes_miss: false,
             hit_damage: 0.0,
@@ -179,74 +188,42 @@ impl NoteTypeConfig {
             note_anims: None,
             strum_anims: None,
             confirm_anims: None,
+            hit_sfx: None,
+            health_drain_pct: 0.0,
+            drain_death_safe: false,
         }
     }
+}
 
-    /// Look up config for a known note type name. Returns None for unknown types.
-    pub fn for_type(name: &str) -> Option<Self> {
-        match name {
-            "Hurt Note" => Some(Self {
-                hit_causes_miss: true,
-                hit_damage: 0.1,
-                ignore_miss: false,
-                ..Self::default_config()
-            }),
-            "scytheNote" => Some(Self {
-                hit_causes_miss: true,
-                hit_damage: 0.15,
-                ignore_miss: true,
-                note_skin: Some("nightflaid/Scythe_Note_Assets".into()),
-                note_anims: Some([
-                    "Scythe_Note_Left".into(),
-                    "Scythe_Note_Down".into(),
-                    "Scythe_Note_Up".into(),
-                    "Scythe_Note_Right".into(),
-                ]),
-                strum_anims: Some([
-                    "Strum_Left".into(),
-                    "Strum_Down".into(),
-                    "Strum_Up".into(),
-                    "Strum_Right".into(),
-                ]),
-                confirm_anims: Some([
-                    "StrumHit_Left".into(),
-                    "StrumHit_Down".into(),
-                    "StrumHit_Up".into(),
-                    "StrumHit_Right".into(),
-                ]),
-            }),
-            "insatianNote" => Some(Self {
-                hit_causes_miss: true,
-                hit_damage: 0.12,
-                ignore_miss: true,
-                note_skin: Some("notes/Gluttony_Note_Assets".into()),
-                note_anims: Some([
-                    "Left(Up)".into(),
-                    "Down(Up)".into(),
-                    "Up(Up)".into(),
-                    "Right(Up)".into(),
-                ]),
-                strum_anims: Some([
-                    "static Left".into(),
-                    "static Down".into(),
-                    "static Up".into(),
-                    "static Right".into(),
-                ]),
-                confirm_anims: Some([
-                    "confirm Left".into(),
-                    "confirm Down".into(),
-                    "confirm Up".into(),
-                    "confirm Right".into(),
-                ]),
-            }),
-            _ => None,
-        }
-    }
+use std::sync::RwLock;
 
-    /// Convenience: check if a note type name is a known harmful type.
-    pub fn is_harmful(name: &str) -> bool {
-        Self::for_type(name).map_or(false, |c| c.hit_causes_miss)
+static NOTE_TYPE_REGISTRY: RwLock<Option<HashMap<String, NoteTypeConfig>>> = RwLock::new(None);
+
+fn ensure_registry() {
+    let mut reg = NOTE_TYPE_REGISTRY.write().unwrap();
+    if reg.is_none() {
+        *reg = Some(HashMap::new());
     }
+}
+
+/// Register a note type config. Called from Lua scripts or engine init.
+pub fn register_note_type(name: &str, config: NoteTypeConfig) {
+    ensure_registry();
+    let mut reg = NOTE_TYPE_REGISTRY.write().unwrap();
+    if let Some(map) = reg.as_mut() {
+        map.insert(name.to_string(), config);
+    }
+}
+
+/// Look up config for a registered note type name. Returns None for unknown types.
+pub fn get_note_type_config(name: &str) -> Option<NoteTypeConfig> {
+    let reg = NOTE_TYPE_REGISTRY.read().unwrap();
+    reg.as_ref().and_then(|map| map.get(name).cloned())
+}
+
+/// Convenience: check if a note type name is a registered harmful type.
+pub fn is_note_type_harmful(name: &str) -> bool {
+    get_note_type_config(name).map_or(false, |c| c.hit_causes_miss)
 }
 
 /// An event note parsed from the chart events array.

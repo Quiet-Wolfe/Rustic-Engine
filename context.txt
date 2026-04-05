@@ -1,0 +1,45 @@
+ Did you add custom note support?                                                                                                                                                                                                           
+
+● Not fully — tasks #48 and #49 are still pending. Let me check what's actually in place.
+
+● Explore(Check custom note skin state)
+  ⎿  Read(crates/rustic-core/src/chart.rs)
+     Bash(grep -rn "note_type_config\|NoteTypeConfig" /home/quiet/RusticV2/crates/rustic-app/src/screens/play/ 2>/dev/null)
+     Bash(grep -rn "register_note_type\|get_note_type_config" /home/quiet/RusticV2/crates/rustic-app/src/ 2>/dev/null)
+     +29 more tool uses (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Yeah they work. I can't tell the difference between them and regular notes so I keep dying.                                                                                                                                                
+
+● So the note types work functionally but aren't rendering with their custom skins — they look identical to normal notes. Let me check what's happening in the draw path.
+
+  Searched for 3 patterns, read 2 files (ctrl+o to expand)
+
+● Now let me check if custom note assets are ever actually loaded, and how notes are drawn in draw.rs:
+
+  Searched for 2 patterns (ctrl+o to expand)
+
+● custom_note_assets is declared but never populated. The note type configs are registered but their note_skin field is never used to load textures. And in draw.rs, notes always use self.note_assets or self.opp_note_assets regardless of
+  type.
+
+  Two things missing:
+  1. Load custom note skins when note types are registered (after register_note_type)
+  2. Use them in drawing — look up per-note assets based on nd.note_type
+
+  Let me implement both. First, let me understand the NoteData structure:
+
+  Read 2 files (ctrl+o to expand)    
+  ⎿  Interrupted · What should Claude do instead?
+                                                                                                                                                                         
+  12 tasks (9 done, 1 in progress, 2 open)                                              
+  ◼ Load custom note skins in PlayScreen init
+  ◻ Build, test, verify                            
+  ◻ Render custom notes with their skins in draw.rs
+  ✔ Add NoteTypeConfig to rustic-core/src/note.rs
+  ✔ Implement gameplay logic in PlayState             
+  ✔ Add hit_causes_miss to GameEvent                
+  ✔ Handle hit_causes_miss visual effects in update.rs
+  ✔ Implement Scythe note type: SFX + health slide
+  ✔ Add video playback via ffmpeg-next crate             
+  ✔ Fix video.rs: add wgpu and libc dependencies to rustic-app
+   … +2 completed  

@@ -36,8 +36,8 @@ pub struct GpuTexture {
 
 /// Core GPU state: device, surface, sprite pipeline.
 pub struct GpuState {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
@@ -46,7 +46,7 @@ pub struct GpuState {
     proj_buffer: wgpu::Buffer,
     proj_bind_group: wgpu::BindGroup,
     pub texture_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+    pub sampler: wgpu::Sampler,
     nearest_sampler: wgpu::Sampler,
     // Batch
     vertices: Vec<SpriteVertex>,
@@ -955,6 +955,54 @@ impl GpuState {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.proj_bind_group, &[]);
             pass.set_bind_group(1, tex_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        self.vertices.clear();
+        self.indices.clear();
+    }
+
+    /// Draw accumulated vertices with a raw wgpu bind group (e.g. for video textures).
+    pub fn draw_batch_with_bind_group(&mut self, bind_group: &wgpu::BindGroup) {
+        if self.vertices.is_empty() {
+            return;
+        }
+        let view = self.frame_view.as_ref().expect("call begin_frame first");
+
+        let load_op = if self.frame_cleared {
+            wgpu::LoadOp::Load
+        } else {
+            self.frame_cleared = true;
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+        };
+
+        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+        self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+
+        let (vp_x, vp_y, vp_w, vp_h) = if self.pp_active {
+            (0.0, 0.0, self.game_w, self.game_h)
+        } else {
+            self.viewport_rect()
+        };
+
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Batch Pass (bind group)"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+            pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.proj_bind_group, &[]);
+            pass.set_bind_group(1, bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);

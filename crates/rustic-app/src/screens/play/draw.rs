@@ -2,6 +2,8 @@ use rustic_core::note::NoteData;
 use rustic_core::rating;
 use rustic_render::gpu::GpuState;
 
+use crate::screens::video::VideoPlayer;
+
 use super::{
     PlayScreen, DrawLayer, NoteAssets,
     GAME_W, GAME_H, STRUM_Y, NOTE_WIDTH, NOTE_SCALE,
@@ -29,6 +31,81 @@ impl PlayScreen {
         let white = [1.0, 1.0, 1.0, 1.0];
 
         if !gpu.begin_frame() {
+            return;
+        }
+
+        // Process video playback requests from Lua (needs GPU for texture creation)
+        let video_reqs: Vec<_> = self.scripts.state.video_requests.drain(..).collect();
+        for (filename, callback) in video_reqs {
+            // Resolve video path from asset roots (tries .mp4, .webm, .ogv)
+            let video_path = self.paths.video(&filename);
+            if let Some(path) = video_path {
+                match VideoPlayer::new(
+                    &path,
+                    &gpu.device,
+                    &gpu.texture_layout,
+                    &gpu.sampler,
+                ) {
+                    Ok(player) => {
+                        log::info!("Starting video: {:?}", path);
+                        // Pause audio during video
+                        if let Some(audio) = &mut self.audio {
+                            audio.pause();
+                        }
+                        let mut player = player;
+                        if let Some(cb) = callback {
+                            player.set_on_finish(cb);
+                        }
+                        self.video = Some(player);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load video '{}': {}", filename, e);
+                    }
+                }
+            } else {
+                log::warn!("Video file not found: {}", filename);
+            }
+        }
+
+        // === Video playback overlay ===
+        if let Some(video) = &mut self.video {
+            video.upload(&gpu.queue);
+
+            // Black background + centered video frame
+            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 1.0]);
+            gpu.draw_batch(None);
+
+            // Center the video in the game viewport
+            let (vw, vh) = video.dimensions();
+            let scale = (GAME_W / vw as f32).min(GAME_H / vh as f32);
+            let dw = vw as f32 * scale;
+            let dh = vh as f32 * scale;
+            let dx = (GAME_W - dw) / 2.0;
+            let dy = (GAME_H - dh) / 2.0;
+            gpu.push_texture_region(
+                vw as f32, vh as f32,
+                0.0, 0.0, vw as f32, vh as f32,
+                dx, dy, dw, dh,
+                false, white,
+            );
+            gpu.draw_batch_with_bind_group(video.bind_group());
+
+            // Check if video finished
+            if video.is_finished() {
+                // Fire the on_finish callback if set
+                if let Some(cb) = video.take_on_finish() {
+                    if self.scripts.has_scripts() {
+                        self.scripts.call_lua_function(&cb, "");
+                    }
+                }
+                self.video = None;
+                // Resume audio playback
+                if let Some(audio) = &mut self.audio {
+                    audio.play();
+                }
+            }
+
+            gpu.end_frame();
             return;
         }
 

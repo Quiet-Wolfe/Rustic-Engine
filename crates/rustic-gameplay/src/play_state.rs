@@ -1,5 +1,5 @@
 use rustic_core::conductor::Conductor;
-use rustic_core::note::{NoteData, NoteTypeConfig};
+use rustic_core::note::{NoteData, get_note_type_config, is_note_type_harmful};
 use rustic_core::rating::{self, Rating};
 use rustic_core::scoring::{self, ScoreState};
 
@@ -108,14 +108,29 @@ impl PlayState {
             if let Some(judgment) = rating::judge_note(&self.ratings, diff) {
                 self.notes[idx].was_good_hit = true;
                 let type_str = self.notes[idx].kind.as_type_str().to_string();
-                let hit_causes_miss = NoteTypeConfig::is_harmful(&type_str);
+                let hit_causes_miss = is_note_type_harmful(&type_str);
 
                 if hit_causes_miss {
                     // Harmful note: damage player, no score gain
-                    let dmg = NoteTypeConfig::for_type(&type_str)
-                        .map(|c| c.hit_damage)
-                        .unwrap_or(0.1);
-                    self.score.change_health(-dmg);
+                    let config = get_note_type_config(&type_str);
+                    let dmg = config.as_ref().map(|c| c.hit_damage).unwrap_or(0.1);
+                    let sfx = config.as_ref().and_then(|c| c.hit_sfx.clone());
+                    let drain_pct = config.as_ref().map(|c| c.health_drain_pct).unwrap_or(0.0);
+                    let death_safe = config.as_ref().map(|c| c.drain_death_safe).unwrap_or(false);
+
+                    if drain_pct > 0.0 {
+                        // Sliding drain: we don't damage here — the visual layer
+                        // will animate the health bar down over time.
+                        // Emit the drain request so the app layer handles it.
+                        self.events.push(GameEvent::HarmfulNoteHit {
+                            sfx_path: sfx.unwrap_or_default(),
+                            drain_pct,
+                            death_safe,
+                        });
+                    } else {
+                        // Instant damage
+                        self.score.change_health(-dmg);
+                    }
                     self.player_confirm[lane] = f64::MIN_POSITIVE;
 
                     self.events.push(GameEvent::NoteHit {
@@ -215,7 +230,7 @@ impl PlayState {
                 self.notes[i].was_good_hit = true;
                 self.opponent_confirm[self.notes[i].lane] = f64::MIN_POSITIVE;
                 let type_str = self.notes[i].kind.as_type_str().to_string();
-                let hit_causes_miss = NoteTypeConfig::is_harmful(&type_str);
+                let hit_causes_miss = is_note_type_harmful(&type_str);
                 self.events.push(GameEvent::OpponentNoteHit {
                     lane: self.notes[i].lane,
                     note_type: type_str,
@@ -231,7 +246,7 @@ impl PlayState {
             {
                 self.notes[i].too_late = true;
                 let type_str = self.notes[i].kind.as_type_str().to_string();
-                let ignored = NoteTypeConfig::for_type(&type_str)
+                let ignored = get_note_type_config(&type_str)
                     .map_or(false, |c| c.ignore_miss);
 
                 if !ignored {

@@ -37,6 +37,14 @@ impl PlayScreen {
         self.last_dt = dt;
         if self.paused { return; }
 
+        // Video playback: when active, only update the video (game pauses)
+        if let Some(video) = &mut self.video {
+            if video.is_playing() {
+                video.tick(dt as f64);
+            }
+            return;
+        }
+
         // Death state machine (visual only)
         if let Some(death) = &mut self.death {
             let dt_ms = dt as f64 * 1000.0;
@@ -73,6 +81,19 @@ impl PlayScreen {
         }
 
         let dt_ms = dt as f64 * 1000.0;
+
+        // Health drain animation (sliding health bar for harmful notes)
+        if let Some(drain) = &mut self.health_drain {
+            drain.elapsed += dt;
+            let t = (drain.elapsed / drain.duration).min(1.0);
+            // Ease out quad
+            let eased = 1.0 - (1.0 - t) * (1.0 - t);
+            self.game.score.health = drain.start + (drain.target - drain.start) * eased;
+            if t >= 1.0 {
+                self.game.score.health = drain.target;
+                self.health_drain = None;
+            }
+        }
 
         // Visual: rating popup physics
         for popup in &mut self.rating_popups {
@@ -282,6 +303,14 @@ impl PlayScreen {
                         // Health bar colors are handled by rustic/rustic_ext.lua via setHealthBarColor
                     }
                 }
+                "Midsong Video" => {
+                    // Play a mid-song video. v1 = video name (filename without extension).
+                    // The Lua onEvent callback fires first (for character changes etc),
+                    // then this queues the video for playback in the draw phase.
+                    if !v1.is_empty() {
+                        self.scripts.state.video_requests.push((v1.clone(), None));
+                    }
+                }
                 _ => {}
             }
         }
@@ -472,6 +501,38 @@ impl PlayScreen {
                 GameEvent::PlayMissSound => {
                     if let Some(audio) = &mut self.audio {
                         audio.play_miss_sound();
+                    }
+                }
+                GameEvent::HarmfulNoteHit { sfx_path, drain_pct, death_safe } => {
+                    // Play custom SFX
+                    if !sfx_path.is_empty() {
+                        if let Some(audio) = &mut self.audio {
+                            if let Some(sfx) = self.paths.sound(&sfx_path) {
+                                audio.play_sound(&sfx, 1.0);
+                            }
+                        }
+                    }
+                    // Start animated health drain
+                    if drain_pct > 0.0 {
+                        let current = self.game.score.health;
+                        // Max health is 2.0; drain_pct is fraction of max (e.g. 0.5 = drain 1.0)
+                        let drain_amount = drain_pct * 2.0;
+                        let raw_target = current - drain_amount;
+                        let target = if death_safe && current > 0.05 {
+                            // Safe: clamp to just above death threshold, but only if
+                            // health was comfortably above it. A second hit when already
+                            // near the threshold is lethal.
+                            raw_target.max(0.025) // ~1.25% health, just above death
+                        } else {
+                            raw_target.max(0.0)
+                        };
+                        self.health_drain = Some(super::HealthDrain {
+                            start: current,
+                            target,
+                            elapsed: 0.0,
+                            duration: 0.5,
+                            death_safe,
+                        });
                     }
                 }
                 GameEvent::Death => {

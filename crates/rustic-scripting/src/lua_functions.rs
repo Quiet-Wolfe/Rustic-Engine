@@ -146,6 +146,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     register_tween_functions(lua)?;
     register_sound_functions(lua)?;
     register_text_functions(lua)?;
+    register_note_type_function(lua)?;
     register_noop_stubs(lua)?;
 
     Ok(())
@@ -1760,8 +1761,75 @@ fn register_text_functions(lua: &Lua) -> LuaResult<()> {
     Ok(())
 }
 
+/// Register a custom note type from Lua.
+/// registerNoteType(name, configTable)
+/// configTable fields (all optional):
+///   hitCausesMiss: bool (default false)
+///   hitDamage: number (0.0–1.0, default 0.0)
+///   ignoreMiss: bool (default false)
+///   noteSkin: string (atlas path relative to images dir)
+///   noteAnims: {string, string, string, string} (4 direction anim names)
+///   strumAnims: {string, string, string, string}
+///   confirmAnims: {string, string, string, string}
+///   hitSfx: string (path relative to sounds dir, without extension)
+///   healthDrainPct: number (0.0–1.0, fraction of max health to slide-drain)
+///   drainDeathSafe: bool (if true, first drain stops just above death)
+fn register_note_type_function(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+
+    // Pending note type registrations: table of {name, config...}
+    globals.set("__pending_note_types", lua.create_table()?)?;
+
+    globals.set("registerNoteType", lua.create_function(|lua, (name, config): (String, LuaTable)| {
+        let pending: LuaTable = lua.globals().get("__pending_note_types")?;
+
+        let entry = lua.create_table()?;
+        entry.set("name", name.clone())?;
+        // Store all fields as-is; the app layer will parse them into NoteTypeConfig
+        entry.set("hitCausesMiss", config.get::<bool>("hitCausesMiss").unwrap_or(false))?;
+        entry.set("hitDamage", config.get::<f64>("hitDamage").unwrap_or(0.0))?;
+        entry.set("ignoreMiss", config.get::<bool>("ignoreMiss").unwrap_or(false))?;
+        if let Ok(v) = config.get::<String>("noteSkin") { entry.set("noteSkin", v)?; }
+        if let Ok(v) = config.get::<String>("hitSfx") { entry.set("hitSfx", v)?; }
+        if let Ok(v) = config.get::<f64>("healthDrainPct") { entry.set("healthDrainPct", v)?; }
+        if let Ok(v) = config.get::<bool>("drainDeathSafe") { entry.set("drainDeathSafe", v)?; }
+
+        // Animation arrays: store as sub-tables
+        for &key in &["noteAnims", "strumAnims", "confirmAnims"] {
+            if let Ok(tbl) = config.get::<LuaTable>(key) {
+                let arr = lua.create_table()?;
+                for i in 1..=4 {
+                    if let Ok(v) = tbl.get::<String>(i) { arr.set(i, v)?; }
+                }
+                entry.set(key, arr)?;
+            }
+        }
+
+        let len = pending.len()? as i64;
+        pending.set(len + 1, entry)?;
+        log::info!("Queued note type registration '{}' from Lua", name);
+        Ok(())
+    })?)?;
+
+    Ok(())
+}
+
 /// Register no-op stubs for all remaining Psych Engine functions that scripts may call.
 fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
+    // startVideo(filename, callback) — queue mid-song video playback
+    // Pauses gameplay, plays video, then resumes on finish
+    lua.globals().set("startVideo", lua.create_function(|lua, (filename, callback): (String, Option<String>)| {
+        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "video")?;
+        entry.set("filename", filename)?;
+        if let Some(ref cb) = callback {
+            entry.set("callback", cb.as_str())?;
+        }
+        let len = pending.len()? + 1;
+        pending.set(len, entry)?;
+        Ok(())
+    })?)?;
     let noop = lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> {
         Ok(LuaNil)
     })?;
@@ -1817,7 +1885,6 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         // Misc
         "getColorFromString", "getColorFromName",
         "setHudVisible",
-        "startVideo",
         "addShake",
         // Timers
         "onTweenCompleted", "onTimerCompleted", "onSoundFinished",
