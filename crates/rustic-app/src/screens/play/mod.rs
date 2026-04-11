@@ -24,6 +24,7 @@ use super::video::VideoPlayer;
 pub const GAME_W: f32 = 1280.0;
 pub const GAME_H: f32 = 720.0;
 pub(super) const STRUM_Y: f32 = 50.0;
+pub(super) const STRUM_Y_DOWN: f32 = 570.0;
 const STRUM_X: f32 = 42.0;
 pub(super) const NOTE_WIDTH: f32 = 112.0; // 160 * 0.7
 pub(super) const NOTE_SCALE: f32 = 0.7;
@@ -344,6 +345,8 @@ pub struct PlayScreen {
     pub(super) paths: AssetPaths,
     /// Per-note-type custom skin assets, keyed by type string (e.g. "scytheNote").
     pub(super) custom_note_assets: HashMap<String, NoteAssets>,
+    /// Pending note skin loads: (note_type_name, skin_path, custom_anims). Processed in draw phase with GPU.
+    pub(super) pending_note_skin_loads: Vec<(String, String, Option<[String; 4]>, Option<[String; 4]>, Option<[String; 4]>)>,
     /// Whether the character camera layer is visible (toggled by camCharacters.visible).
     pub(super) cam_characters_visible: bool,
     /// Whether character reflections are drawn (flipY copies below characters).
@@ -380,9 +383,12 @@ pub struct PlayScreen {
 }
 
 impl PlayScreen {
-    pub fn new(song_name: &str, difficulty: &str) -> Self {
+    pub fn new(song_name: &str, difficulty: &str, play_as_opponent: bool) -> Self {
+        let mut game = PlayState::new(100.0);
+        game.play_as_opponent = play_as_opponent;
+        
         Self {
-            game: PlayState::new(100.0),
+            game,
             audio: None,
             song_name: song_name.to_string(),
             difficulty: difficulty.to_string(),
@@ -434,6 +440,7 @@ impl PlayScreen {
             lua_front: Vec::new(),
             paths: AssetPaths::platform_default(),
             custom_note_assets: HashMap::new(),
+            pending_note_skin_loads: Vec::new(),
             cam_characters_visible: true,
             reflections_enabled: false,
             reflection_alpha: 0.35,
@@ -463,7 +470,7 @@ impl PlayScreen {
         None
     }
 
-    pub(super) fn strum_x(lane: usize, player: bool) -> f32 {
+    pub(super) fn strum_x(lane: usize, player: bool, _play_as_opponent: bool) -> f32 {
         let base = STRUM_X + 50.0 + NOTE_WIDTH * lane as f32;
         if player { base + GAME_W / 2.0 } else { base }
     }
@@ -580,6 +587,14 @@ impl PlayScreen {
         // postprocess_param_requests (individual params) is also handled in draw
     }
 
+    /// Whether a given strum lane is in downscroll mode.
+    /// Per-strum `down_scroll` overrides the global `self.downscroll`.
+    pub(super) fn is_strum_downscroll(&self, lane: usize, player: bool) -> bool {
+        let idx = if player { lane + 4 } else { lane };
+        let sp = &self.scripts.state.strum_props[idx];
+        sp.down_scroll.unwrap_or(self.downscroll)
+    }
+
     /// Get strum position/alpha/angle/scale from modchart state. Falls back to defaults.
     /// Returns (x, y, alpha, angle_degrees, scale).
     pub(super) fn strum_pos(&self, lane: usize, player: bool) -> (f32, f32, f32, f32, f32) {
@@ -588,7 +603,8 @@ impl PlayScreen {
         if sp.custom {
             (sp.x, sp.y, sp.alpha, sp.angle, sp.scale_x)
         } else {
-            (Self::strum_x(lane, player), STRUM_Y, 1.0, 0.0, NOTE_SCALE)
+            let default_y = if self.is_strum_downscroll(lane, player) { STRUM_Y_DOWN } else { STRUM_Y };
+            (Self::strum_x(lane, player, self.game.play_as_opponent), default_y, 1.0, 0.0, NOTE_SCALE)
         }
     }
 
@@ -598,6 +614,9 @@ impl PlayScreen {
         gpu: &rustic_render::gpu::GpuState,
         paths: &rustic_core::paths::AssetPaths,
         skin_path: &str,
+        custom_note_anims: Option<&[String; 4]>,
+        custom_strum_anims: Option<&[String; 4]>,
+        custom_confirm_anims: Option<&[String; 4]>,
     ) -> Option<NoteAssets> {
         let png = paths.image(skin_path)?;
         let xml_path = paths.image_xml(skin_path)?;
@@ -647,6 +666,27 @@ impl PlayScreen {
             for i in 0..4 {
                 atlas.add_by_prefix(HOLD_PIECE_ANIMS[i], "hold_piece");
                 atlas.add_by_prefix(HOLD_END_ANIMS[i], "hold_end");
+            }
+        }
+        // Fix known atlas typos: VS Retrospecter has "pruple end hold" instead of "purple hold end"
+        if atlas.get_frame(HOLD_END_ANIMS[0], 0).is_none() {
+            atlas.add_by_prefix(HOLD_END_ANIMS[0], "pruple end hold");
+        }
+
+        // Register custom animation names from Lua registerNoteType (e.g. "Scythe_Note_Left")
+        if let Some(anims) = custom_note_anims {
+            for anim in anims {
+                atlas.add_by_prefix(anim, anim);
+            }
+        }
+        if let Some(anims) = custom_strum_anims {
+            for anim in anims {
+                atlas.add_by_prefix(anim, anim);
+            }
+        }
+        if let Some(anims) = custom_confirm_anims {
+            for anim in anims {
+                atlas.add_by_prefix(anim, anim);
             }
         }
 
@@ -754,20 +794,29 @@ impl PlayScreen {
 
         // Process pending note type registrations from Lua scripts
         let note_regs: Vec<_> = self.scripts.state.note_type_registrations.drain(..).collect();
-        for (name, hit_causes_miss, hit_damage, ignore_miss, note_skin, hit_sfx, drain_pct, death_safe) in note_regs {
-            rustic_core::note::register_note_type(&name, rustic_core::note::NoteTypeConfig {
-                hit_causes_miss,
-                hit_damage,
-                ignore_miss,
-                note_skin,
-                note_anims: None, // TODO: parse from separate Lua table
-                strum_anims: None,
-                confirm_anims: None,
-                hit_sfx,
-                health_drain_pct: drain_pct,
-                drain_death_safe: death_safe,
+        for reg in note_regs {
+            // Queue skin load if a custom skin path was specified
+            if let Some(ref skin) = reg.note_skin {
+                if !skin.is_empty() && !self.custom_note_assets.contains_key(&reg.name) {
+                    self.pending_note_skin_loads.push((
+                        reg.name.clone(), skin.clone(),
+                        reg.note_anims.clone(), reg.strum_anims.clone(), reg.confirm_anims.clone(),
+                    ));
+                }
+            }
+            rustic_core::note::register_note_type(&reg.name, rustic_core::note::NoteTypeConfig {
+                hit_causes_miss: reg.hit_causes_miss,
+                hit_damage: reg.hit_damage,
+                ignore_miss: reg.ignore_miss,
+                note_skin: reg.note_skin,
+                note_anims: reg.note_anims,
+                strum_anims: reg.strum_anims,
+                confirm_anims: reg.confirm_anims,
+                hit_sfx: reg.hit_sfx,
+                health_drain_pct: reg.health_drain_pct,
+                drain_death_safe: reg.drain_death_safe,
             });
-            log::info!("Registered note type '{}' from Lua", name);
+            log::info!("Registered note type '{}' from Lua", reg.name);
         }
 
         let writes: Vec<(String, LuaValue)> = self.scripts.state.property_writes.drain(..).collect();
@@ -1224,7 +1273,7 @@ impl Screen for PlayScreen {
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {
         if self.wants_restart {
             self.wants_restart = false;
-            Some(Box::new(PlayScreen::new(&self.song_name, &self.difficulty)))
+            Some(Box::new(PlayScreen::new(&self.song_name, &self.difficulty, self.game.play_as_opponent)))
         } else if self.game.song_ended {
             self.game.song_ended = false;
             Some(Box::new(super::freeplay::FreeplayScreen::new()))

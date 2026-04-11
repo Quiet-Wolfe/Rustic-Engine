@@ -42,6 +42,7 @@ pub struct FreeplayScreen {
     bg_color_target: [f32; 3],
     next: Option<Box<dyn Screen>>,
     confirmed: bool,
+    play_as_opponent: bool,
 }
 
 impl FreeplayScreen {
@@ -59,6 +60,7 @@ impl FreeplayScreen {
             bg_color_target: [0.57, 0.44, 0.99],
             next: None,
             confirmed: false,
+            play_as_opponent: false,
         }
     }
 
@@ -210,6 +212,9 @@ impl Screen for FreeplayScreen {
         if self.confirmed { return; }
 
         match key {
+            KeyCode::Tab => {
+                self.play_as_opponent = !self.play_as_opponent;
+            }
             KeyCode::ArrowUp => self.change_selection(-1),
             KeyCode::ArrowDown => self.change_selection(1),
             KeyCode::ArrowLeft => self.change_difficulty(-1),
@@ -227,7 +232,7 @@ impl Screen for FreeplayScreen {
                     let song = &self.songs[song_idx];
                     let diff = DIFFICULTIES[self.cur_difficulty];
                     let song_path = song.name.to_lowercase().replace(' ', "-");
-                    self.next = Some(Box::new(PlayScreen::new(&song_path, diff)));
+                    self.next = Some(Box::new(PlayScreen::new(&song_path, diff, self.play_as_opponent)));
                 }
             }
             KeyCode::Escape => {
@@ -395,11 +400,11 @@ impl Screen for FreeplayScreen {
 
         // Bottom bar
         let count_text = if cfg!(target_os = "android") {
-            format!("{} songs | Tap song to play | Tap difficulty to change", self.filtered.len())
+            format!("{} songs | Tap song to play | Tap difficulty to change | Opponent: {}", self.filtered.len(), if self.play_as_opponent { "ON" } else { "OFF" })
         } else if self.search.is_empty() {
-            format!("{} songs | Type to search | ENTER to play | LEFT-RIGHT difficulty", self.filtered.len())
+            format!("{} songs | Type to search | ENTER to play | LEFT-RIGHT difficulty | TAB Opponent: {}", self.filtered.len(), if self.play_as_opponent { "ON" } else { "OFF" })
         } else {
-            format!("{}/{} songs | ESC to clear search | ENTER to play", self.filtered.len(), self.songs.len())
+            format!("{}/{} songs | ESC to clear search | ENTER to play | TAB Opponent: {}", self.filtered.len(), self.songs.len(), if self.play_as_opponent { "ON" } else { "OFF" })
         };
         gpu.push_colored_quad(0.0, GAME_H - 26.0, GAME_W, 26.0, [0.0, 0.0, 0.0, 0.6]);
         gpu.draw_batch(None);

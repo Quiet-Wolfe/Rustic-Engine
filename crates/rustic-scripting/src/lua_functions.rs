@@ -1485,6 +1485,12 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
         };
 
         let pending: LuaTable = g.get("__pending_tweens")?;
+        let mut prop_count = 0;
+        for _ in values.pairs::<mlua::Value, mlua::Value>() {
+            prop_count += 1;
+        }
+        
+        let mut is_first = true;
         // Create one tween per property in the values table
         for pair in values.pairs::<String, f64>() {
             let Ok((prop_name, end_val)) = pair else { continue };
@@ -1514,7 +1520,7 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
                     }
                 }
             };
-            let tween_tag = if values.len().unwrap_or(0) > 1 {
+            let tween_tag = if prop_count > 1 {
                 format!("{}_{}", tag, prop_name)
             } else {
                 tag.clone()
@@ -1526,8 +1532,11 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
             tbl.set("value", end_val)?;
             tbl.set("duration", duration)?;
             tbl.set("ease", ease.as_str())?;
-            if let Some(ref cb) = on_complete {
-                tbl.set("onComplete", cb.as_str())?;
+            if is_first {
+                if let Some(ref cb) = on_complete {
+                    tbl.set("onComplete", cb.as_str())?;
+                }
+                is_first = false;
             }
             let len = pending.len()? as i64;
             pending.set(len + 1, tbl)?;

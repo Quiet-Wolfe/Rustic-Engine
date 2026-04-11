@@ -3,6 +3,25 @@ use std::path::PathBuf;
 
 use crate::tweens::TweenManager;
 
+/// A pending note type registration from Lua `registerNoteType()`.
+#[derive(Debug, Clone, Default)]
+pub struct NoteTypeRegistration {
+    pub name: String,
+    pub hit_causes_miss: bool,
+    pub hit_damage: f32,
+    pub ignore_miss: bool,
+    pub note_skin: Option<String>,
+    pub hit_sfx: Option<String>,
+    pub health_drain_pct: f32,
+    pub drain_death_safe: bool,
+    /// Custom animation prefixes for note heads [Left, Down, Up, Right].
+    pub note_anims: Option<[String; 4]>,
+    /// Custom strum static animation prefixes.
+    pub strum_anims: Option<[String; 4]>,
+    /// Custom strum confirm (hit) animation prefixes.
+    pub confirm_anims: Option<[String; 4]>,
+}
+
 /// Shared mutable state accessible from Lua scripts.
 /// This is the bridge between Lua and the Rust game engine.
 pub struct ScriptState {
@@ -141,12 +160,14 @@ pub struct ScriptState {
     pub reflections_request: Option<bool>,
 
     /// Pending note type registrations from Lua (registerNoteType calls).
-    /// Each tuple: (name, hit_causes_miss, hit_damage, ignore_miss, note_skin, hit_sfx, drain_pct, death_safe)
-    pub note_type_registrations: Vec<(String, bool, f32, bool, Option<String>, Option<String>, f32, bool)>,
+    pub note_type_registrations: Vec<NoteTypeRegistration>,
 
     /// Pending video playback requests: (video_path, on_finish_callback_name).
     /// Consumed by the game engine each frame.
     pub video_requests: Vec<(String, Option<String>)>,
+
+    /// Global downscroll setting (used as fallback when per-strum down_scroll is None).
+    pub downscroll: bool,
 }
 
 /// Per-strum-note visual properties (modchart overrides).
@@ -383,6 +404,7 @@ impl ScriptState {
             reflections_request: None,
             note_type_registrations: Vec::new(),
             video_requests: Vec::new(),
+            downscroll: false,
         }
     }
 }

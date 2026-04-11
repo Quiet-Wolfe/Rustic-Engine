@@ -37,12 +37,11 @@ impl PlayScreen {
         self.last_dt = dt;
         if self.paused { return; }
 
-        // Video playback: when active, only update the video (game pauses)
+        // Video playback: tick video alongside normal game logic (overlay, not pause)
         if let Some(video) = &mut self.video {
             if video.is_playing() {
                 video.tick(dt as f64);
             }
-            return;
         }
 
         // Death state machine (visual only)
@@ -329,8 +328,10 @@ impl PlayScreen {
                             fade_delay: self.game.conductor.crochet,
                             alpha: 1.0,
                         });
-                        if let Some(bf) = &mut self.char_bf {
-                            bf.play_miss(lane);
+                        if self.game.play_as_opponent {
+                            if let Some(dad) = &mut self.char_dad { dad.play_miss(lane); }
+                        } else {
+                            if let Some(bf) = &mut self.char_bf { bf.play_miss(lane); }
                         }
                     } else {
                         // Normal hit: show rating popup
@@ -346,17 +347,20 @@ impl PlayScreen {
                         // Visual: note splash on sick hits
                         if rating == "sick" {
                             self.splashes.push(NoteSplash {
-                                lane, player: true, frame: 0, timer: 0.0,
+                                lane, player: !self.game.play_as_opponent, frame: 0, timer: 0.0,
                             });
                         }
-                        // Character: BF sing
-                        if let Some(bf) = &mut self.char_bf {
-                            bf.play_sing(lane);
+                        // Character: sing
+                        if self.game.play_as_opponent {
+                            if let Some(dad) = &mut self.char_dad { dad.play_sing(lane); }
+                        } else {
+                            if let Some(bf) = &mut self.char_bf { bf.play_sing(lane); }
                         }
                     }
                     // Lua: goodNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        self.scripts.call_note_hit("goodNoteHit", members_index, lane, &note_type, is_sustain);
+                        let lua_event = if self.game.play_as_opponent { "opponentNoteHit" } else { "goodNoteHit" };
+                        self.scripts.call_note_hit(lua_event, members_index, lane, &note_type, is_sustain);
                     }
                 }
                 GameEvent::NoteMiss { lane, note_type, members_index, ignored } => {
@@ -368,8 +372,10 @@ impl PlayScreen {
                             fade_delay: self.game.conductor.crochet,
                             alpha: 1.0,
                         });
-                        if let Some(bf) = &mut self.char_bf {
-                            bf.play_miss(lane);
+                        if self.game.play_as_opponent {
+                            if let Some(dad) = &mut self.char_dad { dad.play_miss(lane); }
+                        } else {
+                            if let Some(bf) = &mut self.char_bf { bf.play_miss(lane); }
                         }
                     }
                     // Lua: noteMiss(membersIndex, noteData, noteType, isSustainNote)
@@ -381,12 +387,15 @@ impl PlayScreen {
                     if !self.disable_zooming {
                         self.cam_zooming = true;
                     }
-                    if let Some(dad) = &mut self.char_dad {
-                        dad.play_sing(lane);
+                    if self.game.play_as_opponent {
+                        if let Some(bf) = &mut self.char_bf { bf.play_sing(lane); }
+                    } else {
+                        if let Some(dad) = &mut self.char_dad { dad.play_sing(lane); }
                     }
                     // Lua: opponentNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        self.scripts.call_note_hit("opponentNoteHit", members_index, lane, &note_type, is_sustain);
+                        let lua_event = if self.game.play_as_opponent { "goodNoteHit" } else { "opponentNoteHit" };
+                        self.scripts.call_note_hit(lua_event, members_index, lane, &note_type, is_sustain);
                     }
                 }
                 GameEvent::CountdownBeat { swag } => {
@@ -460,9 +469,9 @@ impl PlayScreen {
                         self.icon_scale_bf = 1.2;
                         self.icon_scale_dad = 1.2;
                     }
-                    // Custom health bar fade-in at beat 16
-                    if beat == 16 {
-                        if let Some(chb) = &mut self.custom_healthbar {
+                    // Custom health bar fade-in at beat 16 (or later if time was skipped)
+                    if let Some(chb) = &mut self.custom_healthbar {
+                        if !chb.visible && beat >= 16 {
                             chb.fade_in();
                         }
                     }

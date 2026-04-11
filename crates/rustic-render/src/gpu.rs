@@ -671,7 +671,7 @@ impl GpuState {
         self.push_quad_rotated(cx, cy, w, h, u0, v0, u1, v1, angle_rad, flip_x, color);
     }
 
-    fn push_quad(
+    pub fn push_quad(
         &mut self,
         x: f32, y: f32, w: f32, h: f32,
         tl_u: f32, tl_v: f32,

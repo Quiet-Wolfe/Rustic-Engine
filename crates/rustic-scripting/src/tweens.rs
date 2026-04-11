@@ -323,6 +323,10 @@ pub struct TweenManager {
     pub completed_tweens: Vec<(String, String)>,
     /// Completed timer ticks: (tag, loops_done, loops_remaining).
     pub completed_timers: Vec<(String, i32, i32)>,
+    /// Tags of tweens that finished on the previous frame, pending removal.
+    /// Kept for one extra frame so apply_to_sprites can apply the final value
+    /// and has_active_tween checks prevent stale Lua table overwrites.
+    pending_removal: Vec<String>,
 }
 
 impl TweenManager {
@@ -332,6 +336,7 @@ impl TweenManager {
             timers: HashMap::new(),
             completed_tweens: Vec::new(),
             completed_timers: Vec::new(),
+            pending_removal: Vec::new(),
         }
     }
 
@@ -355,18 +360,23 @@ impl TweenManager {
         self.timers.remove(tag);
     }
 
-    /// Update all tweens and timers. Returns lists of completed tween/timer events.
+    /// Update all tweens and timers.
+    /// Finished tweens are kept in the HashMap for one extra frame so that
+    /// apply_to_sprites can apply their final value and the Lua strum sync's
+    /// has_active_tween check still sees them. They are removed on the NEXT
+    /// call to update().
     pub fn update(&mut self, dt: f32) {
-        // Update tweens
-        let mut finished_tags = Vec::new();
+        // Remove tweens that finished on the PREVIOUS frame
+        for tag in self.pending_removal.drain(..) {
+            self.tweens.remove(&tag);
+        }
+
+        // Advance all remaining tweens
         for (tag, tween) in &mut self.tweens {
             if tween.advance(dt) {
-                finished_tags.push((tag.clone(), tween.target.clone()));
+                self.pending_removal.push(tag.clone());
+                self.completed_tweens.push((tag.clone(), tween.target.clone()));
             }
-        }
-        for (tag, target) in &finished_tags {
-            self.tweens.remove(tag);
-            self.completed_tweens.push((tag.clone(), target.clone()));
         }
 
         // Update timers

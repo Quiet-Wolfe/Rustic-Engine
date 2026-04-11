@@ -1,5 +1,5 @@
 use rustic_core::conductor::Conductor;
-use rustic_core::note::{NoteData, get_note_type_config, is_note_type_harmful};
+use rustic_core::note::NoteData;
 use rustic_core::rating::{self, Rating};
 use rustic_core::scoring::{self, ScoreState};
 
@@ -20,6 +20,7 @@ pub struct PlayState {
     pub score: ScoreState,
     pub ratings: Vec<Rating>,
     pub keys_held: [bool; 4],
+    pub play_as_opponent: bool,
     pub song_speed: f64,
     pub base_song_speed: f64,
     pub song_started: bool,
@@ -52,6 +53,7 @@ impl PlayState {
             score: ScoreState::new(),
             ratings: Rating::load_default(),
             keys_held: [false; 4],
+            play_as_opponent: false,
             song_speed: 1.0,
             base_song_speed: 1.0,
             song_started: false,
@@ -93,7 +95,8 @@ impl PlayState {
         let max_window = 166.0;
 
         for (i, nd) in self.notes.iter().enumerate() {
-            if !nd.must_press || nd.lane != lane || nd.was_good_hit || nd.too_late {
+            let note_is_playable = if self.play_as_opponent { !nd.must_press } else { nd.must_press };
+            if !note_is_playable || nd.lane != lane || nd.was_good_hit || nd.too_late {
                 continue;
             }
             let diff = (nd.strum_time - self.conductor.song_position).abs();
@@ -107,13 +110,14 @@ impl PlayState {
             let diff = (self.notes[idx].strum_time - self.conductor.song_position).abs();
             if let Some(judgment) = rating::judge_note(&self.ratings, diff) {
                 self.notes[idx].was_good_hit = true;
-                let type_str = self.notes[idx].kind.as_type_str().to_string();
-                let hit_causes_miss = is_note_type_harmful(&type_str);
+                let kind = &self.notes[idx].kind;
+                let type_str = kind.as_type_str().to_string();
+                let hit_causes_miss = kind.is_harmful();
 
                 if hit_causes_miss {
                     // Harmful note: damage player, no score gain
-                    let config = get_note_type_config(&type_str);
-                    let dmg = config.as_ref().map(|c| c.hit_damage).unwrap_or(0.1);
+                    let dmg = kind.hit_damage();
+                    let config = kind.custom_config();
                     let sfx = config.as_ref().and_then(|c| c.hit_sfx.clone());
                     let drain_pct = config.as_ref().map(|c| c.health_drain_pct).unwrap_or(0.0);
                     let death_safe = config.as_ref().map(|c| c.drain_death_safe).unwrap_or(false);
@@ -131,7 +135,11 @@ impl PlayState {
                         // Instant damage
                         self.score.change_health(-dmg);
                     }
-                    self.player_confirm[lane] = f64::MIN_POSITIVE;
+                    if self.play_as_opponent {
+                        self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+                    } else {
+                        self.player_confirm[lane] = f64::MIN_POSITIVE;
+                    }
 
                     self.events.push(GameEvent::NoteHit {
                         lane,
@@ -149,7 +157,11 @@ impl PlayState {
                         judgment.score, judgment.rating_mod,
                         judgment.health_gain, &judgment.name,
                     );
-                    self.player_confirm[lane] = f64::MIN_POSITIVE;
+                    if self.play_as_opponent {
+                        self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+                    } else {
+                        self.player_confirm[lane] = f64::MIN_POSITIVE;
+                    }
 
                     self.events.push(GameEvent::NoteHit {
                         lane,
@@ -178,13 +190,15 @@ impl PlayState {
         for i in 0..4 {
             if self.player_confirm[i] > 0.0 {
                 self.player_confirm[i] += dt_ms;
-                if self.player_confirm[i] > confirm_dur && !self.keys_held[i] {
+                let is_playable = !self.play_as_opponent;
+                if self.player_confirm[i] > confirm_dur && (!is_playable || !self.keys_held[i]) {
                     self.player_confirm[i] = 0.0;
                 }
             }
             if self.opponent_confirm[i] > 0.0 {
                 self.opponent_confirm[i] += dt_ms;
-                if self.opponent_confirm[i] > confirm_dur {
+                let is_playable = self.play_as_opponent;
+                if self.opponent_confirm[i] > confirm_dur && (!is_playable || !self.keys_held[i]) {
                     self.opponent_confirm[i] = 0.0;
                 }
             }
@@ -225,12 +239,18 @@ impl PlayState {
                 continue;
             }
 
+            let note_is_playable = if self.play_as_opponent { !self.notes[i].must_press } else { self.notes[i].must_press };
+
             // Opponent auto-hit
-            if !self.notes[i].must_press && self.conductor.song_position >= self.notes[i].strum_time {
+            if !note_is_playable && self.conductor.song_position >= self.notes[i].strum_time {
                 self.notes[i].was_good_hit = true;
-                self.opponent_confirm[self.notes[i].lane] = f64::MIN_POSITIVE;
+                if self.play_as_opponent {
+                    self.player_confirm[self.notes[i].lane] = f64::MIN_POSITIVE;
+                } else {
+                    self.opponent_confirm[self.notes[i].lane] = f64::MIN_POSITIVE;
+                }
                 let type_str = self.notes[i].kind.as_type_str().to_string();
-                let hit_causes_miss = is_note_type_harmful(&type_str);
+                let hit_causes_miss = self.notes[i].kind.is_harmful();
                 self.events.push(GameEvent::OpponentNoteHit {
                     lane: self.notes[i].lane,
                     note_type: type_str,
@@ -241,13 +261,12 @@ impl PlayState {
             }
 
             // Player miss
-            if self.notes[i].must_press
+            if note_is_playable
                 && self.conductor.song_position - self.notes[i].strum_time > KILL_OFFSET_MS
             {
                 self.notes[i].too_late = true;
                 let type_str = self.notes[i].kind.as_type_str().to_string();
-                let ignored = get_note_type_config(&type_str)
-                    .map_or(false, |c| c.ignore_miss);
+                let ignored = self.notes[i].kind.should_ignore_miss();
 
                 if !ignored {
                     self.score.note_miss(scoring::HEALTH_MISS);
@@ -272,26 +291,37 @@ impl PlayState {
             let end_time = self.notes[i].strum_time + self.notes[i].sustain_length;
             if self.conductor.song_position > end_time { continue; }
 
+            let note_is_playable = if self.play_as_opponent { !self.notes[i].must_press } else { self.notes[i].must_press };
+
             if self.notes[i].was_good_hit {
                 let lane = self.notes[i].lane;
-                if self.notes[i].must_press && self.keys_held[lane] {
+                if note_is_playable && self.keys_held[lane] {
                     let ticks = dt_ms / step_ms;
                     self.score.change_health(scoring::HEALTH_HOLD_TICK * ticks as f32);
-                    if self.player_confirm[lane] <= 0.0
-                        || self.player_confirm[lane] >= confirm_cycle_ms
-                    {
-                        self.player_confirm[lane] = f64::MIN_POSITIVE;
+                    if self.play_as_opponent {
+                        if self.opponent_confirm[lane] <= 0.0 || self.opponent_confirm[lane] >= confirm_cycle_ms {
+                            self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+                        }
+                    } else {
+                        if self.player_confirm[lane] <= 0.0 || self.player_confirm[lane] >= confirm_cycle_ms {
+                            self.player_confirm[lane] = f64::MIN_POSITIVE;
+                        }
                     }
-                } else if self.notes[i].must_press && !self.keys_held[lane] {
+                } else if note_is_playable && !self.keys_held[lane] {
                     let ticks = dt_ms / step_ms;
                     self.score.change_health(-scoring::HEALTH_MISS * ticks as f32);
-                } else if !self.notes[i].must_press
-                    && (self.opponent_confirm[lane] <= 0.0
-                        || self.opponent_confirm[lane] >= confirm_cycle_ms)
-                {
-                    self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+                } else if !note_is_playable {
+                    if self.play_as_opponent {
+                        if self.player_confirm[lane] <= 0.0 || self.player_confirm[lane] >= confirm_cycle_ms {
+                            self.player_confirm[lane] = f64::MIN_POSITIVE;
+                        }
+                    } else {
+                        if self.opponent_confirm[lane] <= 0.0 || self.opponent_confirm[lane] >= confirm_cycle_ms {
+                            self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+                        }
+                    }
                 }
-            } else if self.notes[i].too_late && self.notes[i].must_press {
+            } else if self.notes[i].too_late && note_is_playable {
                 let ticks = dt_ms / step_ms;
                 self.score.change_health(-scoring::HEALTH_MISS * ticks as f32);
             }
@@ -342,7 +372,9 @@ impl PlayState {
     }
 
     /// Note Y position for rendering (scroll calculation).
-    pub fn note_y(&self, strum_time: f64, strum_y: f32) -> f32 {
-        strum_y - (0.45 * (self.conductor.song_position - strum_time) * self.song_speed) as f32
+    /// `downscroll`: if true, notes scroll upward toward a bottom strum line.
+    pub fn note_y(&self, strum_time: f64, strum_y: f32, downscroll: bool) -> f32 {
+        let dist = (0.45 * (self.conductor.song_position - strum_time) * self.song_speed) as f32;
+        if downscroll { strum_y + dist } else { strum_y - dist }
     }
 }

@@ -145,10 +145,29 @@ impl LuaScript {
                     tbl.set("angle", sp.angle as f64).ok();
                     tbl.set("scale_x", sp.scale_x as f64).ok();
                     tbl.set("scale_y", sp.scale_y as f64).ok();
-                    if let Some(ds) = sp.down_scroll {
-                        tbl.set("downScroll", ds).ok();
-                    }
+                    let effective_ds = sp.down_scroll.unwrap_or(state.downscroll);
+                    tbl.set("downScroll", effective_ds).ok();
                     tbl.set("custom", sp.custom).ok();
+                }
+            }
+        }
+
+        // Sync lua_sprites properties so all scripts see tweened values
+        // This prevents completed tweens from reverting to their pre-tween Lua table values
+        if let Ok(sprite_data) = globals.get::<LuaTable>("__sprite_data") {
+            for (tag, sprite) in &state.lua_sprites {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
+                    tbl.set("x", sprite.x as f64).ok();
+                    tbl.set("y", sprite.y as f64).ok();
+                    tbl.set("alpha", sprite.alpha as f64).ok();
+                    tbl.set("angle", sprite.angle as f64).ok();
+                    tbl.set("scale_x", sprite.scale_x as f64).ok();
+                    tbl.set("scale_y", sprite.scale_y as f64).ok();
+                    tbl.set("offset_x", sprite.offset_x as f64).ok();
+                    tbl.set("offset_y", sprite.offset_y as f64).ok();
+                    tbl.set("ct_red", sprite.color_red_offset as f64).ok();
+                    tbl.set("ct_green", sprite.color_green_offset as f64).ok();
+                    tbl.set("ct_blue", sprite.color_blue_offset as f64).ok();
                 }
             }
         }
@@ -425,6 +444,21 @@ impl LuaScript {
             }
         }
 
+        // Drain __pending_tween_cancels BEFORE creating new tweens.
+        // Lua scripts call cancelTween() then startTween() with the same tag;
+        // if we create first and cancel second, the new tween gets killed.
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_tween_cancels") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tag) = pending.get::<String>(i) {
+                    state.tweens.cancel_tween(&tag);
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_tween_cancels", new_tbl).ok();
+            }
+        }
+
         // Drain __pending_tweens
         if let Ok(pending) = globals.get::<LuaTable>("__pending_tweens") {
             let len = pending.len().unwrap_or(0);
@@ -453,19 +487,29 @@ impl LuaScript {
                             "offset_y" => crate::tweens::TweenProperty::OffsetY,
                             _ => continue,
                         };
-                        // Get current value as start value (explicit start overrides auto-detection)
+                        // Get current value as start value (explicit start overrides auto-detection).
+                        // For strums, read from the Lua __strum_props table (not state.strum_props)
+                        // because setPropertyFromGroup may have just updated the Lua table and
+                        // state.strum_props hasn't been synced yet.
                         let start = if let Ok(s) = tbl.get::<f64>("start") {
                             s as f32
                         } else if let Some(si) = parse_strum_index(&target) {
-                            let sp = &state.strum_props[si];
-                            match &prop {
-                                crate::tweens::TweenProperty::X => sp.x,
-                                crate::tweens::TweenProperty::Y => sp.y,
-                                crate::tweens::TweenProperty::Alpha => sp.alpha,
-                                crate::tweens::TweenProperty::Angle => sp.angle,
-                                crate::tweens::TweenProperty::ScaleX => sp.scale_x,
-                                crate::tweens::TweenProperty::ScaleY => sp.scale_y,
-                                _ => 0.0,
+                            if let Ok(strum_tbl) = globals.get::<LuaTable>("__strum_props") {
+                                if let Ok(entry) = strum_tbl.get::<LuaTable>(si as i64 + 1) {
+                                    match &prop {
+                                        crate::tweens::TweenProperty::X => entry.get::<f64>("x").unwrap_or(0.0) as f32,
+                                        crate::tweens::TweenProperty::Y => entry.get::<f64>("y").unwrap_or(0.0) as f32,
+                                        crate::tweens::TweenProperty::Alpha => entry.get::<f64>("alpha").unwrap_or(1.0) as f32,
+                                        crate::tweens::TweenProperty::Angle => entry.get::<f64>("angle").unwrap_or(0.0) as f32,
+                                        crate::tweens::TweenProperty::ScaleX => entry.get::<f64>("scale_x").unwrap_or(0.7) as f32,
+                                        crate::tweens::TweenProperty::ScaleY => entry.get::<f64>("scale_y").unwrap_or(0.7) as f32,
+                                        _ => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                }
+                            } else {
+                                0.0
                             }
                         } else if target.starts_with("__var_") {
                             let var_name = &target["__var_".len()..];
@@ -525,18 +569,7 @@ impl LuaScript {
             }
         }
 
-        // Drain __pending_tween_cancels
-        if let Ok(pending) = globals.get::<LuaTable>("__pending_tween_cancels") {
-            let len = pending.len().unwrap_or(0);
-            for i in 1..=len {
-                if let Ok(tag) = pending.get::<String>(i) {
-                    state.tweens.cancel_tween(&tag);
-                }
-            }
-            if let Ok(new_tbl) = self.lua.create_table() {
-                globals.set("__pending_tween_cancels", new_tbl).ok();
-            }
-        }
+
 
         // Drain __pending_timers
         if let Ok(pending) = globals.get::<LuaTable>("__pending_timers") {
@@ -768,17 +801,42 @@ impl LuaScript {
         }
 
         // Sync __strum_props table to Rust state
+        // Skip properties that have active tweens (tweens are authoritative when running).
         if let Ok(strum_tbl) = globals.get::<LuaTable>("__strum_props") {
             for i in 0..8 {
                 if let Ok(tbl) = strum_tbl.get::<LuaTable>(i as i64 + 1) {
                     let custom: bool = tbl.get("custom").unwrap_or(false);
                     if custom {
-                        state.strum_props[i].x = tbl.get::<f64>("x").unwrap_or(0.0) as f32;
-                        state.strum_props[i].y = tbl.get::<f64>("y").unwrap_or(0.0) as f32;
-                        state.strum_props[i].alpha = tbl.get::<f64>("alpha").unwrap_or(1.0) as f32;
-                        state.strum_props[i].angle = tbl.get::<f64>("angle").unwrap_or(0.0) as f32;
-                        state.strum_props[i].scale_x = tbl.get::<f64>("scale_x").unwrap_or(0.7) as f32;
-                        state.strum_props[i].scale_y = tbl.get::<f64>("scale_y").unwrap_or(0.7) as f32;
+                        let strum_name = if i < 4 {
+                            format!("__strum_opponent_{}", i)
+                        } else {
+                            format!("__strum_player_{}", i - 4)
+                        };
+                        let has_active_tween = |prop: &crate::tweens::TweenProperty| -> bool {
+                            // Include finished tweens still pending removal — their
+                            // final value is authoritative until they're cleaned up.
+                            state.tweens.tweens.values().any(|t| {
+                                t.target == strum_name && &t.property == prop
+                            })
+                        };
+                        if !has_active_tween(&crate::tweens::TweenProperty::X) {
+                            state.strum_props[i].x = tbl.get::<f64>("x").unwrap_or(0.0) as f32;
+                        }
+                        if !has_active_tween(&crate::tweens::TweenProperty::Y) {
+                            state.strum_props[i].y = tbl.get::<f64>("y").unwrap_or(0.0) as f32;
+                        }
+                        if !has_active_tween(&crate::tweens::TweenProperty::Alpha) {
+                            state.strum_props[i].alpha = tbl.get::<f64>("alpha").unwrap_or(1.0) as f32;
+                        }
+                        if !has_active_tween(&crate::tweens::TweenProperty::Angle) {
+                            state.strum_props[i].angle = tbl.get::<f64>("angle").unwrap_or(0.0) as f32;
+                        }
+                        if !has_active_tween(&crate::tweens::TweenProperty::ScaleX) {
+                            state.strum_props[i].scale_x = tbl.get::<f64>("scale_x").unwrap_or(0.7) as f32;
+                        }
+                        if !has_active_tween(&crate::tweens::TweenProperty::ScaleY) {
+                            state.strum_props[i].scale_y = tbl.get::<f64>("scale_y").unwrap_or(0.7) as f32;
+                        }
                         state.strum_props[i].down_scroll = tbl.get::<bool>("downScroll").ok();
                         state.strum_props[i].custom = true;
                     }
@@ -836,16 +894,30 @@ impl LuaScript {
                 if let Ok(tbl) = pending.get::<LuaTable>(i) {
                     let name: String = tbl.get("name").unwrap_or_default();
                     if name.is_empty() { continue; }
-                    state.note_type_registrations.push((
+
+                    // Parse animation arrays (4 directions each)
+                    let parse_anims = |key: &str| -> Option<[String; 4]> {
+                        let arr: LuaTable = tbl.get(key).ok()?;
+                        let a: String = arr.get(1).ok()?;
+                        let b: String = arr.get(2).ok()?;
+                        let c: String = arr.get(3).ok()?;
+                        let d: String = arr.get(4).ok()?;
+                        Some([a, b, c, d])
+                    };
+
+                    state.note_type_registrations.push(crate::script_state::NoteTypeRegistration {
                         name,
-                        tbl.get::<bool>("hitCausesMiss").unwrap_or(false),
-                        tbl.get::<f64>("hitDamage").unwrap_or(0.0) as f32,
-                        tbl.get::<bool>("ignoreMiss").unwrap_or(false),
-                        tbl.get::<String>("noteSkin").ok(),
-                        tbl.get::<String>("hitSfx").ok(),
-                        tbl.get::<f64>("healthDrainPct").unwrap_or(0.0) as f32,
-                        tbl.get::<bool>("drainDeathSafe").unwrap_or(false),
-                    ));
+                        hit_causes_miss: tbl.get::<bool>("hitCausesMiss").unwrap_or(false),
+                        hit_damage: tbl.get::<f64>("hitDamage").unwrap_or(0.0) as f32,
+                        ignore_miss: tbl.get::<bool>("ignoreMiss").unwrap_or(false),
+                        note_skin: tbl.get::<String>("noteSkin").ok(),
+                        hit_sfx: tbl.get::<String>("hitSfx").ok(),
+                        health_drain_pct: tbl.get::<f64>("healthDrainPct").unwrap_or(0.0) as f32,
+                        drain_death_safe: tbl.get::<bool>("drainDeathSafe").unwrap_or(false),
+                        note_anims: parse_anims("noteAnims"),
+                        strum_anims: parse_anims("strumAnims"),
+                        confirm_anims: parse_anims("confirmAnims"),
+                    });
                 }
             }
             if let Ok(new_tbl) = self.lua.create_table() {
@@ -864,26 +936,55 @@ impl LuaScript {
             let Ok((tag, tbl)) = pair else { continue };
             let Some(sprite) = state.lua_sprites.get_mut(&tag) else { continue };
 
-            if let Ok(x) = tbl.get::<f32>("x") { sprite.x = x; }
-            if let Ok(y) = tbl.get::<f32>("y") { sprite.y = y; }
-            if let Ok(a) = tbl.get::<f32>("alpha") { sprite.alpha = a; }
+            // Skip properties that have active tweens (tweens are authoritative when running).
+            let has_tween = |prop: &crate::tweens::TweenProperty| -> bool {
+                state.tweens.tweens.values().any(|t| {
+                    !t.finished && t.target == tag && &t.property == prop
+                })
+            };
+
+            if !has_tween(&crate::tweens::TweenProperty::X) {
+                if let Ok(x) = tbl.get::<f32>("x") { sprite.x = x; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::Y) {
+                if let Ok(y) = tbl.get::<f32>("y") { sprite.y = y; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::Alpha) {
+                if let Ok(a) = tbl.get::<f32>("alpha") { sprite.alpha = a; }
+            }
             if let Ok(v) = tbl.get::<bool>("visible") { sprite.visible = v; }
-            if let Ok(a) = tbl.get::<f32>("angle") { sprite.angle = a; }
-            if let Ok(sx) = tbl.get::<f32>("scale_x") { sprite.scale_x = sx; }
-            if let Ok(sy) = tbl.get::<f32>("scale_y") { sprite.scale_y = sy; }
+            if !has_tween(&crate::tweens::TweenProperty::Angle) {
+                if let Ok(a) = tbl.get::<f32>("angle") { sprite.angle = a; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::ScaleX) {
+                if let Ok(sx) = tbl.get::<f32>("scale_x") { sprite.scale_x = sx; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::ScaleY) {
+                if let Ok(sy) = tbl.get::<f32>("scale_y") { sprite.scale_y = sy; }
+            }
             if let Ok(sfx) = tbl.get::<f32>("scroll_x") { sprite.scroll_x = sfx; }
             if let Ok(sfy) = tbl.get::<f32>("scroll_y") { sprite.scroll_y = sfy; }
             if let Ok(f) = tbl.get::<bool>("flip_x") { sprite.flip_x = f; }
             if let Ok(f) = tbl.get::<bool>("flip_y") { sprite.flip_y = f; }
             if let Ok(aa) = tbl.get::<bool>("antialiasing") { sprite.antialiasing = aa; }
             if let Ok(cam) = tbl.get::<String>("camera") { sprite.camera = cam; }
-            if let Ok(v) = tbl.get::<f32>("offset_x") { sprite.offset_x = v; }
-            if let Ok(v) = tbl.get::<f32>("offset_y") { sprite.offset_y = v; }
+            if !has_tween(&crate::tweens::TweenProperty::OffsetX) {
+                if let Ok(v) = tbl.get::<f32>("offset_x") { sprite.offset_x = v; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::OffsetY) {
+                if let Ok(v) = tbl.get::<f32>("offset_y") { sprite.offset_y = v; }
+            }
             if let Ok(v) = tbl.get::<f32>("origin_x") { sprite.origin_x = Some(v); }
             if let Ok(v) = tbl.get::<f32>("origin_y") { sprite.origin_y = Some(v); }
-            if let Ok(v) = tbl.get::<f32>("ct_red") { sprite.color_red_offset = v; }
-            if let Ok(v) = tbl.get::<f32>("ct_green") { sprite.color_green_offset = v; }
-            if let Ok(v) = tbl.get::<f32>("ct_blue") { sprite.color_blue_offset = v; }
+            if !has_tween(&crate::tweens::TweenProperty::RedOffset) {
+                if let Ok(v) = tbl.get::<f32>("ct_red") { sprite.color_red_offset = v; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::GreenOffset) {
+                if let Ok(v) = tbl.get::<f32>("ct_green") { sprite.color_green_offset = v; }
+            }
+            if !has_tween(&crate::tweens::TweenProperty::BlueOffset) {
+                if let Ok(v) = tbl.get::<f32>("ct_blue") { sprite.color_blue_offset = v; }
+            }
 
             // Sync animation definitions from __anims subtable
             if let Ok(anims) = tbl.get::<LuaTable>("__anims") {

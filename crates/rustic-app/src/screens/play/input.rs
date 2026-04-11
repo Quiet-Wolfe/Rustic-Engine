@@ -18,6 +18,16 @@ impl PlayScreen {
             return;
         }
 
+        // Video playback: only allow skip/stop via Enter or Escape
+        if self.video.is_some() {
+            if key == KeyCode::Enter || key == KeyCode::Escape {
+                if let Some(video) = &mut self.video {
+                    video.stop();
+                }
+            }
+            return;
+        }
+
         // Pause menu input (must come before toggle to prevent Enter from unpausing)
         if self.paused {
             const PAUSE_ITEMS: usize = 4; // Resume, Restart, Skip To, Exit
@@ -163,6 +173,16 @@ impl PlayScreen {
 
         // Reset health so we don't die from accumulated misses
         self.game.score.health = 1.0;
+
+        // Force custom health bar visible if we skipped past beat 16
+        let beat16_time = self.game.conductor.crochet * 16.0;
+        if target >= beat16_time {
+            if let Some(chb) = &mut self.custom_healthbar {
+                if !chb.visible {
+                    chb.fade_in();
+                }
+            }
+        }
 
         log::info!("Skipped to {:.0}ms", target);
     }

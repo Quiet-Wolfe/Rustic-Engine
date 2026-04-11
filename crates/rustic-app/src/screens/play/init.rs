@@ -8,7 +8,7 @@ use rustic_render::gpu::GpuState;
 use rustic_render::sprites::SpriteAtlas;
 
 use super::{
-    PlayScreen, NoteAssets, RatingAssets, DrawLayer, STRUM_Y,
+    PlayScreen, NoteAssets, RatingAssets, DrawLayer, STRUM_Y, STRUM_Y_DOWN,
     NOTE_ANIMS, NOTE_PREFIXES, STRUM_ANIMS, PRESS_ANIMS, CONFIRM_ANIMS,
     HOLD_PIECE_ANIMS, HOLD_END_ANIMS, SPLASH_PREFIXES,
 };
@@ -37,6 +37,10 @@ impl PlayScreen {
             .chain(HOLD_END_ANIMS.iter())
         {
             atlas.add_by_prefix(prefix, prefix);
+        }
+        // Fix known atlas typos: VS Retrospecter has "pruple end hold" instead of "purple hold end"
+        if atlas.get_frame(HOLD_END_ANIMS[0], 0).is_none() {
+            atlas.add_by_prefix(HOLD_END_ANIMS[0], "pruple end hold");
         }
 
         self.note_assets = Some(NoteAssets {
@@ -94,7 +98,9 @@ impl PlayScreen {
         let parsed = chart::parse_chart(&chart_json).expect("Failed to parse chart");
 
         // Initialize PlayState with chart data
+        let play_as_opponent = self.game.play_as_opponent;
         self.game = PlayState::new(parsed.song.bpm);
+        self.game.play_as_opponent = play_as_opponent;
         self.game.song_speed = parsed.song.speed;
         self.game.base_song_speed = parsed.song.speed;
 
@@ -107,6 +113,7 @@ impl PlayScreen {
         self.game.conductor.map_bpm_changes(parsed.song.bpm, sections);
 
         let mut notes = parsed.notes;
+        
         notes.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap());
         self.game.notes = notes;
 
@@ -345,13 +352,13 @@ impl PlayScreen {
 
         // Load note skins: chart arrowSkinDAD/arrowSkinBF take priority, then character JSON skin field
         if !parsed.song.arrow_skin_dad.is_empty() {
-            self.opp_note_assets = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_dad);
+            self.opp_note_assets = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_dad, None, None, None);
             if self.opp_note_assets.is_some() {
                 log::info!("Loaded opponent note skin from chart: {}", parsed.song.arrow_skin_dad);
             }
         }
         if !parsed.song.arrow_skin_bf.is_empty() {
-            let bf_skin = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_bf);
+            let bf_skin = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_bf, None, None, None);
             if bf_skin.is_some() {
                 log::info!("Loaded player note skin from chart: {}", parsed.song.arrow_skin_bf);
                 self.note_assets = bf_skin;
@@ -360,7 +367,7 @@ impl PlayScreen {
         // Fall back to character-defined skin if chart didn't specify
         if let Some((_, char_def)) = &dad_def {
             if self.opp_note_assets.is_none() && !char_def.skin.is_empty() {
-                self.opp_note_assets = self.load_note_skin(gpu, &paths, &char_def.skin);
+                self.opp_note_assets = self.load_note_skin(gpu, &paths, &char_def.skin, None, None, None);
                 if self.opp_note_assets.is_some() {
                     log::info!("Loaded opponent note skin from character: {}", char_def.skin);
                 }
@@ -458,29 +465,30 @@ impl PlayScreen {
         self.audio = Some(audio);
 
         // Initialize strum default positions for modchart property access
+        self.scripts.state.downscroll = self.downscroll;
+        let default_strum_y = if self.downscroll { STRUM_Y_DOWN } else { STRUM_Y };
         for lane in 0..4 {
-            let opp_x = Self::strum_x(lane, false);
-            let plr_x = Self::strum_x(lane, true);
+            let opp_x = Self::strum_x(lane, false, self.game.play_as_opponent);
+            let plr_x = Self::strum_x(lane, true, self.game.play_as_opponent);
             self.scripts.state.strum_props[lane].x = opp_x;
-            self.scripts.state.strum_props[lane].y = STRUM_Y;
+            self.scripts.state.strum_props[lane].y = default_strum_y;
             self.scripts.state.strum_props[lane + 4].x = plr_x;
-            self.scripts.state.strum_props[lane + 4].y = STRUM_Y;
+            self.scripts.state.strum_props[lane + 4].y = default_strum_y;
         }
 
         // Set default strum position globals on all scripts (Psych Engine's setOnScripts)
         // These are used everywhere in modcharts: _G['defaultPlayerStrumX0'], etc.
         for lane in 0..4usize {
-            let opp_x = Self::strum_x(lane, false) as f64;
-            let plr_x = Self::strum_x(lane, true) as f64;
+            let opp_x = Self::strum_x(lane, false, self.game.play_as_opponent) as f64;
+            let plr_x = Self::strum_x(lane, true, self.game.play_as_opponent) as f64;
             self.scripts.set_on_all(&format!("defaultOpponentStrumX{lane}"), opp_x);
-            self.scripts.set_on_all(&format!("defaultOpponentStrumY{lane}"), STRUM_Y as f64);
+            self.scripts.set_on_all(&format!("defaultOpponentStrumY{lane}"), default_strum_y as f64);
             self.scripts.set_on_all(&format!("defaultPlayerStrumX{lane}"), plr_x);
-            self.scripts.set_on_all(&format!("defaultPlayerStrumY{lane}"), STRUM_Y as f64);
+            self.scripts.set_on_all(&format!("defaultPlayerStrumY{lane}"), default_strum_y as f64);
         }
-        // Also set the non-indexed variants (defaultOpponentStrumY0 style is already covered,
-        // but some scripts use just defaultOpponentStrumY0 / defaultPlayerStrumY0)
-        self.scripts.set_on_all("defaultOpponentStrumY0", STRUM_Y as f64);
-        self.scripts.set_on_all("defaultPlayerStrumY0", STRUM_Y as f64);
+        // Also set the non-indexed variants
+        self.scripts.set_on_all("defaultOpponentStrumY0", default_strum_y as f64);
+        self.scripts.set_on_all("defaultPlayerStrumY0", default_strum_y as f64);
 
         // Set crochet/stepCrochet globals
         self.scripts.set_on_all("crochet", self.game.conductor.crochet);
@@ -490,6 +498,8 @@ impl PlayScreen {
         self.scripts.set_bool_on_all("flashingLights", true);
         self.scripts.set_bool_on_all("modcharts", true);
         self.scripts.set_bool_on_all("mustHitSection", false);
+        self.scripts.set_bool_on_all("downscroll", self.downscroll);
+        self.scripts.set_bool_on_all("isDownScroll", self.downscroll);
 
         // Initialize countdown
         self.game.conductor.song_position = -self.game.conductor.crochet * 5.0;

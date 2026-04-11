@@ -38,8 +38,8 @@ pub struct VideoPlayer {
     frame_buf: Vec<u8>,
     /// Whether the buffer has new data to upload.
     dirty: bool,
-    /// Whether we've sent all packets to the decoder.
-    flushed: bool,
+    /// Whether we've reached EOF on the input stream.
+    eof_sent: bool,
     /// Path to video file (for logging).
     path: PathBuf,
     /// Lua callback to fire when video finishes.
@@ -103,7 +103,7 @@ impl VideoPlayer {
             playing: true,
             frame_buf: vec![0u8; (width * height * 4) as usize],
             dirty: false,
-            flushed: false,
+            eof_sent: false,
             path: path.to_path_buf(),
             on_finish: None,
         })
@@ -138,16 +138,39 @@ impl VideoPlayer {
         (texture, bind_group)
     }
 
-    /// Send all available packets to the decoder, then signal EOF.
-    fn send_all_packets(&mut self) {
-        if self.flushed { return; }
-        for (stream, packet) in &mut self.ictx.packets() {
-            if stream.index() == self.stream_index {
-                let _ = self.decoder.send_packet(&packet);
+    /// Feed packets to the decoder incrementally until it can produce a frame.
+    /// Returns true if at least one packet was sent, false if EOF reached.
+    fn feed_decoder(&mut self) -> bool {
+        if self.eof_sent { return false; }
+
+        loop {
+            // Try to read the next packet from the container
+            match self.ictx.packets().next() {
+                Some((stream, packet)) => {
+                    if stream.index() != self.stream_index {
+                        continue; // skip non-video packets (audio, subs)
+                    }
+                    match self.decoder.send_packet(&packet) {
+                        Ok(()) => return true,
+                        Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {
+                            // Decoder buffer full — it has enough data to produce frames.
+                            // We'll come back for more packets later.
+                            return true;
+                        }
+                        Err(e) => {
+                            log::warn!("Video send_packet error: {}", e);
+                            return true;
+                        }
+                    }
+                }
+                None => {
+                    // No more packets — signal EOF to flush remaining frames
+                    let _ = self.decoder.send_eof();
+                    self.eof_sent = true;
+                    return false;
+                }
             }
         }
-        let _ = self.decoder.send_eof();
-        self.flushed = true;
     }
 
     /// Advance playback by dt seconds. Decodes frames to catch up to the new position.
@@ -156,11 +179,6 @@ impl VideoPlayer {
         if !self.playing || self.finished { return; }
 
         self.position_secs += dt;
-
-        // On first tick, send all packets at once (short videos)
-        if !self.flushed {
-            self.send_all_packets();
-        }
 
         // Decode frames until we catch up to the target time
         loop {
@@ -176,24 +194,41 @@ impl VideoPlayer {
                         self.dirty = true;
                     }
 
-                    // Stop if this frame is past our target
+                    // Stop if this frame is at or past our target
                     if pts >= self.position_secs {
                         return;
                     }
                 }
-                Err(ffmpeg::Error::Other { errno: libc::EAGAIN }) => {
-                    // Shouldn't happen after send_eof, but handle gracefully
-                    break;
+                Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {
+                    // Decoder needs more data — feed it
+                    if !self.feed_decoder() && self.eof_sent {
+                        // EOF sent but still EAGAIN — try one more receive
+                        let mut last = Video::empty();
+                        if self.decoder.receive_frame(&mut last).is_ok() {
+                            let mut rgb = Video::empty();
+                            if self.scaler.run(&last, &mut rgb).is_ok() {
+                                self.copy_frame_to_buf(&rgb);
+                                self.dirty = true;
+                            }
+                        }
+                        self.finished = true;
+                        self.playing = false;
+                        log::info!("Video '{}' finished", self.path.display());
+                        return;
+                    }
+                    // Fed more data, loop back to try receive again
                 }
-                Err(ffmpeg::Error::Other { errno: libc::EOF }) => {
+                Err(ffmpeg::Error::Eof) => {
                     self.finished = true;
                     self.playing = false;
                     log::info!("Video '{}' finished", self.path.display());
-                    break;
+                    return;
                 }
                 Err(e) => {
                     log::warn!("Video decode error: {}", e);
-                    break;
+                    self.finished = true;
+                    self.playing = false;
+                    return;
                 }
             }
         }

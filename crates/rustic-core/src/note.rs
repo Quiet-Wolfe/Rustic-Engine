@@ -33,6 +33,45 @@ impl NoteKind {
         }
     }
 
+    /// Whether this note type damages the player when hit (like Hurt Note).
+    /// Checks built-in types first, then falls back to the runtime registry.
+    pub fn is_harmful(&self) -> bool {
+        match self {
+            Self::Hurt => true,
+            Self::Custom(name) => is_note_type_harmful(name),
+            _ => false,
+        }
+    }
+
+    /// Whether missing this note should NOT penalize the player.
+    /// Hurt notes are meant to be dodged, so missing them is fine.
+    pub fn should_ignore_miss(&self) -> bool {
+        match self {
+            Self::Hurt => true,
+            Self::Custom(name) => get_note_type_config(name).map_or(false, |c| c.ignore_miss),
+            _ => false,
+        }
+    }
+
+    /// Health damage when this note is hit (only relevant for harmful notes).
+    /// Psych Engine default Hurt Note damage is 0.276 on the 0–2 health scale.
+    pub fn hit_damage(&self) -> f32 {
+        match self {
+            Self::Hurt => 0.276,
+            Self::Custom(name) => get_note_type_config(name).map_or(0.0, |c| c.hit_damage),
+            _ => 0.0,
+        }
+    }
+
+    /// Get the full NoteTypeConfig for custom types (returns None for built-in types
+    /// that aren't separately registered).
+    pub fn custom_config(&self) -> Option<NoteTypeConfig> {
+        match self {
+            Self::Custom(name) => get_note_type_config(name),
+            _ => None,
+        }
+    }
+
     /// Parse from the optional 4th element of sectionNotes.
     pub fn from_chart_value(value: Option<&serde_json::Value>) -> Self {
         match value {
