@@ -81,14 +81,27 @@ impl GpuState {
 
         let surface = instance.create_surface(window.clone()).unwrap();
 
-        let adapter = instance
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
             .await
-            .expect("Failed to find a suitable GPU adapter");
+        {
+            Ok(a) => a,
+            Err(_) => {
+                log::warn!("No hardware GPU adapter found, trying software fallback");
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: true,
+                    })
+                    .await
+                    .expect("Failed to find any GPU adapter (hardware or software)")
+            }
+        };
 
         // Log adapter info for debugging
         let adapter_info = adapter.get_info();
