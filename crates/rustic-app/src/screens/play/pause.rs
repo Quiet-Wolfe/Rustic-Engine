@@ -305,7 +305,8 @@ impl PlayScreen {
             self.options_menu = Some(crate::screens::options::OptionsMenuState::load());
             self.pending_options_open = false;
         }
-        if self.options_menu.is_some() {
+        if let Some(menu) = &mut self.options_menu {
+            crate::screens::options::update(menu, dt);
             return;
         }
         let song_length_ms = self.get_song_length_ms();

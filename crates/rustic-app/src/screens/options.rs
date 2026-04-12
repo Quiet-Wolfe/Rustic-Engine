@@ -35,6 +35,9 @@ pub struct OptionsMenuState {
     pub category: OptionsCategory,
     pub selected: usize,
     pub waiting_for_rebind: Option<usize>,
+    pub calibrating: bool,
+    pub calibration_timer: f32,
+    pub calibration_samples: Vec<i32>,
 }
 
 impl OptionsMenuState {
@@ -44,6 +47,9 @@ impl OptionsMenuState {
             category: OptionsCategory::Gameplay,
             selected: 0,
             waiting_for_rebind: None,
+            calibrating: false,
+            calibration_timer: 0.0,
+            calibration_samples: Vec::new(),
         }
     }
 
@@ -142,6 +148,29 @@ impl OptionsMenuState {
                 yellow,
             );
         }
+        if self.calibrating {
+            let beat_phase = self.calibration_timer % 0.5;
+            let pulse = 1.0 - (beat_phase / 0.5);
+            gpu.draw_text("NOTE OFFSET CALIBRATION", 190.0, 505.0, 22.0, yellow);
+            gpu.draw_text(
+                "Press ENTER on each beat. ESCAPE to finish.",
+                190.0,
+                535.0,
+                20.0,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+            gpu.push_colored_quad(1030.0, 510.0, 42.0, 42.0, [pulse, pulse * 0.5, 0.2, 1.0]);
+            gpu.draw_batch(None);
+            if !self.calibration_samples.is_empty() {
+                gpu.draw_text(
+                    &format!("Average: {}ms", self.prefs.note_offset),
+                    760.0,
+                    535.0,
+                    20.0,
+                    yellow,
+                );
+            }
+        }
     }
 
     fn lines(&self) -> Vec<String> {
@@ -219,6 +248,22 @@ fn fps_cap_label(value: u32) -> &'static str {
 }
 
 pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
+    if menu.calibrating {
+        match key {
+            KeyCode::Escape => menu.calibrating = false,
+            KeyCode::Enter | KeyCode::Space => {
+                let beat_window = 0.5f32;
+                let phase = menu.calibration_timer % beat_window;
+                let offset_ms = ((phase / beat_window) * 500.0).round() as i32;
+                let signed = if offset_ms > 250 { offset_ms - 500 } else { offset_ms };
+                menu.calibration_samples.push(signed);
+                let sum: i32 = menu.calibration_samples.iter().sum();
+                menu.prefs.note_offset = (sum / menu.calibration_samples.len() as i32).clamp(-500, 500);
+            }
+            _ => {}
+        }
+        return true;
+    }
     if let Some(slot) = menu.waiting_for_rebind {
         match key {
             KeyCode::Escape => {
@@ -247,6 +292,10 @@ pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
         KeyCode::Enter | KeyCode::Space => {
             if menu.category == OptionsCategory::Controls {
                 menu.waiting_for_rebind = Some(menu.selected);
+            } else if menu.category == OptionsCategory::Audio && menu.selected == 3 {
+                menu.calibrating = true;
+                menu.calibration_timer = 0.0;
+                menu.calibration_samples.clear();
             } else {
                 menu.adjust_current(1);
             }
@@ -258,4 +307,10 @@ pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
 
 fn key_display(value: &str) -> &str {
     value.strip_prefix("Key").unwrap_or(value)
+}
+
+pub fn update(menu: &mut OptionsMenuState, dt: f32) {
+    if menu.calibrating {
+        menu.calibration_timer += dt;
+    }
 }
