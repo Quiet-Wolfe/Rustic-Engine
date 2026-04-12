@@ -272,6 +272,14 @@ pub(super) enum DeathPhase {
     Confirm,
 }
 
+pub(super) enum CutsceneState {
+    Video {
+        player: VideoPlayer,
+        skippable: bool,
+        wall_clock_ms: f64,
+    },
+}
+
 pub struct PlayScreen {
     // === Game logic (owned by rustic-gameplay) ===
     pub(super) game: PlayState,
@@ -381,9 +389,8 @@ pub struct PlayScreen {
     pub(super) completed_song: bool,
     pub(super) score_saved: bool,
 
-    /// Active video playback (when a cutscene is playing).
-    pub(super) video: Option<VideoPlayer>,
-    pub(super) video_wall_clock_ms: f64,
+    /// Active gameplay-blocking cutscene.
+    pub(super) cutscene: Option<CutsceneState>,
 }
 
 impl PlayScreen {
@@ -463,9 +470,38 @@ impl PlayScreen {
             wants_restart: false,
             completed_song: false,
             score_saved: false,
-            video: None,
-            video_wall_clock_ms: 0.0,
+            cutscene: None,
         }
+    }
+
+    pub(super) fn start_video_cutscene(&mut self, player: VideoPlayer, skippable: bool) {
+        if let Some(audio) = &mut self.audio {
+            if self.game.song_started {
+                audio.pause();
+            }
+        }
+        self.cutscene = Some(CutsceneState::Video { player, skippable, wall_clock_ms: 0.0 });
+    }
+
+    pub(super) fn finish_cutscene(&mut self) {
+        let Some(CutsceneState::Video { mut player, .. }) = self.cutscene.take() else { return; };
+        if let Some(cb) = player.take_on_finish() {
+            if self.scripts.has_scripts() {
+                self.scripts.call_lua_function(&cb, "");
+            }
+        }
+        if let Some(audio) = &mut self.audio {
+            if self.game.song_started && !self.game.song_ended {
+                audio.play();
+            }
+        }
+    }
+
+    pub(super) fn skip_cutscene(&mut self) {
+        if let Some(CutsceneState::Video { player, .. }) = &mut self.cutscene {
+            player.stop();
+        }
+        self.finish_cutscene();
     }
 
     pub(super) fn key_to_lane(key: KeyCode) -> Option<usize> {

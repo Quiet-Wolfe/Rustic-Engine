@@ -18,12 +18,9 @@ impl PlayScreen {
             return;
         }
 
-        // Video playback: only allow skip/stop via Enter or Escape
-        if self.video.is_some() {
-            if key == KeyCode::Enter || key == KeyCode::Escape {
-                if let Some(video) = &mut self.video {
-                    video.stop();
-                }
+        if let Some(super::CutsceneState::Video { skippable, .. }) = &self.cutscene {
+            if *skippable && (key == KeyCode::Enter || key == KeyCode::Escape) {
+                self.skip_cutscene();
             }
             return;
         }

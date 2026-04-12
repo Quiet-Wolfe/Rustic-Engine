@@ -36,15 +36,19 @@ impl PlayScreen {
     pub(super) fn update_inner(&mut self, dt: f32) {
         self.last_dt = dt;
         let dt_ms = dt as f64 * 1000.0;
-        if self.paused { return; }
-
-        // Video playback: tick video alongside normal game logic (overlay, not pause)
-        if let Some(video) = &mut self.video {
-            if video.is_playing() {
-                self.video_wall_clock_ms += dt_ms;
-                video.tick(self.video_wall_clock_ms);
+        if let Some(super::CutsceneState::Video { player, wall_clock_ms, .. }) = &mut self.cutscene {
+            *wall_clock_ms += dt_ms;
+            if player.is_playing() {
+                player.tick(*wall_clock_ms);
             }
+            let finished = player.is_finished();
+            if finished {
+                self.finish_cutscene();
+            }
+            return;
         }
+
+        if self.paused { return; }
 
         // Death state machine (visual only)
         if let Some(death) = &mut self.death {

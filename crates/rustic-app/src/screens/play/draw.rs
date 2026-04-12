@@ -37,7 +37,9 @@ impl PlayScreen {
         // Process video playback requests from Lua (needs GPU for texture creation)
         let video_reqs: Vec<_> = self.scripts.state.video_requests.drain(..).collect();
         for (filename, callback) in video_reqs {
-            // Resolve video path from asset roots (tries .mp4, .webm, .ogv)
+            if self.cutscene.is_some() {
+                break;
+            }
             let video_path = self.paths.video(&filename);
             if let Some(path) = video_path {
                 match VideoPlayer::new(
@@ -52,8 +54,7 @@ impl PlayScreen {
                         if let Some(cb) = callback {
                             player.set_on_finish(cb);
                         }
-                        self.video_wall_clock_ms = 0.0;
-                        self.video = Some(player);
+                        self.start_video_cutscene(player, true);
                     }
                     Err(e) => {
                         log::warn!("Failed to load video '{}': {}", filename, e);
@@ -65,7 +66,7 @@ impl PlayScreen {
         }
 
         // === Video playback: upload frame (drawn as overlay later) ===
-        if let Some(video) = &mut self.video {
+        if let Some(super::CutsceneState::Video { player: video, .. }) = &mut self.cutscene {
             video.upload(&gpu.queue);
         }
 
@@ -654,13 +655,15 @@ impl PlayScreen {
         }
 
         // === Video overlay (drawn on top of everything) ===
-        if let Some(video) = &mut self.video {
+        if let Some(super::CutsceneState::Video { player: video, skippable, .. }) = &mut self.cutscene {
             let (vw, vh) = video.dimensions();
             let scale = (GAME_W / vw as f32).min(GAME_H / vh as f32);
             let dw = vw as f32 * scale;
             let dh = vh as f32 * scale;
             let dx = (GAME_W - dw) / 2.0;
             let dy = (GAME_H - dh) / 2.0;
+            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.85]);
+            gpu.draw_batch(None);
             gpu.push_texture_region(
                 vw as f32, vh as f32,
                 0.0, 0.0, vw as f32, vh as f32,
@@ -668,14 +671,8 @@ impl PlayScreen {
                 false, white,
             );
             gpu.draw_batch_with_bind_group(video.bind_group());
-
-            if video.is_finished() {
-                if let Some(cb) = video.take_on_finish() {
-                    if self.scripts.has_scripts() {
-                        self.scripts.call_lua_function(&cb, "");
-                    }
-                }
-                self.video = None;
+            if *skippable {
+                gpu.draw_text("Press ENTER to skip", GAME_W - 270.0, GAME_H - 38.0, 22.0, white);
             }
         }
 
