@@ -362,7 +362,12 @@ impl Screen for FreeplayScreen {
 
             gpu.draw_text(&self.songs[song_idx].name, x, y, text_size, color);
             if let Some(icon) = &mut self.songs[song_idx].icon {
-                icon.set_state(IconState::Neutral);
+                let state = if i == self.cur_selected {
+                    IconState::Winning
+                } else {
+                    IconState::Neutral
+                };
+                icon.set_state(state);
                 icon.draw(gpu, icon_x, y - 30.0, 150.0, color);
             }
         }
