@@ -19,7 +19,7 @@ impl PlayScreen {
         }
 
         if let Some(super::CutsceneState::Video { skippable, .. }) = &self.cutscene {
-            if *skippable && (key == KeyCode::Enter || key == KeyCode::Escape) {
+            if *skippable && (key == KeyCode::Enter || key == KeyCode::Escape || key == KeyCode::Space) {
                 self.skip_cutscene();
             }
             return;

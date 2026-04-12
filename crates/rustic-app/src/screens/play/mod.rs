@@ -1271,6 +1271,13 @@ impl Screen for PlayScreen {
     fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
         let (x, y) = (x as f32, y as f32);
 
+        if let Some(CutsceneState::Video { skippable, .. }) = &self.cutscene {
+            if *skippable && phase == TouchPhase::Started {
+                self.skip_cutscene();
+            }
+            return;
+        }
+
         // Pause menu / death screen
         if self.paused || self.death.is_some() {
             if phase == TouchPhase::Started {
