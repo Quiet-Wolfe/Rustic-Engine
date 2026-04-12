@@ -753,6 +753,43 @@ impl LuaScript {
             }
         }
 
+        // Drain __pending_audio (playMusic / pauseSounds / setSoundTime)
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_audio") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    let kind: String = tbl.get("kind").unwrap_or_default();
+                    match kind.as_str() {
+                        "play_music" => {
+                            let path: String = tbl.get("path").unwrap_or_default();
+                            let volume: f64 = tbl.get("volume").unwrap_or(1.0);
+                            let looping: bool = tbl.get("looping").unwrap_or(true);
+                            state.audio_requests.push(crate::script_state::AudioRequest::PlayMusic {
+                                path,
+                                volume,
+                                looping,
+                            });
+                        }
+                        "stop_music" => state.audio_requests.push(crate::script_state::AudioRequest::StopMusic),
+                        "pause_music" => state.audio_requests.push(crate::script_state::AudioRequest::PauseMusic),
+                        "resume_music" => state.audio_requests.push(crate::script_state::AudioRequest::ResumeMusic),
+                        "set_music_volume" => {
+                            let volume: f64 = tbl.get("volume").unwrap_or(1.0);
+                            state.audio_requests.push(crate::script_state::AudioRequest::SetMusicVolume(volume));
+                        }
+                        "set_music_time" => {
+                            let time: f64 = tbl.get("time").unwrap_or(0.0);
+                            state.audio_requests.push(crate::script_state::AudioRequest::SetMusicTime(time));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_audio", new_tbl).ok();
+            }
+        }
+
         // Drain __pending_cam_fx (camera shake/flash requests)
         if let Ok(pending) = globals.get::<LuaTable>("__pending_cam_fx") {
             let len = pending.len().unwrap_or(0);

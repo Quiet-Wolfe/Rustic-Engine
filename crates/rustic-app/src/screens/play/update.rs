@@ -123,6 +123,9 @@ impl PlayScreen {
         self.scripts.state.default_cam_zoom = self.default_cam_zoom;
         self.scripts.state.camera_speed = self.camera.camera_speed;
         self.scripts.state.health = self.game.score.health;
+        if let Some(audio) = &self.audio {
+            self.scripts.set_on_all("__music_time", audio.loop_music_position_ms());
+        }
 
         // Push game object properties that scripts commonly read
         use rustic_scripting::LuaValue as SLV;
@@ -185,6 +188,7 @@ impl PlayScreen {
         if self.scripts.has_scripts() {
             self.scripts.call_with_elapsed("onUpdate", dt as f64);
         }
+        self.process_audio_requests();
 
         // === Call into gameplay logic ===
         let audio_pos = if self.game.song_started {

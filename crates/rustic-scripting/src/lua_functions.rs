@@ -101,6 +101,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__pending_cam_fx", lua.create_table()?)?;
     g.set("__pending_subtitles", lua.create_table()?)?;
     g.set("__pending_char_positions", lua.create_table()?)?;
+    g.set("__pending_audio", lua.create_table()?)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -1709,19 +1710,86 @@ fn push_tween(lua: &Lua, tag: &str, target: &str, property: &str, value: f64, du
 fn register_sound_functions(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
+    globals.set("__music_volume", 1.0)?;
+    globals.set("__music_time", 0.0)?;
+
     globals.set("playSound", lua.create_function(|_lua, _args: LuaMultiValue| { Ok(()) })?)?;
-    globals.set("playMusic", lua.create_function(|_lua, _args: LuaMultiValue| { Ok(()) })?)?;
-    globals.set("stopSound", lua.create_function(|_lua, _tag: Option<String>| { Ok(()) })?)?;
-    globals.set("pauseSound", lua.create_function(|_lua, _tag: Option<String>| { Ok(()) })?)?;
-    globals.set("resumeSound", lua.create_function(|_lua, _tag: Option<String>| { Ok(()) })?)?;
+    globals.set("playMusic", lua.create_function(|lua, (path, volume, looping): (String, Option<f64>, Option<bool>)| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "play_music")?;
+        tbl.set("path", path)?;
+        tbl.set("volume", volume.unwrap_or(1.0))?;
+        tbl.set("looping", looping.unwrap_or(true))?;
+        pending.set(pending.len()? + 1, tbl)?;
+        lua.globals().set("__music_volume", volume.unwrap_or(1.0))?;
+        Ok(())
+    })?)?;
+    globals.set("stopSound", lua.create_function(|lua, _tag: Option<String>| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "stop_music")?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
+    globals.set("pauseSound", lua.create_function(|lua, _tag: Option<String>| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "pause_music")?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
+    globals.set("pauseSounds", lua.create_function(|lua, _tag: Option<String>| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "pause_music")?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
+    globals.set("resumeSound", lua.create_function(|lua, _tag: Option<String>| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "resume_music")?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
+    globals.set("resumeSounds", lua.create_function(|lua, _tag: Option<String>| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "resume_music")?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
     globals.set("soundFadeIn", lua.create_function(|_lua, _args: LuaMultiValue| { Ok(()) })?)?;
     globals.set("soundFadeOut", lua.create_function(|_lua, _args: LuaMultiValue| { Ok(()) })?)?;
     globals.set("soundFadeCancel", lua.create_function(|_lua, _tag: Option<String>| { Ok(()) })?)?;
-    globals.set("getSoundVolume", lua.create_function(|_lua, _tag: Option<String>| -> LuaResult<f64> { Ok(1.0) })?)?;
-    globals.set("setSoundVolume", lua.create_function(|_lua, (_tag, _vol): (Option<String>, f64)| { Ok(()) })?)?;
-    globals.set("getSoundTime", lua.create_function(|_lua, _tag: Option<String>| -> LuaResult<f64> { Ok(0.0) })?)?;
-    globals.set("setSoundTime", lua.create_function(|_lua, (_tag, _time): (Option<String>, f64)| { Ok(()) })?)?;
-    globals.set("luaSoundExists", lua.create_function(|_lua, _tag: String| -> LuaResult<bool> { Ok(false) })?)?;
+    globals.set("getSoundVolume", lua.create_function(|lua, _tag: Option<String>| -> LuaResult<f64> {
+        Ok(lua.globals().get::<f64>("__music_volume").unwrap_or(1.0))
+    })?)?;
+    globals.set("setSoundVolume", lua.create_function(|lua, (_tag, vol): (Option<String>, f64)| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "set_music_volume")?;
+        tbl.set("volume", vol)?;
+        pending.set(pending.len()? + 1, tbl)?;
+        lua.globals().set("__music_volume", vol)?;
+        Ok(())
+    })?)?;
+    globals.set("getSoundTime", lua.create_function(|lua, _tag: Option<String>| -> LuaResult<f64> {
+        Ok(lua.globals().get::<f64>("__music_time").unwrap_or(0.0))
+    })?)?;
+    globals.set("setSoundTime", lua.create_function(|lua, (_tag, time): (Option<String>, f64)| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "set_music_time")?;
+        tbl.set("time", time)?;
+        pending.set(pending.len()? + 1, tbl)?;
+        lua.globals().set("__music_time", time)?;
+        Ok(())
+    })?)?;
+    globals.set("luaSoundExists", lua.create_function(|lua, _tag: String| -> LuaResult<bool> {
+        Ok(lua.globals().get::<f64>("__music_volume").unwrap_or(0.0) >= 0.0)
+    })?)?;
 
     Ok(())
 }

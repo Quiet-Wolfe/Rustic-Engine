@@ -205,6 +205,31 @@ impl AudioEngine {
         }
     }
 
+    pub fn pause_loop_music(&mut self) {
+        if let Some(h) = &mut self.loop_music {
+            h.pause(Tween::default());
+        }
+    }
+
+    pub fn resume_loop_music(&mut self) {
+        if let Some(h) = &mut self.loop_music {
+            h.resume(Tween::default());
+        }
+    }
+
+    pub fn loop_music_position_ms(&self) -> f64 {
+        self.loop_music
+            .as_ref()
+            .map(|h| h.position() * 1000.0)
+            .unwrap_or(0.0)
+    }
+
+    pub fn seek_loop_music(&mut self, position_ms: f64) {
+        if let Some(h) = &mut self.loop_music {
+            h.seek_to(position_ms / 1000.0);
+        }
+    }
+
     /// Stop the looping music track.
     pub fn stop_loop_music(&mut self) {
         if let Some(h) = &mut self.loop_music {

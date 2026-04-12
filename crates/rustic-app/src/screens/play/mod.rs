@@ -18,7 +18,7 @@ use rustic_gameplay::play_state::PlayState;
 use rustic_render::camera::GameCamera;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::SpriteAtlas;
-use rustic_scripting::{ScriptManager, LuaSpriteKind};
+use rustic_scripting::{AudioRequest, ScriptManager, LuaSpriteKind};
 
 use crate::screen::Screen;
 use super::characters::{Character, StageBgSprite};
@@ -547,6 +547,58 @@ impl PlayScreen {
             player.stop();
         }
         self.finish_cutscene();
+    }
+
+    pub(super) fn process_audio_requests(&mut self) {
+        let requests: Vec<_> = self.scripts.state.audio_requests.drain(..).collect();
+        for request in requests {
+            match request {
+                AudioRequest::PlayMusic { path, volume, looping: _ } => {
+                    let music_path = self.resolve_audio_path(&path);
+                    let Some(audio) = &mut self.audio else { continue; };
+                    if let Some(music_path) = music_path {
+                        audio.play_loop_music_vol(&music_path, volume);
+                    }
+                }
+                AudioRequest::StopMusic => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.stop_loop_music();
+                    }
+                }
+                AudioRequest::PauseMusic => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.pause_loop_music();
+                    }
+                }
+                AudioRequest::ResumeMusic => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.resume_loop_music();
+                    }
+                }
+                AudioRequest::SetMusicVolume(volume) => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.set_loop_music_volume(volume);
+                    }
+                }
+                AudioRequest::SetMusicTime(time) => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.seek_loop_music(time);
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolve_audio_path(&self, path: &str) -> Option<std::path::PathBuf> {
+        let explicit = std::path::PathBuf::from(path);
+        if explicit.exists() {
+            return Some(explicit);
+        }
+        let stripped = path.strip_suffix(".ogg").unwrap_or(path);
+        self.paths
+            .music(stripped)
+            .or_else(|| self.paths.sound(stripped))
+            .or_else(|| self.paths.find(path))
     }
 
     pub(super) fn key_to_lane(key: KeyCode) -> Option<usize> {

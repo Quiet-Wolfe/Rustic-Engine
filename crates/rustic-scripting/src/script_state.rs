@@ -22,6 +22,20 @@ pub struct NoteTypeRegistration {
     pub confirm_anims: Option<[String; 4]>,
 }
 
+#[derive(Debug, Clone)]
+pub enum AudioRequest {
+    PlayMusic {
+        path: String,
+        volume: f64,
+        looping: bool,
+    },
+    StopMusic,
+    PauseMusic,
+    ResumeMusic,
+    SetMusicVolume(f64),
+    SetMusicTime(f64),
+}
+
 /// Shared mutable state accessible from Lua scripts.
 /// This is the bridge between Lua and the Rust game engine.
 pub struct ScriptState {
@@ -165,6 +179,8 @@ pub struct ScriptState {
     /// Pending video playback requests: (video_path, on_finish_callback_name).
     /// Consumed by the game engine each frame.
     pub video_requests: Vec<(String, Option<String>)>,
+    /// Pending audio control requests from Lua.
+    pub audio_requests: Vec<AudioRequest>,
 
     /// Global downscroll setting (used as fallback when per-strum down_scroll is None).
     pub downscroll: bool,
@@ -404,6 +420,7 @@ impl ScriptState {
             reflections_request: None,
             note_type_registrations: Vec::new(),
             video_requests: Vec::new(),
+            audio_requests: Vec::new(),
             downscroll: false,
         }
     }

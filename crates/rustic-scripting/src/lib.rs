@@ -4,7 +4,7 @@ mod script_state;
 pub mod tweens;
 
 pub use lua_engine::LuaScript;
-pub use script_state::{ScriptState, LuaSprite, LuaSpriteKind, LuaValue, StrumProps, NoteTypeRegistration};
+pub use script_state::{AudioRequest, ScriptState, LuaSprite, LuaSpriteKind, LuaValue, StrumProps, NoteTypeRegistration};
 pub use tweens::{TweenManager, Tween, TweenProperty, EaseFunc, LuaTimer};
 
 use std::path::{Path, PathBuf};
