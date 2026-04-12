@@ -1,5 +1,6 @@
 mod init;
 mod input;
+mod pause;
 mod update;
 mod draw;
 
@@ -20,7 +21,9 @@ use rustic_scripting::{ScriptManager, LuaSpriteKind};
 
 use crate::screen::Screen;
 use super::characters::{Character, StageBgSprite};
+use super::options::OptionsMenuState;
 use super::video::VideoPlayer;
+use self::pause::PauseMenuState;
 
 // === Psych Engine constants ===
 pub const GAME_W: f32 = 1280.0;
@@ -384,8 +387,13 @@ pub struct PlayScreen {
 
     // Pause
     pub(super) paused: bool,
-    pub(super) pause_selection: usize,
-    pub(super) skip_target_ms: f64,
+    pub(super) pause_menu: Option<PauseMenuState>,
+    pub(super) pause_skip_direction: i8,
+    pub(super) practice_mode: bool,
+    pub(super) botplay: bool,
+    pub(super) death_counter: u32,
+    pub(super) pending_options_open: bool,
+    pub(super) options_menu: Option<OptionsMenuState>,
     pub(super) wants_restart: bool,
     pub(super) completed_song: bool,
     pub(super) score_saved: bool,
@@ -467,8 +475,13 @@ impl PlayScreen {
             last_dt: 1.0 / 60.0,
             downscroll: prefs.downscroll,
             paused: false,
-            pause_selection: 0,
-            skip_target_ms: 0.0,
+            pause_menu: None,
+            pause_skip_direction: 0,
+            practice_mode: false,
+            botplay: false,
+            death_counter: 0,
+            pending_options_open: false,
+            options_menu: None,
             wants_restart: false,
             completed_song: false,
             score_saved: false,
@@ -1265,6 +1278,9 @@ impl Screen for PlayScreen {
     }
 
     fn handle_key_release(&mut self, key: KeyCode) {
+        if self.paused && matches!(key, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::KeyA | KeyCode::KeyD) {
+            self.pause_skip_direction = 0;
+        }
         if let Some(lane) = Self::key_to_lane(key) {
             self.game.key_release(lane);
         }

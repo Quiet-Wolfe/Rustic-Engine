@@ -178,16 +178,30 @@ impl AudioEngine {
         self.play_loop_music_vol(path, 1.0);
     }
 
-    /// Play a looping music track at a given volume.
-    pub fn play_loop_music_vol(&mut self, path: &Path, volume: f64) {
+    /// Play a looping music track and seek to a start position in milliseconds.
+    pub fn play_loop_music_from(&mut self, path: &Path, volume: f64, start_ms: f64) {
         self.stop_loop_music();
         if !path.exists() { return; }
         if let Ok(data) = StaticSoundData::from_file(path) {
             let data = data.loop_region(..);
             if let Ok(mut handle) = self.manager.play(data) {
                 handle.set_volume(volume, Tween::default());
+                if start_ms > 0.0 {
+                    handle.seek_to(start_ms / 1000.0);
+                }
                 self.loop_music = Some(handle);
             }
+        }
+    }
+
+    /// Play a looping music track at a given volume.
+    pub fn play_loop_music_vol(&mut self, path: &Path, volume: f64) {
+        self.play_loop_music_from(path, volume, 0.0);
+    }
+
+    pub fn set_loop_music_volume(&mut self, volume: f64) {
+        if let Some(h) = &mut self.loop_music {
+            h.set_volume(volume, Tween::default());
         }
     }
 
@@ -211,5 +225,11 @@ impl AudioEngine {
         if let Some(h) = &mut self.vocals_opponent {
             h.seek_to(secs);
         }
+    }
+
+    pub fn sound_duration_ms(path: &Path) -> Option<f64> {
+        StaticSoundData::from_file(path)
+            .ok()
+            .map(|data| data.duration().as_secs_f64() * 1000.0)
     }
 }

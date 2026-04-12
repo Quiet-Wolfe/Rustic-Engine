@@ -13,6 +13,8 @@ pub struct Preferences {
     pub safe_frames: i32,
     pub antialiasing: bool,
     pub flashing_lights: bool,
+    #[serde(default)]
+    pub fps_counter: bool,
     #[serde(default = "default_fps_cap")]
     pub fps_cap: u32,
     #[serde(default)]
@@ -77,6 +79,7 @@ impl Default for Preferences {
             safe_frames: 10,
             antialiasing: true,
             flashing_lights: true,
+            fps_counter: false,
             fps_cap: default_fps_cap(),
             fullscreen: false,
             master_volume: default_master_volume(),

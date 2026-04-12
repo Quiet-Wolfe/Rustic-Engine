@@ -48,7 +48,10 @@ impl PlayScreen {
             return;
         }
 
-        if self.paused { return; }
+        if self.paused {
+            self.update_pause(dt);
+            return;
+        }
 
         // Death state machine (visual only)
         if let Some(death) = &mut self.death {
@@ -550,6 +553,7 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::Death => {
+                    self.death_counter += 1;
                     if let Some(audio) = &mut self.audio {
                         audio.pause();
                         if let Some(sfx) = self.paths.sound("fnf_loss_sfx") {

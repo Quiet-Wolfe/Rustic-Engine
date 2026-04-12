@@ -1,6 +1,7 @@
 use winit::keyboard::KeyCode;
 
 use super::{PlayScreen, DeathPhase};
+use crate::screens::options;
 
 impl PlayScreen {
     pub(super) fn handle_key_inner(&mut self, key: KeyCode) {
@@ -25,73 +26,27 @@ impl PlayScreen {
             return;
         }
 
-        // Pause menu input (must come before toggle to prevent Enter from unpausing)
-        if self.paused {
-            const PAUSE_ITEMS: usize = 4; // Resume, Restart, Skip To, Exit
-            match key {
-                KeyCode::Escape => {
-                    // Escape always resumes
-                    self.paused = false;
-                    if let Some(audio) = &mut self.audio {
-                        if self.game.song_started { audio.play(); }
-                    }
-                }
-                KeyCode::ArrowUp | KeyCode::KeyW => {
-                    if self.pause_selection > 0 { self.pause_selection -= 1; }
-                }
-                KeyCode::ArrowDown | KeyCode::KeyS => {
-                    if self.pause_selection < PAUSE_ITEMS - 1 { self.pause_selection += 1; }
-                }
-                // Left/Right adjust skip target when on the Skip To item
-                KeyCode::ArrowLeft | KeyCode::KeyA => {
-                    if self.pause_selection == 2 {
-                        self.skip_target_ms = (self.skip_target_ms - 5000.0).max(0.0);
-                    }
-                }
-                KeyCode::ArrowRight | KeyCode::KeyD => {
-                    if self.pause_selection == 2 {
-                        self.skip_target_ms += 5000.0;
-                    }
-                }
-                KeyCode::Enter | KeyCode::Space => {
-                    match self.pause_selection {
-                        0 => {
-                            self.paused = false;
-                            if let Some(audio) = &mut self.audio {
-                                if self.game.song_started { audio.play(); }
-                            }
-                        }
-                        1 => self.wants_restart = true,
-                        2 => {
-                            // Skip To: jump to target time and resume
-                            let target = self.skip_target_ms;
-                            self.skip_to(target);
-                            self.paused = false;
-                            if let Some(audio) = &mut self.audio {
-                                if self.game.song_started { audio.play(); }
-                            }
-                        }
-                        3 => self.game.song_ended = true,
-                        _ => {}
-                    }
-                }
-                _ => {}
+        if let Some(menu) = &mut self.options_menu {
+            if key == KeyCode::Escape {
+                menu.save();
+                self.downscroll = menu.prefs.downscroll;
+                self.options_menu = None;
+                self.pending_options_open = false;
+            } else {
+                options::handle_input(menu, key);
             }
+            return;
+        }
+
+        if self.paused {
+            self.handle_pause_input(key);
             return;
         }
 
         // Pause toggle (Enter or Escape when not paused)
         if key == KeyCode::Escape || key == KeyCode::Enter {
             if self.game.song_started || self.game.countdown_timer > 0.0 {
-                self.paused = true;
-                self.pause_selection = 0;
-                self.skip_target_ms = self.game.conductor.song_position.max(0.0);
-                if let Some(audio) = &mut self.audio {
-                    audio.pause();
-                    if let Some(sfx) = self.paths.sound("cancelMenu") {
-                        audio.play_sound(&sfx, 0.6);
-                    }
-                }
+                self.enter_pause();
                 return;
             }
         }
@@ -116,7 +71,7 @@ impl PlayScreen {
     }
 
     /// Skip to an absolute position in the song (in milliseconds).
-    fn skip_to(&mut self, target: f64) {
+    pub(super) fn skip_to(&mut self, target: f64) {
         let going_back = target < self.game.conductor.song_position;
         self.game.conductor.song_position = target;
 

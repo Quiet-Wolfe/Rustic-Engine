@@ -599,31 +599,8 @@ impl PlayScreen {
             }
         }
 
-        // === Pause menu ===
         if self.paused {
-            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
-            gpu.draw_batch(None);
-
-            let skip_secs = (self.skip_target_ms / 1000.0).max(0.0);
-            let skip_min = (skip_secs / 60.0) as u32;
-            let skip_sec = (skip_secs % 60.0) as u32;
-            let skip_label = format!("Skip To  < {}:{:02} >", skip_min, skip_sec);
-            let items: [&str; 4] = ["Resume", "Restart Song", &skip_label, "Exit to Menu"];
-            let menu_y = GAME_H / 2.0 - 80.0;
-            for (i, label) in items.iter().enumerate() {
-                let y = menu_y + i as f32 * 40.0;
-                let color = if i == self.pause_selection {
-                    [1.0, 1.0, 1.0, 1.0]
-                } else {
-                    [0.6, 0.6, 0.6, 1.0]
-                };
-                let prefix = if i == self.pause_selection { "> " } else { "  " };
-                gpu.draw_text(
-                    &format!("{}{}", prefix, label),
-                    GAME_W / 2.0 - 120.0, y, 28.0, color,
-                );
-            }
-            gpu.draw_text("PAUSED", GAME_W / 2.0 - 60.0, menu_y - 60.0, 36.0, white);
+            self.draw_pause(gpu);
         }
 
         // === Song results ===
