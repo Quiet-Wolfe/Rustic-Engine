@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+use crate::mods::ModLoader;
 
 /// Mod-priority asset path resolver.
 ///
@@ -18,86 +20,35 @@ impl AssetPaths {
 
     /// Cross-platform default: psych_default() on desktop, android_default() on Android.
     pub fn platform_default() -> Self {
-        #[cfg(target_os = "android")]
-        { Self::android_default() }
-        #[cfg(not(target_os = "android"))]
-        { Self::psych_default() }
+        Self::psych_default()
     }
 
     /// Build the default path resolver for Android.
-    /// Assets at /sdcard/RusticV2/assets/, mods at /sdcard/RusticV2/mods/.
+    /// Resolves roots from the same environment/config settings as desktop.
     #[cfg(target_os = "android")]
     pub fn android_default() -> Self {
-        let mut paths = Self::new();
-        let base = PathBuf::from("/sdcard/RusticV2");
-
-        // Mods: each subfolder under mods/ gets highest priority
-        let mods_dir = base.join("mods");
-        if mods_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&mods_dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() {
-                        // Check for assets/ subdirectory (Psych Engine mod structure)
-                        let assets = p.join("assets");
-                        if assets.is_dir() {
-                            paths.add_root(assets.clone());
-                            let shared = assets.join("shared");
-                            if shared.exists() {
-                                paths.add_root(shared);
-                            }
-                        } else {
-                            // Flat mod (files directly in mod folder)
-                            paths.add_root(p.clone());
-                            let shared = p.join("shared");
-                            if shared.exists() {
-                                paths.add_root(shared);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Engine shared
-        paths.add_root(base.join("assets/shared"));
-        // Base game shared
-        paths.add_root(base.join("assets/base_game/shared"));
-        // Base game root
-        paths.add_root(base.join("assets/base_game"));
-        // Engine fallback
-        paths.add_root(base.join("assets"));
-
-        paths
+        Self::from_mod_loader(&ModLoader::from_environment())
     }
 
     /// Build the default path resolver for Psych Engine + mods.
-    /// Roots are added highest priority first.
+    /// Environment variables:
+    /// - RUSTIC_GAME_PATH: base asset root (defaults to ./assets)
+    /// - RUSTIC_MODS_PATH: mods directory (defaults to ./mods)
     pub fn psych_default() -> Self {
-        let mut paths = Self::new();
+        Self::from_mod_loader(&ModLoader::from_environment())
+    }
 
-        // Mod: VS Retrospecter Part 2
-        let retro = PathBuf::from("references/Vs-Retrospecter-Part-2-COMPILED/assets");
-        if retro.exists() {
-            paths.add_root(retro.clone());
-            // Mod also has a shared/ subdirectory with images/sounds/music
-            let retro_shared = retro.join("shared");
-            if retro_shared.exists() {
-                paths.add_root(retro_shared);
-            }
+    pub fn from_mod_loader(loader: &ModLoader) -> Self {
+        let mut paths = Self::new();
+        for root in loader.asset_roots() {
+            paths.add_root(root);
         }
 
-        // Engine shared (note skins, common SFX, menu music, bf character)
-        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets/shared"));
-
-        // Base game shared (characters, stages, data, images)
-        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets/base_game/shared"));
-
-        // Base game root (songs, week-specific dirs like week1/)
-        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets/base_game"));
-
-        // Engine root (fallback)
-        paths.add_root(PathBuf::from("references/FNF-PsychEngine/assets"));
+        let base = loader.base_game();
+        paths.add_root(base.join("shared"));
+        paths.add_root(base.join("base_game/shared"));
+        paths.add_root(base.join("base_game"));
+        paths.add_root(base.to_path_buf());
 
         paths
     }
