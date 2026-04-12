@@ -8,8 +8,9 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
+use rustic_core::prefs::Preferences;
 use rustic_render::gpu::GpuState;
 
 use crate::screen::Screen;
@@ -41,9 +42,13 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let attrs = Window::default_attributes()
+        let prefs = Preferences::load();
+        let mut attrs = Window::default_attributes()
             .with_title("RusticV2")
             .with_inner_size(winit::dpi::LogicalSize::new(GAME_W, GAME_H));
+        if prefs.fullscreen {
+            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         self.window = Some(window.clone());

@@ -9,6 +9,7 @@ use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
+use rustic_core::prefs::Preferences;
 use rustic_core::paths::AssetPaths;
 use rustic_core::highscore::HighscoreStore;
 use rustic_gameplay::play_state::PlayState;
@@ -397,6 +398,7 @@ impl PlayScreen {
     pub fn new(song_name: &str, difficulty: &str, play_as_opponent: bool) -> Self {
         let mut game = PlayState::new(100.0);
         game.play_as_opponent = play_as_opponent;
+        let prefs = Preferences::load();
         
         Self {
             game,
@@ -463,7 +465,7 @@ impl PlayScreen {
             stage_pos_gf: [0.0; 2],
             stage_name: String::new(),
             last_dt: 1.0 / 60.0,
-            downscroll: false,
+            downscroll: prefs.downscroll,
             paused: false,
             pause_selection: 0,
             skip_target_ms: 0.0,
