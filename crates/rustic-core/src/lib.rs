@@ -1,6 +1,7 @@
 pub mod chart;
 pub mod character;
 pub mod conductor;
+pub mod mods;
 pub mod note;
 pub mod paths;
 pub mod rating;
