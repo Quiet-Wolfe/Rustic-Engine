@@ -2,6 +2,7 @@ use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
+use rustic_core::highscore::HighscoreStore;
 use rustic_core::paths::AssetPaths;
 use rustic_core::week;
 use rustic_render::gpu::{GpuState, GpuTexture};
@@ -22,6 +23,7 @@ const DIFFICULTIES: [&str; 3] = ["easy", "normal", "hard"];
 /// A song entry in the freeplay list.
 struct FreeplaySong {
     name: String,
+    song_id: String,
     #[allow(dead_code)]
     character: String,
     color: [f32; 3],
@@ -43,6 +45,7 @@ pub struct FreeplayScreen {
     next: Option<Box<dyn Screen>>,
     confirmed: bool,
     play_as_opponent: bool,
+    highscores: HighscoreStore,
 }
 
 impl FreeplayScreen {
@@ -61,6 +64,7 @@ impl FreeplayScreen {
             next: None,
             confirmed: false,
             play_as_opponent: false,
+            highscores: HighscoreStore::load(),
         }
     }
 
@@ -138,6 +142,20 @@ impl FreeplayScreen {
             _ => None,
         }
     }
+
+    fn current_score_text(&self) -> String {
+        let Some(&song_idx) = self.filtered.get(self.cur_selected) else {
+            return "PERSONAL BEST: 0 (0.00%)".to_string();
+        };
+
+        let song = &self.songs[song_idx];
+        let diff = DIFFICULTIES[self.cur_difficulty];
+        if let Some(entry) = self.highscores.get_score(&song.song_id, diff) {
+            format!("PERSONAL BEST: {} ({:.2}%)", entry.score, entry.accuracy)
+        } else {
+            "PERSONAL BEST: 0 (0.00%)".to_string()
+        }
+    }
 }
 
 impl Screen for FreeplayScreen {
@@ -167,6 +185,7 @@ impl Screen for FreeplayScreen {
                 seen_songs.insert(key);
                 self.songs.push(FreeplaySong {
                     name: song.name.clone(),
+                    song_id: song.name.to_lowercase().replace(' ', "-"),
                     character: song.character.clone(),
                     color: [
                         srgb_to_linear(song.color[0] as f32 / 255.0),
@@ -183,7 +202,8 @@ impl Screen for FreeplayScreen {
             if seen_songs.contains(&song_name) { continue; }
             seen_songs.insert(song_name.clone());
             self.songs.push(FreeplaySong {
-                name: song_name,
+                name: song_name.clone(),
+                song_id: song_name,
                 character: String::new(),
                 color: [146, 113, 253].map(|c| srgb_to_linear(c as f32 / 255.0)),
                 week: 0,
@@ -231,8 +251,7 @@ impl Screen for FreeplayScreen {
                     let song_idx = self.filtered[self.cur_selected];
                     let song = &self.songs[song_idx];
                     let diff = DIFFICULTIES[self.cur_difficulty];
-                    let song_path = song.name.to_lowercase().replace(' ', "-");
-                    self.next = Some(Box::new(PlayScreen::new(&song_path, diff, self.play_as_opponent)));
+                    self.next = Some(Box::new(PlayScreen::new(&song.song_id, diff, self.play_as_opponent)));
                 }
             }
             KeyCode::Escape => {
@@ -388,7 +407,8 @@ impl Screen for FreeplayScreen {
         }
 
         // Score display
-        gpu.draw_text("PERSONAL BEST: 0 (0%)", score_x, 5.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
+        let score_text = self.current_score_text();
+        gpu.draw_text(&score_text, score_x, 5.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
 
         // Search bar (top left)
         if !self.search.is_empty() {

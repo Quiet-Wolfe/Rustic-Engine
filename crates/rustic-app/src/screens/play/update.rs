@@ -429,6 +429,7 @@ impl PlayScreen {
                     }
                 }
                 GameEvent::SongEnd => {
+                    self.completed_song = true;
                     if self.scripts.has_scripts() {
                         self.scripts.call("onEndSong");
                     }

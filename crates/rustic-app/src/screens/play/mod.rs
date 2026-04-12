@@ -10,6 +10,7 @@ use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
 use rustic_core::paths::AssetPaths;
+use rustic_core::highscore::HighscoreStore;
 use rustic_gameplay::play_state::PlayState;
 use rustic_render::camera::GameCamera;
 use rustic_render::gpu::{GpuState, GpuTexture};
@@ -377,6 +378,8 @@ pub struct PlayScreen {
     pub(super) pause_selection: usize,
     pub(super) skip_target_ms: f64,
     pub(super) wants_restart: bool,
+    pub(super) completed_song: bool,
+    pub(super) score_saved: bool,
 
     /// Active video playback (when a cutscene is playing).
     pub(super) video: Option<VideoPlayer>,
@@ -457,6 +460,8 @@ impl PlayScreen {
             pause_selection: 0,
             skip_target_ms: 0.0,
             wants_restart: false,
+            completed_song: false,
+            score_saved: false,
             video: None,
         }
     }
@@ -1275,6 +1280,18 @@ impl Screen for PlayScreen {
             self.wants_restart = false;
             Some(Box::new(PlayScreen::new(&self.song_name, &self.difficulty, self.game.play_as_opponent)))
         } else if self.game.song_ended {
+            if self.completed_song && !self.score_saved {
+                let mut store = HighscoreStore::load();
+                store.save_score(
+                    &self.song_name,
+                    &self.difficulty,
+                    self.game.score.score,
+                    self.game.score.accuracy() as f32,
+                    self.game.score.misses == 0,
+                );
+                store.save();
+                self.score_saved = true;
+            }
             self.game.song_ended = false;
             Some(Box::new(super::freeplay::FreeplayScreen::new()))
         } else {
