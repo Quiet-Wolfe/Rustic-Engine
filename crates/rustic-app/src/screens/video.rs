@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ffmpeg_next as ffmpeg;
 use ffmpeg::format::input;
@@ -49,6 +51,8 @@ pub struct VideoPlayer {
     path: PathBuf,
     /// Lua callback to fire when video finishes.
     on_finish: Option<String>,
+    /// Extracted temp audio path for the video's audio stream, if present.
+    audio_path: Option<PathBuf>,
 }
 
 impl VideoPlayer {
@@ -92,6 +96,8 @@ impl VideoPlayer {
 
         log::info!("Video loaded: {:?} ({}x{}, {:.1}s)", path, width, height, duration_secs);
 
+        let audio_path = extract_audio_track(path);
+
         Ok(Self {
             ictx,
             decoder,
@@ -111,6 +117,7 @@ impl VideoPlayer {
             eof_sent: false,
             path: path.to_path_buf(),
             on_finish: None,
+            audio_path,
         })
     }
 
@@ -338,5 +345,44 @@ impl VideoPlayer {
 
     pub fn take_on_finish(&mut self) -> Option<String> {
         self.on_finish.take()
+    }
+
+    pub fn audio_path(&self) -> Option<&std::path::Path> {
+        self.audio_path.as_deref()
+    }
+}
+
+impl Drop for VideoPlayer {
+    fn drop(&mut self) {
+        if let Some(path) = &self.audio_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn extract_audio_track(path: &std::path::Path) -> Option<PathBuf> {
+    let file_stem = path.file_stem()?.to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let output = std::env::temp_dir().join(format!("rustic-video-{file_stem}-{nonce}.wav"));
+    let status = Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-i")
+        .arg(path)
+        .arg("-vn")
+        .arg("-acodec")
+        .arg("pcm_s16le")
+        .arg(&output)
+        .arg("-loglevel")
+        .arg("error")
+        .status()
+        .ok()?;
+    if status.success() && output.exists() {
+        Some(output)
+    } else {
+        let _ = std::fs::remove_file(&output);
+        None
     }
 }

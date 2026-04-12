@@ -16,6 +16,8 @@ pub struct AudioEngine {
     miss_index: usize,
     /// Looping music handle (e.g. gameOver.ogg).
     loop_music: Option<StaticSoundHandle>,
+    /// One-shot video/cutscene audio handle.
+    cutscene_audio: Option<StaticSoundHandle>,
 }
 
 impl AudioEngine {
@@ -31,6 +33,7 @@ impl AudioEngine {
             miss_sounds: Vec::new(),
             miss_index: 0,
             loop_music: None,
+            cutscene_audio: None,
         }
     }
 
@@ -228,6 +231,38 @@ impl AudioEngine {
         if let Some(h) = &mut self.loop_music {
             h.seek_to(position_ms / 1000.0);
         }
+    }
+
+    pub fn play_cutscene_audio(&mut self, path: &Path, volume: f64) {
+        self.stop_cutscene_audio();
+        if !path.exists() {
+            return;
+        }
+        if let Ok(data) = StaticSoundData::from_file(path) {
+            if let Ok(mut handle) = self.manager.play(data) {
+                handle.set_volume(volume, Tween::default());
+                self.cutscene_audio = Some(handle);
+            }
+        }
+    }
+
+    pub fn pause_cutscene_audio(&mut self) {
+        if let Some(h) = &mut self.cutscene_audio {
+            h.pause(Tween::default());
+        }
+    }
+
+    pub fn resume_cutscene_audio(&mut self) {
+        if let Some(h) = &mut self.cutscene_audio {
+            h.resume(Tween::default());
+        }
+    }
+
+    pub fn stop_cutscene_audio(&mut self) {
+        if let Some(h) = &mut self.cutscene_audio {
+            h.stop(Tween::default());
+        }
+        self.cutscene_audio = None;
     }
 
     /// Stop the looping music track.

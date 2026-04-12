@@ -527,6 +527,9 @@ impl PlayScreen {
             if self.game.song_started {
                 audio.pause();
             }
+            if let Some(audio_path) = player.audio_path() {
+                audio.play_cutscene_audio(audio_path, 1.0);
+            }
         }
         self.cutscene = Some(CutsceneState::Video { player, skippable, wall_clock_ms: 0.0 });
     }
@@ -539,6 +542,7 @@ impl PlayScreen {
             }
         }
         if let Some(audio) = &mut self.audio {
+            audio.stop_cutscene_audio();
             if self.game.song_started && !self.game.song_ended {
                 audio.play();
             }
