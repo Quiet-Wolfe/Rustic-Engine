@@ -6,30 +6,16 @@ use rustic_core::highscore::HighscoreStore;
 use rustic_core::paths::AssetPaths;
 use rustic_core::week;
 use rustic_render::gpu::{GpuState, GpuTexture};
+use rustic_render::health_icon::{HealthIcon, IconState};
 
 use crate::screen::Screen;
 use super::play::PlayScreen;
+use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
 
-/// Convert sRGB color component to linear space for the sRGB surface format.
-fn srgb_to_linear(s: f32) -> f32 {
-    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-}
-
 const DIFFICULTIES: [&str; 3] = ["easy", "normal", "hard"];
-
-/// A song entry in the freeplay list.
-struct FreeplaySong {
-    name: String,
-    song_id: String,
-    #[allow(dead_code)]
-    character: String,
-    color: [f32; 3],
-    #[allow(dead_code)]
-    week: usize,
-}
 
 pub struct FreeplayScreen {
     audio: Option<AudioEngine>,
@@ -118,31 +104,6 @@ impl FreeplayScreen {
         }
     }
 
-    fn key_to_char(key: KeyCode) -> Option<char> {
-        match key {
-            KeyCode::KeyA => Some('a'), KeyCode::KeyB => Some('b'),
-            KeyCode::KeyC => Some('c'), KeyCode::KeyD => Some('d'),
-            KeyCode::KeyE => Some('e'), KeyCode::KeyF => Some('f'),
-            KeyCode::KeyG => Some('g'), KeyCode::KeyH => Some('h'),
-            KeyCode::KeyI => Some('i'), KeyCode::KeyJ => Some('j'),
-            KeyCode::KeyK => Some('k'), KeyCode::KeyL => Some('l'),
-            KeyCode::KeyM => Some('m'), KeyCode::KeyN => Some('n'),
-            KeyCode::KeyO => Some('o'), KeyCode::KeyP => Some('p'),
-            KeyCode::KeyQ => Some('q'), KeyCode::KeyR => Some('r'),
-            KeyCode::KeyS => Some('s'), KeyCode::KeyT => Some('t'),
-            KeyCode::KeyU => Some('u'), KeyCode::KeyV => Some('v'),
-            KeyCode::KeyW => Some('w'), KeyCode::KeyX => Some('x'),
-            KeyCode::KeyY => Some('y'), KeyCode::KeyZ => Some('z'),
-            KeyCode::Digit0 => Some('0'), KeyCode::Digit1 => Some('1'),
-            KeyCode::Digit2 => Some('2'), KeyCode::Digit3 => Some('3'),
-            KeyCode::Digit4 => Some('4'), KeyCode::Digit5 => Some('5'),
-            KeyCode::Digit6 => Some('6'), KeyCode::Digit7 => Some('7'),
-            KeyCode::Digit8 => Some('8'), KeyCode::Digit9 => Some('9'),
-            KeyCode::Space => Some(' '), KeyCode::Minus => Some('-'),
-            _ => None,
-        }
-    }
-
     fn current_score_text(&self) -> String {
         let Some(&song_idx) = self.filtered.get(self.cur_selected) else {
             return "PERSONAL BEST: 0 (0.00%)".to_string();
@@ -193,6 +154,7 @@ impl Screen for FreeplayScreen {
                         srgb_to_linear(song.color[2] as f32 / 255.0),
                     ],
                     week: week_idx,
+                    icon: None,
                 });
             }
         }
@@ -207,7 +169,19 @@ impl Screen for FreeplayScreen {
                 character: String::new(),
                 color: [146, 113, 253].map(|c| srgb_to_linear(c as f32 / 255.0)),
                 week: 0,
+                icon: None,
             });
+        }
+
+        for song in &mut self.songs {
+            let icon_path = paths
+                .health_icon(&song.character)
+                .or_else(|| paths.health_icon("face"));
+            if let Some(path) = icon_path {
+                let mut icon = HealthIcon::load(gpu, &path, false);
+                icon.set_state(IconState::Neutral);
+                song.icon = Some(icon);
+            }
         }
 
         self.rebuild_filter();
@@ -284,7 +258,7 @@ impl Screen for FreeplayScreen {
                 }
             }
             _ => {
-                if let Some(ch) = Self::key_to_char(key) {
+                if let Some(ch) = key_to_char(key) {
                     self.search.push(ch);
                     self.rebuild_filter();
                 }
@@ -384,8 +358,13 @@ impl Screen for FreeplayScreen {
 
             let alpha = if i == self.cur_selected { 1.0 } else { 0.6 };
             let color = [alpha, alpha, alpha, alpha];
+            let icon_x = x + approx_text_width(&self.songs[song_idx].name, text_size) + 12.0;
 
             gpu.draw_text(&self.songs[song_idx].name, x, y, text_size, color);
+            if let Some(icon) = &mut self.songs[song_idx].icon {
+                icon.set_state(IconState::Neutral);
+                icon.draw(gpu, icon_x, y - 30.0, 150.0, color);
+            }
         }
 
         // Score area (top right) — Psych: FlxG.width * 0.7

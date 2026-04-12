@@ -1,5 +1,6 @@
 pub mod characters;
 pub mod freeplay;
+pub(crate) mod freeplay_support;
 pub mod main_menu;
 pub mod play;
 pub mod sprite_test;
