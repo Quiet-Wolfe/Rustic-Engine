@@ -1,6 +1,7 @@
 mod init;
 mod input;
 mod pause;
+mod story;
 mod update;
 mod draw;
 
@@ -24,6 +25,7 @@ use super::characters::{Character, StageBgSprite};
 use super::options::OptionsMenuState;
 use super::video::VideoPlayer;
 use self::pause::PauseMenuState;
+use self::story::StorySession;
 
 // === Psych Engine constants ===
 pub const GAME_W: f32 = 1280.0;
@@ -397,6 +399,7 @@ pub struct PlayScreen {
     pub(super) wants_restart: bool,
     pub(super) completed_song: bool,
     pub(super) score_saved: bool,
+    pub(super) story: Option<StorySession>,
 
     /// Active gameplay-blocking cutscene.
     pub(super) cutscene: Option<CutsceneState>,
@@ -485,8 +488,29 @@ impl PlayScreen {
             wants_restart: false,
             completed_song: false,
             score_saved: false,
+            story: None,
             cutscene: None,
         }
+    }
+
+    pub fn new_story(
+        playlist: Vec<String>,
+        week_id: &str,
+        difficulty: &str,
+        play_as_opponent: bool,
+    ) -> Self {
+        Self::from_story_session(
+            StorySession::new(week_id, playlist, difficulty),
+            play_as_opponent,
+        )
+    }
+
+    pub fn from_story_session(story: StorySession, play_as_opponent: bool) -> Self {
+        let song_name = story.current_song().to_string();
+        let difficulty = story.difficulty.clone();
+        let mut screen = Self::new(&song_name, &difficulty, play_as_opponent);
+        screen.story = Some(story);
+        screen
     }
 
     pub(super) fn start_video_cutscene(&mut self, player: VideoPlayer, skippable: bool) {
@@ -1341,9 +1365,12 @@ impl Screen for PlayScreen {
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {
         if self.wants_restart {
             self.wants_restart = false;
-            Some(Box::new(PlayScreen::new(&self.song_name, &self.difficulty, self.game.play_as_opponent)))
+            Some(match self.story.clone() {
+                Some(story) => Box::new(PlayScreen::from_story_session(story, self.game.play_as_opponent)) as Box<dyn Screen>,
+                None => Box::new(PlayScreen::new(&self.song_name, &self.difficulty, self.game.play_as_opponent)),
+            })
         } else if self.game.song_ended {
-            if self.completed_song && !self.score_saved {
+            if self.completed_song && !self.score_saved && !self.practice_mode && !self.botplay {
                 let mut store = HighscoreStore::load();
                 store.save_score(
                     &self.song_name,
@@ -1354,6 +1381,28 @@ impl Screen for PlayScreen {
                 );
                 store.save();
                 self.score_saved = true;
+            }
+            if let Some(story) = self.story.clone() {
+                let next_screen: Box<dyn Screen> = if self.completed_song {
+                    if let Some(next_story) = story.advance(self.game.score.score) {
+                        Box::new(PlayScreen::from_story_session(next_story, self.game.play_as_opponent))
+                    } else {
+                        if !self.practice_mode && !self.botplay {
+                            let mut store = HighscoreStore::load();
+                            let total_score = story.completed_total(self.game.score.score);
+                            if total_score > store.get_week_score(&story.week_id, &story.difficulty) {
+                                store.reset_week(&story.week_id, &story.difficulty);
+                                store.add_week_score(&story.week_id, &story.difficulty, total_score);
+                                store.save();
+                            }
+                        }
+                        Box::new(super::story_menu::StoryMenuScreen::with_week(Some(story.week_id)))
+                    }
+                } else {
+                    Box::new(super::story_menu::StoryMenuScreen::with_week(Some(story.week_id)))
+                };
+                self.game.song_ended = false;
+                return Some(next_screen);
             }
             self.game.song_ended = false;
             Some(Box::new(super::freeplay::FreeplayScreen::new()))

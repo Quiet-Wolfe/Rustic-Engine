@@ -10,6 +10,7 @@ use rustic_render::health_icon::{HealthIcon, IconState};
 
 use crate::screen::Screen;
 use super::play::PlayScreen;
+use super::reset_score::{ResetScoreAction, ResetScoreModal};
 use super::freeplay_support::{approx_text_width, highscore_targets, key_to_char, personal_best_text, srgb_to_linear, FreeplaySong};
 
 const GAME_W: f32 = 1280.0;
@@ -37,6 +38,7 @@ pub struct FreeplayScreen {
     target_score: i32,
     target_accuracy: f32,
     previewing_song: Option<String>,
+    reset_modal: Option<ResetScoreModal>,
 }
 
 impl FreeplayScreen {
@@ -61,6 +63,7 @@ impl FreeplayScreen {
             target_score: 0,
             target_accuracy: 0.0,
             previewing_song: None,
+            reset_modal: None,
         }
     }
 
@@ -234,6 +237,20 @@ impl Screen for FreeplayScreen {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
+        if let Some(reset_modal) = &mut self.reset_modal {
+            match reset_modal.handle_key(key) {
+                ResetScoreAction::None => {}
+                ResetScoreAction::Close => self.reset_modal = None,
+                ResetScoreAction::Confirmed => {
+                    reset_modal.apply(&mut self.highscores);
+                    self.refresh_score_target();
+                    self.displayed_score = self.target_score as f32;
+                    self.displayed_accuracy = self.target_accuracy;
+                    self.reset_modal = None;
+                }
+            }
+            return;
+        }
         if self.confirmed { return; }
 
         match key {
@@ -245,6 +262,17 @@ impl Screen for FreeplayScreen {
             KeyCode::ArrowLeft => self.change_difficulty(-1),
             KeyCode::ArrowRight => self.change_difficulty(1),
             KeyCode::Space => self.toggle_preview(),
+            KeyCode::KeyR => {
+                if let Some(&song_idx) = self.filtered.get(self.cur_selected) {
+                    let song = &self.songs[song_idx];
+                    self.reset_modal = Some(ResetScoreModal::song(
+                        song.song_id.clone(),
+                        song.name.clone(),
+                        DIFFICULTIES[self.cur_difficulty].to_string(),
+                        song.character.clone(),
+                    ));
+                }
+            }
             KeyCode::Enter => {
                 if !self.filtered.is_empty() {
                     self.stop_preview();
@@ -335,6 +363,9 @@ impl Screen for FreeplayScreen {
     }
 
     fn update(&mut self, dt: f32) {
+        if let Some(reset_modal) = &mut self.reset_modal {
+            reset_modal.update(dt);
+        }
         let lerp = (-dt * 9.6).exp();
         self.lerp_selected = self.cur_selected as f32 + (self.lerp_selected - self.cur_selected as f32) * lerp;
 
@@ -455,6 +486,10 @@ impl Screen for FreeplayScreen {
                     [1.0, 1.0, 1.0, 0.7],
                 );
             }
+        }
+
+        if let Some(reset_modal) = &mut self.reset_modal {
+            reset_modal.draw(gpu);
         }
 
         gpu.end_frame();

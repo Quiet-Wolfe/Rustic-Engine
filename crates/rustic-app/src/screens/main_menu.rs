@@ -8,6 +8,7 @@ use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
 use crate::screen::Screen;
 use super::freeplay::FreeplayScreen;
+use super::story_menu::StoryMenuScreen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -225,8 +226,10 @@ impl Screen for MainMenuScreen {
                     Some(&"freeplay") => {
                         self.next = Some(Box::new(FreeplayScreen::new()));
                     }
+                    Some(&"story_mode") => {
+                        self.next = Some(Box::new(StoryMenuScreen::new()));
+                    }
                     _ => {
-                        // story_mode and credits not implemented — go to freeplay
                         self.next = Some(Box::new(FreeplayScreen::new()));
                     }
                 }

@@ -230,7 +230,7 @@ impl PlayScreen {
 
         // Load Lua scripts
         self.scripts.set_image_roots(paths.roots().to_vec());
-        self.scripts.set_globals(&parsed.song.song, false);
+        self.scripts.set_globals(&parsed.song.song, self.story.is_some());
         self.scripts.set_char_names(&parsed.song.player1, &parsed.song.player2, &parsed.song.gf_version);
 
         // Stage Lua script (loaded first — builds stage visuals)
