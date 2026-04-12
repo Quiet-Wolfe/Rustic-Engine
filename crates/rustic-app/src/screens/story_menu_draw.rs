@@ -169,6 +169,9 @@ impl StoryMenuScreen {
         if let Some(reset_modal) = &mut self.reset_modal {
             reset_modal.draw(gpu);
         }
+        if let Some(gameplay_changers) = &self.gameplay_changers {
+            gameplay_changers.draw(gpu);
+        }
 
         gpu.end_frame();
     }

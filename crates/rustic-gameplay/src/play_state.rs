@@ -21,6 +21,7 @@ pub struct PlayState {
     pub ratings: Vec<Rating>,
     pub keys_held: [bool; 4],
     pub play_as_opponent: bool,
+    pub botplay: bool,
     pub song_speed: f64,
     pub base_song_speed: f64,
     pub song_started: bool,
@@ -54,6 +55,7 @@ impl PlayState {
             ratings: Rating::load_default(),
             keys_held: [false; 4],
             play_as_opponent: false,
+            botplay: false,
             song_speed: 1.0,
             base_song_speed: 1.0,
             song_started: false,
@@ -109,73 +111,75 @@ impl PlayState {
         if let Some(idx) = best_idx {
             let diff = (self.notes[idx].strum_time - self.conductor.song_position).abs();
             if let Some(judgment) = rating::judge_note(&self.ratings, diff) {
-                self.notes[idx].was_good_hit = true;
-                let kind = &self.notes[idx].kind;
-                let type_str = kind.as_type_str().to_string();
-                let hit_causes_miss = kind.is_harmful();
-
-                if hit_causes_miss {
-                    // Harmful note: damage player, no score gain
-                    let dmg = kind.hit_damage();
-                    let config = kind.custom_config();
-                    let sfx = config.as_ref().and_then(|c| c.hit_sfx.clone());
-                    let drain_pct = config.as_ref().map(|c| c.health_drain_pct).unwrap_or(0.0);
-                    let death_safe = config.as_ref().map(|c| c.drain_death_safe).unwrap_or(false);
-
-                    if drain_pct > 0.0 {
-                        // Sliding drain: we don't damage here — the visual layer
-                        // will animate the health bar down over time.
-                        // Emit the drain request so the app layer handles it.
-                        self.events.push(GameEvent::HarmfulNoteHit {
-                            sfx_path: sfx.unwrap_or_default(),
-                            drain_pct,
-                            death_safe,
-                        });
-                    } else {
-                        // Instant damage
-                        self.score.change_health(-dmg);
-                    }
-                    if self.play_as_opponent {
-                        self.opponent_confirm[lane] = f64::MIN_POSITIVE;
-                    } else {
-                        self.player_confirm[lane] = f64::MIN_POSITIVE;
-                    }
-
-                    self.events.push(GameEvent::NoteHit {
-                        lane,
-                        rating: judgment.name.clone(),
-                        combo: self.score.combo,
-                        score: 0,
-                        note_type: type_str,
-                        is_sustain: self.notes[idx].sustain_length > 0.0,
-                        members_index: idx,
-                        hit_causes_miss: true,
-                    });
-                    self.events.push(GameEvent::MuteVocals);
-                } else {
-                    self.score.note_hit(
-                        judgment.score, judgment.rating_mod,
-                        judgment.health_gain, &judgment.name,
-                    );
-                    if self.play_as_opponent {
-                        self.opponent_confirm[lane] = f64::MIN_POSITIVE;
-                    } else {
-                        self.player_confirm[lane] = f64::MIN_POSITIVE;
-                    }
-
-                    self.events.push(GameEvent::NoteHit {
-                        lane,
-                        rating: judgment.name.clone(),
-                        combo: self.score.combo,
-                        score: judgment.score,
-                        note_type: type_str,
-                        is_sustain: self.notes[idx].sustain_length > 0.0,
-                        members_index: idx,
-                        hit_causes_miss: false,
-                    });
-                    self.events.push(GameEvent::UnmuteVocals);
-                }
+                self.apply_note_hit(idx, judgment);
             }
+        }
+    }
+
+    fn apply_note_hit(&mut self, idx: usize, judgment: rating::Judgment) {
+        let lane = self.notes[idx].lane;
+        self.notes[idx].was_good_hit = true;
+        let kind = &self.notes[idx].kind;
+        let type_str = kind.as_type_str().to_string();
+        let hit_causes_miss = kind.is_harmful();
+
+        if hit_causes_miss {
+            let dmg = kind.hit_damage();
+            let config = kind.custom_config();
+            let sfx = config.as_ref().and_then(|c| c.hit_sfx.clone());
+            let drain_pct = config.as_ref().map(|c| c.health_drain_pct).unwrap_or(0.0);
+            let death_safe = config.as_ref().map(|c| c.drain_death_safe).unwrap_or(false);
+
+            if drain_pct > 0.0 {
+                self.events.push(GameEvent::HarmfulNoteHit {
+                    sfx_path: sfx.unwrap_or_default(),
+                    drain_pct,
+                    death_safe,
+                });
+            } else {
+                self.score.change_health(-dmg);
+            }
+            if self.play_as_opponent {
+                self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+            } else {
+                self.player_confirm[lane] = f64::MIN_POSITIVE;
+            }
+
+            self.events.push(GameEvent::NoteHit {
+                lane,
+                rating: judgment.name.clone(),
+                combo: self.score.combo,
+                score: 0,
+                note_type: type_str,
+                is_sustain: self.notes[idx].sustain_length > 0.0,
+                members_index: idx,
+                hit_causes_miss: true,
+            });
+            self.events.push(GameEvent::MuteVocals);
+        } else {
+            self.score.note_hit(
+                judgment.score,
+                judgment.rating_mod,
+                judgment.health_gain,
+                &judgment.name,
+            );
+            if self.play_as_opponent {
+                self.opponent_confirm[lane] = f64::MIN_POSITIVE;
+            } else {
+                self.player_confirm[lane] = f64::MIN_POSITIVE;
+            }
+
+            self.events.push(GameEvent::NoteHit {
+                lane,
+                rating: judgment.name.clone(),
+                combo: self.score.combo,
+                score: judgment.score,
+                note_type: type_str,
+                is_sustain: self.notes[idx].sustain_length > 0.0,
+                members_index: idx,
+                hit_causes_miss: false,
+            });
+            self.events.push(GameEvent::UnmuteVocals);
         }
     }
 
@@ -241,6 +245,13 @@ impl PlayState {
 
             let note_is_playable = if self.play_as_opponent { !self.notes[i].must_press } else { self.notes[i].must_press };
 
+            if note_is_playable && self.botplay && self.conductor.song_position >= self.notes[i].strum_time {
+                if let Some(judgment) = rating::judge_note(&self.ratings, 0.0) {
+                    self.apply_note_hit(i, judgment);
+                }
+                continue;
+            }
+
             // Opponent auto-hit
             if !note_is_playable && self.conductor.song_position >= self.notes[i].strum_time {
                 self.notes[i].was_good_hit = true;
@@ -262,6 +273,7 @@ impl PlayState {
 
             // Player miss
             if note_is_playable
+                && !self.botplay
                 && self.conductor.song_position - self.notes[i].strum_time > KILL_OFFSET_MS
             {
                 self.notes[i].too_late = true;
@@ -295,7 +307,7 @@ impl PlayState {
 
             if self.notes[i].was_good_hit {
                 let lane = self.notes[i].lane;
-                if note_is_playable && self.keys_held[lane] {
+                if note_is_playable && (self.keys_held[lane] || self.botplay) {
                     let ticks = dt_ms / step_ms;
                     self.score.change_health(scoring::HEALTH_HOLD_TICK * ticks as f32);
                     if self.play_as_opponent {
@@ -307,7 +319,7 @@ impl PlayState {
                             self.player_confirm[lane] = f64::MIN_POSITIVE;
                         }
                     }
-                } else if note_is_playable && !self.keys_held[lane] {
+                } else if note_is_playable && !self.keys_held[lane] && !self.botplay {
                     let ticks = dt_ms / step_ms;
                     self.score.change_health(-scoring::HEALTH_MISS * ticks as f32);
                 } else if !note_is_playable {

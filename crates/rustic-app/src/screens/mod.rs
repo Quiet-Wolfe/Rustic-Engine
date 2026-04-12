@@ -1,6 +1,7 @@
 pub mod characters;
 pub mod freeplay;
 pub(crate) mod freeplay_support;
+pub mod gameplay_changers;
 pub mod main_menu;
 pub mod options;
 pub mod play;

@@ -513,6 +513,12 @@ impl PlayScreen {
         screen
     }
 
+    pub fn apply_gameplay_modifiers(&mut self, practice_mode: bool, botplay: bool) {
+        self.practice_mode = practice_mode;
+        self.botplay = botplay;
+        self.game.botplay = botplay;
+    }
+
     pub(super) fn start_video_cutscene(&mut self, player: VideoPlayer, skippable: bool) {
         if let Some(audio) = &mut self.audio {
             if self.game.song_started {

@@ -11,6 +11,7 @@ use winit::keyboard::KeyCode;
 
 use crate::screen::Screen;
 
+use super::gameplay_changers::GameplayChangersState;
 use super::play::PlayScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
 use super::story_menu_support::{
@@ -51,6 +52,9 @@ pub struct StoryMenuScreen {
     pending_selection_assets: bool,
     initial_week: Option<String>,
     reset_modal: Option<ResetScoreModal>,
+    practice_mode: bool,
+    botplay: bool,
+    gameplay_changers: Option<GameplayChangersState>,
 }
 
 impl StoryMenuScreen {
@@ -84,6 +88,9 @@ impl StoryMenuScreen {
             pending_selection_assets: true,
             initial_week: week,
             reset_modal: None,
+            practice_mode: false,
+            botplay: false,
+            gameplay_changers: None,
         }
     }
 
@@ -272,6 +279,19 @@ impl Screen for StoryMenuScreen {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
+        if let Some(gameplay_changers) = &mut self.gameplay_changers {
+            match key {
+                KeyCode::Escape | KeyCode::ControlLeft | KeyCode::ControlRight => {
+                    self.practice_mode = gameplay_changers.practice_mode;
+                    self.botplay = gameplay_changers.botplay;
+                    self.gameplay_changers = None;
+                }
+                _ => {
+                    gameplay_changers.handle_key(key);
+                }
+            }
+            return;
+        }
         if let Some(reset_modal) = &mut self.reset_modal {
             match reset_modal.handle_key(key) {
                 ResetScoreAction::None => {}
@@ -304,6 +324,9 @@ impl Screen for StoryMenuScreen {
                     ui.right_arrow.force_play("arrow_right_press", 24.0, false);
                 }
                 self.change_difficulty(1);
+            }
+            KeyCode::ControlLeft | KeyCode::ControlRight => {
+                self.gameplay_changers = Some(GameplayChangersState::new(self.practice_mode, self.botplay));
             }
             KeyCode::KeyR => self.open_reset_modal(),
             KeyCode::Enter | KeyCode::Space => self.confirm_week(),
@@ -377,12 +400,14 @@ impl Screen for StoryMenuScreen {
                         .iter()
                         .map(|song| song_id(&song.name))
                         .collect();
-                    self.next = Some(Box::new(PlayScreen::new_story(
+                    let mut play = PlayScreen::new_story(
                         playlist,
                         &week.week.file_name,
                         self.current_difficulty(),
                         false,
-                    )));
+                    );
+                    play.apply_gameplay_modifiers(self.practice_mode, self.botplay);
+                    self.next = Some(Box::new(play));
                 }
             }
         }

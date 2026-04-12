@@ -1,3 +1,6 @@
+#[path = "freeplay_actions.rs"]
+mod freeplay_actions;
+
 use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
@@ -9,9 +12,10 @@ use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::health_icon::{HealthIcon, IconState};
 
 use crate::screen::Screen;
+use super::gameplay_changers::GameplayChangersState;
 use super::play::PlayScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
-use super::freeplay_support::{approx_text_width, highscore_targets, key_to_char, personal_best_text, srgb_to_linear, FreeplaySong};
+use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -39,6 +43,9 @@ pub struct FreeplayScreen {
     target_accuracy: f32,
     previewing_song: Option<String>,
     reset_modal: Option<ResetScoreModal>,
+    practice_mode: bool,
+    botplay: bool,
+    gameplay_changers: Option<GameplayChangersState>,
 }
 
 impl FreeplayScreen {
@@ -64,93 +71,9 @@ impl FreeplayScreen {
             target_accuracy: 0.0,
             previewing_song: None,
             reset_modal: None,
-        }
-    }
-
-    fn change_selection(&mut self, delta: i32) {
-        if self.filtered.is_empty() { return; }
-        self.stop_preview();
-        let len = self.filtered.len() as i32;
-        self.cur_selected = ((self.cur_selected as i32 + delta).rem_euclid(len)) as usize;
-        let song_idx = self.filtered[self.cur_selected];
-        self.bg_color_target = self.songs[song_idx].color;
-        self.refresh_score_target();
-
-        if let Some(audio) = &mut self.audio {
-            let paths = AssetPaths::platform_default();
-            if let Some(sfx) = paths.sound("scrollMenu") {
-                audio.play_sound(&sfx, 0.4);
-            }
-        }
-    }
-
-    fn change_difficulty(&mut self, delta: i32) {
-        let len = DIFFICULTIES.len() as i32;
-        self.cur_difficulty = ((self.cur_difficulty as i32 + delta).rem_euclid(len)) as usize;
-        self.refresh_score_target();
-    }
-
-    fn rebuild_filter(&mut self) {
-        let query = self.search.to_lowercase();
-        self.filtered = (0..self.songs.len())
-            .filter(|&i| query.is_empty() || self.songs[i].name.to_lowercase().contains(&query))
-            .collect();
-        // Keep selection in bounds
-        if self.filtered.is_empty() {
-            self.cur_selected = 0;
-        } else {
-            self.cur_selected = self.cur_selected.min(self.filtered.len() - 1);
-            let song_idx = self.filtered[self.cur_selected];
-            self.bg_color_target = self.songs[song_idx].color;
-        }
-        self.lerp_selected = self.cur_selected as f32;
-        self.refresh_score_target();
-    }
-
-    fn jump_to_letter(&mut self, letter: char) {
-        let letter_lower = letter.to_lowercase().next().unwrap_or('a');
-        // Find first song in filtered list starting with this letter
-        for (i, &song_idx) in self.filtered.iter().enumerate() {
-            if self.songs[song_idx].name.to_lowercase().starts_with(letter_lower) {
-                let delta = i as i32 - self.cur_selected as i32;
-                if delta != 0 {
-                    self.change_selection(delta);
-                }
-                return;
-            }
-        }
-    }
-
-    fn current_score_text(&self) -> String { personal_best_text(self.displayed_score, self.displayed_accuracy) }
-
-    fn refresh_score_target(&mut self) {
-        (self.target_score, self.target_accuracy) = highscore_targets(
-            &self.highscores,
-            &self.filtered,
-            self.cur_selected,
-            &self.songs,
-            DIFFICULTIES[self.cur_difficulty],
-        );
-    }
-
-    fn stop_preview(&mut self) {
-        if self.previewing_song.take().is_none() { return; }
-        if let Some(audio) = &mut self.audio {
-            audio.stop_loop_music();
-            if let Some(music) = AssetPaths::platform_default().music("freakyMenu") { audio.play_loop_music_vol(&music, 0.7); }
-        }
-    }
-
-    fn toggle_preview(&mut self) {
-        let Some(&song_idx) = self.filtered.get(self.cur_selected) else { return; };
-        let song_id = self.songs[song_idx].song_id.clone();
-        if self.previewing_song.as_deref() == Some(song_id.as_str()) { self.stop_preview(); return; }
-        if let Some(audio) = &mut self.audio {
-            if let Some(inst) = AssetPaths::platform_default().song_audio(&song_id, "Inst.ogg") {
-                audio.stop_loop_music();
-                audio.play_loop_music_vol(&inst, 0.8);
-                self.previewing_song = Some(song_id);
-            }
+            practice_mode: false,
+            botplay: false,
+            gameplay_changers: None,
         }
     }
 }
@@ -237,6 +160,19 @@ impl Screen for FreeplayScreen {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
+        if let Some(gameplay_changers) = &mut self.gameplay_changers {
+            match key {
+                KeyCode::Escape | KeyCode::ControlLeft | KeyCode::ControlRight => {
+                    self.practice_mode = gameplay_changers.practice_mode;
+                    self.botplay = gameplay_changers.botplay;
+                    self.gameplay_changers = None;
+                }
+                _ => {
+                    gameplay_changers.handle_key(key);
+                }
+            }
+            return;
+        }
         if let Some(reset_modal) = &mut self.reset_modal {
             match reset_modal.handle_key(key) {
                 ResetScoreAction::None => {}
@@ -256,6 +192,9 @@ impl Screen for FreeplayScreen {
         match key {
             KeyCode::Tab => {
                 self.play_as_opponent = !self.play_as_opponent;
+            }
+            KeyCode::ControlLeft | KeyCode::ControlRight => {
+                self.gameplay_changers = Some(GameplayChangersState::new(self.practice_mode, self.botplay));
             }
             KeyCode::ArrowUp => self.change_selection(-1),
             KeyCode::ArrowDown => self.change_selection(1),
@@ -286,7 +225,9 @@ impl Screen for FreeplayScreen {
                     let song_idx = self.filtered[self.cur_selected];
                     let song = &self.songs[song_idx];
                     let diff = DIFFICULTIES[self.cur_difficulty];
-                    self.next = Some(Box::new(PlayScreen::new(&song.song_id, diff, self.play_as_opponent)));
+                    let mut play = PlayScreen::new(&song.song_id, diff, self.play_as_opponent);
+                    play.apply_gameplay_modifiers(self.practice_mode, self.botplay);
+                    self.next = Some(Box::new(play));
                 }
             }
             KeyCode::Escape => {
@@ -488,6 +429,9 @@ impl Screen for FreeplayScreen {
             }
         }
 
+        if let Some(gameplay_changers) = &self.gameplay_changers {
+            gameplay_changers.draw(gpu);
+        }
         if let Some(reset_modal) = &mut self.reset_modal {
             reset_modal.draw(gpu);
         }
