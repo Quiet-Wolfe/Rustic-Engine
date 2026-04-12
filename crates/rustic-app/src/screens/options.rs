@@ -34,6 +34,7 @@ pub struct OptionsMenuState {
     pub prefs: Preferences,
     pub category: OptionsCategory,
     pub selected: usize,
+    pub waiting_for_rebind: Option<usize>,
 }
 
 impl OptionsMenuState {
@@ -42,6 +43,7 @@ impl OptionsMenuState {
             prefs: Preferences::load(),
             category: OptionsCategory::Gameplay,
             selected: 0,
+            waiting_for_rebind: None,
         }
     }
 
@@ -131,6 +133,15 @@ impl OptionsMenuState {
         }
 
         gpu.draw_text("Press ESCAPE to save and return", 190.0, 570.0, 20.0, gray);
+        if let Some(index) = self.waiting_for_rebind {
+            gpu.draw_text(
+                &format!("Press a key for {}", self.control_label(index)),
+                190.0,
+                535.0,
+                20.0,
+                yellow,
+            );
+        }
     }
 
     fn lines(&self) -> Vec<String> {
@@ -154,11 +165,20 @@ impl OptionsMenuState {
                 "Note Offset Calibration  < OPEN >".to_string(),
             ],
             OptionsCategory::Controls => vec![
-                "Left Lane            D / LEFT".to_string(),
-                "Down Lane            F / DOWN".to_string(),
-                "Up Lane              J / UP".to_string(),
-                "Right Lane           K / RIGHT".to_string(),
+                format!("Left Lane            [ {} ]", key_display(&self.prefs.note_left)),
+                format!("Down Lane            [ {} ]", key_display(&self.prefs.note_down)),
+                format!("Up Lane              [ {} ]", key_display(&self.prefs.note_up)),
+                format!("Right Lane           [ {} ]", key_display(&self.prefs.note_right)),
             ],
+        }
+    }
+
+    fn control_label(&self, index: usize) -> &'static str {
+        match index {
+            0 => "Left Lane",
+            1 => "Down Lane",
+            2 => "Up Lane",
+            _ => "Right Lane",
         }
     }
 }
@@ -199,6 +219,24 @@ fn fps_cap_label(value: u32) -> &'static str {
 }
 
 pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
+    if let Some(slot) = menu.waiting_for_rebind {
+        match key {
+            KeyCode::Escape => {
+                menu.waiting_for_rebind = None;
+            }
+            _ => {
+                let name = format!("{key:?}");
+                match slot {
+                    0 => menu.prefs.note_left = name,
+                    1 => menu.prefs.note_down = name,
+                    2 => menu.prefs.note_up = name,
+                    _ => menu.prefs.note_right = name,
+                }
+                menu.waiting_for_rebind = None;
+            }
+        }
+        return true;
+    }
     match key {
         KeyCode::ArrowUp | KeyCode::KeyW => menu.move_up(),
         KeyCode::ArrowDown | KeyCode::KeyS => menu.move_down(),
@@ -206,8 +244,18 @@ pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
         KeyCode::ArrowRight | KeyCode::KeyD => menu.adjust_current(1),
         KeyCode::KeyQ => menu.prev_category(),
         KeyCode::KeyE | KeyCode::Tab => menu.next_category(),
-        KeyCode::Enter | KeyCode::Space => menu.adjust_current(1),
+        KeyCode::Enter | KeyCode::Space => {
+            if menu.category == OptionsCategory::Controls {
+                menu.waiting_for_rebind = Some(menu.selected);
+            } else {
+                menu.adjust_current(1);
+            }
+        }
         _ => return false,
     }
     true
+}
+
+fn key_display(value: &str) -> &str {
+    value.strip_prefix("Key").unwrap_or(value)
 }

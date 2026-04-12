@@ -25,6 +25,14 @@ pub struct Preferences {
     pub music_volume: f32,
     #[serde(default = "default_sfx_volume")]
     pub sfx_volume: f32,
+    #[serde(default = "default_note_left")]
+    pub note_left: String,
+    #[serde(default = "default_note_down")]
+    pub note_down: String,
+    #[serde(default = "default_note_up")]
+    pub note_up: String,
+    #[serde(default = "default_note_right")]
+    pub note_right: String,
 }
 
 impl Preferences {
@@ -67,6 +75,10 @@ impl Preferences {
         self.master_volume = self.master_volume.clamp(0.0, 1.0);
         self.music_volume = self.music_volume.clamp(0.0, 1.0);
         self.sfx_volume = self.sfx_volume.clamp(0.0, 1.0);
+        if self.note_left.is_empty() { self.note_left = default_note_left(); }
+        if self.note_down.is_empty() { self.note_down = default_note_down(); }
+        if self.note_up.is_empty() { self.note_up = default_note_up(); }
+        if self.note_right.is_empty() { self.note_right = default_note_right(); }
     }
 }
 
@@ -85,6 +97,10 @@ impl Default for Preferences {
             master_volume: default_master_volume(),
             music_volume: default_music_volume(),
             sfx_volume: default_sfx_volume(),
+            note_left: default_note_left(),
+            note_down: default_note_down(),
+            note_up: default_note_up(),
+            note_right: default_note_right(),
         }
     }
 }
@@ -113,4 +129,20 @@ fn default_music_volume() -> f32 {
 
 fn default_sfx_volume() -> f32 {
     1.0
+}
+
+fn default_note_left() -> String {
+    "KeyD".to_string()
+}
+
+fn default_note_down() -> String {
+    "KeyF".to_string()
+}
+
+fn default_note_up() -> String {
+    "KeyJ".to_string()
+}
+
+fn default_note_right() -> String {
+    "KeyK".to_string()
 }

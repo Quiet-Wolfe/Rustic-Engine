@@ -30,6 +30,7 @@ impl PlayScreen {
             if key == KeyCode::Escape {
                 menu.save();
                 self.downscroll = menu.prefs.downscroll;
+                self.lane_keys = super::lane_keys_from_prefs(&menu.prefs);
                 self.options_menu = None;
                 self.pending_options_open = false;
             } else {
@@ -65,7 +66,7 @@ impl PlayScreen {
         }
 
         // Forward gameplay input to PlayState
-        if let Some(lane) = Self::key_to_lane(key) {
+        if let Some(lane) = self.key_to_lane(key) {
             self.game.key_press(lane);
         }
     }

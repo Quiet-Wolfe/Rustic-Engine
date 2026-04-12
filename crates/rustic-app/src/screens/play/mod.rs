@@ -36,11 +36,11 @@ const STRUM_X: f32 = 42.0;
 pub(super) const NOTE_WIDTH: f32 = 112.0; // 160 * 0.7
 pub(super) const NOTE_SCALE: f32 = 0.7;
 
-const LANE_KEYS: [[KeyCode; 2]; 4] = [
-    [KeyCode::KeyD, KeyCode::ArrowLeft],
-    [KeyCode::KeyF, KeyCode::ArrowDown],
-    [KeyCode::KeyJ, KeyCode::ArrowUp],
-    [KeyCode::KeyK, KeyCode::ArrowRight],
+const ALT_LANE_KEYS: [KeyCode; 4] = [
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowDown,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowRight,
 ];
 
 // Health bar layout
@@ -381,6 +381,7 @@ pub struct PlayScreen {
     pub(super) stage_pos_dad: [f64; 2],
     pub(super) stage_pos_gf: [f64; 2],
     pub(super) stage_name: String,
+    pub(super) lane_keys: [KeyCode; 4],
 
     // Frame timing
     pub(super) last_dt: f32,
@@ -475,6 +476,7 @@ impl PlayScreen {
             stage_pos_dad: [0.0; 2],
             stage_pos_gf: [0.0; 2],
             stage_name: String::new(),
+            lane_keys: lane_keys_from_prefs(&prefs),
             last_dt: 1.0 / 60.0,
             downscroll: prefs.downscroll,
             paused: false,
@@ -601,9 +603,9 @@ impl PlayScreen {
             .or_else(|| self.paths.find(path))
     }
 
-    pub(super) fn key_to_lane(key: KeyCode) -> Option<usize> {
-        for (lane, binds) in LANE_KEYS.iter().enumerate() {
-            if binds.contains(&key) {
+    pub(super) fn key_to_lane(&self, key: KeyCode) -> Option<usize> {
+        for (lane, bind) in self.lane_keys.iter().enumerate() {
+            if *bind == key || ALT_LANE_KEYS[lane] == key {
                 return Some(lane);
             }
         }
@@ -1350,6 +1352,70 @@ impl PlayScreen {
     }
 }
 
+fn lane_keys_from_prefs(prefs: &Preferences) -> [KeyCode; 4] {
+    [
+        parse_key_code(&prefs.note_left, KeyCode::KeyD),
+        parse_key_code(&prefs.note_down, KeyCode::KeyF),
+        parse_key_code(&prefs.note_up, KeyCode::KeyJ),
+        parse_key_code(&prefs.note_right, KeyCode::KeyK),
+    ]
+}
+
+fn parse_key_code(value: &str, fallback: KeyCode) -> KeyCode {
+    match value {
+        "KeyA" => KeyCode::KeyA,
+        "KeyB" => KeyCode::KeyB,
+        "KeyC" => KeyCode::KeyC,
+        "KeyD" => KeyCode::KeyD,
+        "KeyE" => KeyCode::KeyE,
+        "KeyF" => KeyCode::KeyF,
+        "KeyG" => KeyCode::KeyG,
+        "KeyH" => KeyCode::KeyH,
+        "KeyI" => KeyCode::KeyI,
+        "KeyJ" => KeyCode::KeyJ,
+        "KeyK" => KeyCode::KeyK,
+        "KeyL" => KeyCode::KeyL,
+        "KeyM" => KeyCode::KeyM,
+        "KeyN" => KeyCode::KeyN,
+        "KeyO" => KeyCode::KeyO,
+        "KeyP" => KeyCode::KeyP,
+        "KeyQ" => KeyCode::KeyQ,
+        "KeyR" => KeyCode::KeyR,
+        "KeyS" => KeyCode::KeyS,
+        "KeyT" => KeyCode::KeyT,
+        "KeyU" => KeyCode::KeyU,
+        "KeyV" => KeyCode::KeyV,
+        "KeyW" => KeyCode::KeyW,
+        "KeyX" => KeyCode::KeyX,
+        "KeyY" => KeyCode::KeyY,
+        "KeyZ" => KeyCode::KeyZ,
+        "Comma" => KeyCode::Comma,
+        "Period" => KeyCode::Period,
+        "Slash" => KeyCode::Slash,
+        "Semicolon" => KeyCode::Semicolon,
+        "Quote" => KeyCode::Quote,
+        "BracketLeft" => KeyCode::BracketLeft,
+        "BracketRight" => KeyCode::BracketRight,
+        "Minus" => KeyCode::Minus,
+        "Equal" => KeyCode::Equal,
+        "Space" => KeyCode::Space,
+        other if other.starts_with("Digit") => match other {
+            "Digit0" => KeyCode::Digit0,
+            "Digit1" => KeyCode::Digit1,
+            "Digit2" => KeyCode::Digit2,
+            "Digit3" => KeyCode::Digit3,
+            "Digit4" => KeyCode::Digit4,
+            "Digit5" => KeyCode::Digit5,
+            "Digit6" => KeyCode::Digit6,
+            "Digit7" => KeyCode::Digit7,
+            "Digit8" => KeyCode::Digit8,
+            "Digit9" => KeyCode::Digit9,
+            _ => fallback,
+        },
+        _ => fallback,
+    }
+}
+
 impl Screen for PlayScreen {
     fn init(&mut self, gpu: &GpuState) {
         self.init_inner(gpu);
@@ -1363,7 +1429,7 @@ impl Screen for PlayScreen {
         if self.paused && matches!(key, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::KeyA | KeyCode::KeyD) {
             self.pause_skip_direction = 0;
         }
-        if let Some(lane) = Self::key_to_lane(key) {
+        if let Some(lane) = self.key_to_lane(key) {
             self.game.key_release(lane);
         }
     }
