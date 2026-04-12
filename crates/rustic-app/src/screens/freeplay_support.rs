@@ -1,3 +1,4 @@
+use rustic_core::highscore::HighscoreStore;
 use rustic_render::health_icon::HealthIcon;
 use winit::keyboard::KeyCode;
 
@@ -45,4 +46,30 @@ pub(super) fn key_to_char(key: KeyCode) -> Option<char> {
 
 pub(super) fn approx_text_width(text: &str, size: f32) -> f32 {
     text.chars().count() as f32 * size * 0.58
+}
+
+pub(super) fn personal_best_text(displayed_score: f32, displayed_accuracy: f32) -> String {
+    format!(
+        "PERSONAL BEST: {} ({:.2}%)",
+        displayed_score.round() as i32,
+        displayed_accuracy
+    )
+}
+
+pub(super) fn highscore_targets(
+    highscores: &HighscoreStore,
+    filtered: &[usize],
+    cur_selected: usize,
+    songs: &[FreeplaySong],
+    difficulty: &str,
+) -> (i32, f32) {
+    let Some(&song_idx) = filtered.get(cur_selected) else {
+        return (0, 0.0);
+    };
+    let song = &songs[song_idx];
+    if let Some(entry) = highscores.get_score(&song.song_id, difficulty) {
+        (entry.score, entry.accuracy)
+    } else {
+        (0, 0.0)
+    }
 }

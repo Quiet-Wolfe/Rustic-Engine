@@ -10,7 +10,7 @@ use rustic_render::health_icon::{HealthIcon, IconState};
 
 use crate::screen::Screen;
 use super::play::PlayScreen;
-use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
+use super::freeplay_support::{approx_text_width, highscore_targets, key_to_char, personal_best_text, srgb_to_linear, FreeplaySong};
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -36,6 +36,7 @@ pub struct FreeplayScreen {
     displayed_accuracy: f32,
     target_score: i32,
     target_accuracy: f32,
+    previewing_song: Option<String>,
 }
 
 impl FreeplayScreen {
@@ -59,11 +60,13 @@ impl FreeplayScreen {
             displayed_accuracy: 0.0,
             target_score: 0,
             target_accuracy: 0.0,
+            previewing_song: None,
         }
     }
 
     fn change_selection(&mut self, delta: i32) {
         if self.filtered.is_empty() { return; }
+        self.stop_preview();
         let len = self.filtered.len() as i32;
         self.cur_selected = ((self.cur_selected as i32 + delta).rem_euclid(len)) as usize;
         let song_idx = self.filtered[self.cur_selected];
@@ -115,29 +118,36 @@ impl FreeplayScreen {
         }
     }
 
-    fn current_score_text(&self) -> String {
-        format!(
-            "PERSONAL BEST: {} ({:.2}%)",
-            self.displayed_score.round() as i32,
-            self.displayed_accuracy
-        )
-    }
+    fn current_score_text(&self) -> String { personal_best_text(self.displayed_score, self.displayed_accuracy) }
 
     fn refresh_score_target(&mut self) {
-        let Some(&song_idx) = self.filtered.get(self.cur_selected) else {
-            self.target_score = 0;
-            self.target_accuracy = 0.0;
-            return;
-        };
+        (self.target_score, self.target_accuracy) = highscore_targets(
+            &self.highscores,
+            &self.filtered,
+            self.cur_selected,
+            &self.songs,
+            DIFFICULTIES[self.cur_difficulty],
+        );
+    }
 
-        let song = &self.songs[song_idx];
-        let diff = DIFFICULTIES[self.cur_difficulty];
-        if let Some(entry) = self.highscores.get_score(&song.song_id, diff) {
-            self.target_score = entry.score;
-            self.target_accuracy = entry.accuracy;
-        } else {
-            self.target_score = 0;
-            self.target_accuracy = 0.0;
+    fn stop_preview(&mut self) {
+        if self.previewing_song.take().is_none() { return; }
+        if let Some(audio) = &mut self.audio {
+            audio.stop_loop_music();
+            if let Some(music) = AssetPaths::platform_default().music("freakyMenu") { audio.play_loop_music_vol(&music, 0.7); }
+        }
+    }
+
+    fn toggle_preview(&mut self) {
+        let Some(&song_idx) = self.filtered.get(self.cur_selected) else { return; };
+        let song_id = self.songs[song_idx].song_id.clone();
+        if self.previewing_song.as_deref() == Some(song_id.as_str()) { self.stop_preview(); return; }
+        if let Some(audio) = &mut self.audio {
+            if let Some(inst) = AssetPaths::platform_default().song_audio(&song_id, "Inst.ogg") {
+                audio.stop_loop_music();
+                audio.play_loop_music_vol(&inst, 0.8);
+                self.previewing_song = Some(song_id);
+            }
         }
     }
 }
@@ -146,15 +156,12 @@ impl Screen for FreeplayScreen {
     fn init(&mut self, gpu: &GpuState) {
         let paths = AssetPaths::platform_default();
 
-        // Background (desaturated, tinted per-song)
         if let Some(bg_path) = paths.image("menuDesat") {
             self.bg_tex = Some(gpu.load_texture_from_path(&bg_path));
         }
 
-        // Load song list from weeks + direct data/ folder scan
         let mut seen_songs = std::collections::HashSet::new();
 
-        // First: songs from week JSONs (these have colors/characters)
         let mut all_weeks = Vec::new();
         for weeks_dir in paths.all_weeks_dirs() {
             for w in week::load_weeks(&weeks_dir) {
@@ -182,7 +189,6 @@ impl Screen for FreeplayScreen {
             }
         }
 
-        // Second: discover songs from data/ folders (catches mods without weeks)
         for song_name in paths.discover_songs() {
             if seen_songs.contains(&song_name) { continue; }
             seen_songs.insert(song_name.clone());
@@ -218,7 +224,6 @@ impl Screen for FreeplayScreen {
         self.displayed_score = self.target_score as f32;
         self.displayed_accuracy = self.target_accuracy;
 
-        // Audio (skip if already passed from previous screen)
         if self.audio.is_none() {
             if let Some(music) = paths.music("freakyMenu") {
                 let mut audio = AudioEngine::new();
@@ -239,8 +244,10 @@ impl Screen for FreeplayScreen {
             KeyCode::ArrowDown => self.change_selection(1),
             KeyCode::ArrowLeft => self.change_difficulty(-1),
             KeyCode::ArrowRight => self.change_difficulty(1),
+            KeyCode::Space => self.toggle_preview(),
             KeyCode::Enter => {
                 if !self.filtered.is_empty() {
+                    self.stop_preview();
                     self.confirmed = true;
                     if let Some(audio) = &mut self.audio {
                         let paths = AssetPaths::platform_default();
@@ -256,10 +263,10 @@ impl Screen for FreeplayScreen {
             }
             KeyCode::Escape => {
                 if !self.search.is_empty() {
-                    // First escape clears search
                     self.search.clear();
                     self.rebuild_filter();
                 } else {
+                    self.stop_preview();
                     if let Some(audio) = &mut self.audio {
                         let paths = AssetPaths::platform_default();
                         if let Some(sfx) = paths.sound("cancelMenu") {
@@ -274,6 +281,7 @@ impl Screen for FreeplayScreen {
                     self.search.pop();
                     self.rebuild_filter();
                 } else {
+                    self.stop_preview();
                     if let Some(audio) = &mut self.audio {
                         let paths = AssetPaths::platform_default();
                         if let Some(sfx) = paths.sound("cancelMenu") {
@@ -296,28 +304,20 @@ impl Screen for FreeplayScreen {
         if phase != TouchPhase::Started || self.confirmed { return; }
         let (x, y) = (x as f32, y as f32);
 
-        // Alphabet strip on the left edge (0-30px, from y=70 to y=GAME_H-30)
         if x < 30.0 && y > 70.0 && y < GAME_H - 30.0 {
             let strip_h = GAME_H - 100.0;
             let t = (y - 70.0) / strip_h;
             let letter_idx = (t * 26.0) as usize;
             let letter = (b'A' + letter_idx.min(25) as u8) as char;
-            // Jump to first song starting with this letter
             self.jump_to_letter(letter);
             return;
         }
 
-        // Difficulty area (top-right score box)
         if y < 66.0 && x > GAME_W * 0.7 {
-            if x < GAME_W * 0.85 {
-                self.handle_key(KeyCode::ArrowLeft);
-            } else {
-                self.handle_key(KeyCode::ArrowRight);
-            }
+            if x < GAME_W * 0.85 { self.handle_key(KeyCode::ArrowLeft); } else { self.handle_key(KeyCode::ArrowRight); }
             return;
         }
 
-        // Tap on a song in the list
         let draw_dist = 6;
         for (i, &_song_idx) in self.filtered.iter().enumerate() {
             let target_y = i as f32 - self.lerp_selected;
@@ -335,11 +335,9 @@ impl Screen for FreeplayScreen {
     }
 
     fn update(&mut self, dt: f32) {
-        // Smooth scroll — Psych uses exp(-elapsed * 9.6) lerp
         let lerp = (-dt * 9.6).exp();
         self.lerp_selected = self.cur_selected as f32 + (self.lerp_selected - self.cur_selected as f32) * lerp;
 
-        // Lerp background color (1 second tween)
         let color_lerp = 1.0 - (-dt * 3.0).exp();
         for i in 0..3 {
             self.bg_color[i] += (self.bg_color_target[i] - self.bg_color[i]) * color_lerp;
@@ -382,7 +380,6 @@ impl Screen for FreeplayScreen {
             gpu.draw_batch(None);
         }
 
-        // Song list — Psych Engine Alphabet positioning
         let text_size = 28.0;
         let draw_dist = 6;
 
@@ -400,26 +397,19 @@ impl Screen for FreeplayScreen {
 
             gpu.draw_text(&self.songs[song_idx].name, x, y, text_size, color);
             if let Some(icon) = &mut self.songs[song_idx].icon {
-                let state = if i == self.cur_selected {
-                    IconState::Winning
-                } else {
-                    IconState::Neutral
-                };
+                let state = if i == self.cur_selected { IconState::Winning } else { IconState::Neutral };
                 icon.set_state(state);
                 icon.draw(gpu, icon_x, y - 30.0, 150.0, color);
             }
         }
 
-        // Score area (top right) — Psych: FlxG.width * 0.7
         let score_x = GAME_W * 0.7;
         let score_bg_w = GAME_W - score_x + 6.0;
         gpu.push_colored_quad(score_x - 6.0, 0.0, score_bg_w, 66.0, [0.0, 0.0, 0.0, 0.6]);
         gpu.draw_batch(None);
 
-        // Difficulty display with tappable arrows
         let diff_name = DIFFICULTIES[self.cur_difficulty].to_uppercase();
         if DIFFICULTIES.len() > 1 {
-            // Draw < and > as separate tappable-looking buttons
             gpu.draw_text("<", score_x, 41.0, 24.0, [1.0, 1.0, 0.4, 0.9]);
             gpu.draw_text(&diff_name, score_x + 20.0, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
             let arrow_x = GAME_W - 20.0;
@@ -428,11 +418,9 @@ impl Screen for FreeplayScreen {
             gpu.draw_text(&diff_name, score_x, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
         }
 
-        // Score display
         let score_text = self.current_score_text();
         gpu.draw_text(&score_text, score_x, 5.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
 
-        // Search bar (top left)
         if !self.search.is_empty() {
             gpu.push_colored_quad(0.0, 0.0, 400.0, 36.0, [0.0, 0.0, 0.0, 0.7]);
             gpu.draw_batch(None);
@@ -440,11 +428,10 @@ impl Screen for FreeplayScreen {
             gpu.draw_text(&search_display, 10.0, 8.0, 20.0, [1.0, 1.0, 0.4, 1.0]);
         }
 
-        // Bottom bar
         let count_text = if cfg!(target_os = "android") {
             format!("{} songs | Tap song to play | Tap difficulty to change | Opponent: {}", self.filtered.len(), if self.play_as_opponent { "ON" } else { "OFF" })
         } else if self.search.is_empty() {
-            format!("{} songs | Type to search | ENTER to play | LEFT-RIGHT difficulty | TAB Opponent: {}", self.filtered.len(), if self.play_as_opponent { "ON" } else { "OFF" })
+            format!("{} songs | SPACE Preview:{} | ENTER Play | LEFT-RIGHT difficulty | TAB Opponent: {}", self.filtered.len(), if self.previewing_song.is_some() { "ON" } else { "OFF" }, if self.play_as_opponent { "ON" } else { "OFF" })
         } else {
             format!("{}/{} songs | ESC to clear search | ENTER to play | TAB Opponent: {}", self.filtered.len(), self.songs.len(), if self.play_as_opponent { "ON" } else { "OFF" })
         };
@@ -452,13 +439,11 @@ impl Screen for FreeplayScreen {
         gpu.draw_batch(None);
         gpu.draw_text(&count_text, 10.0, GAME_H - 22.0, 16.0, [1.0, 1.0, 1.0, 1.0]);
 
-        // Alphabet quick-jump strip (Android touch UI)
         if cfg!(target_os = "android") {
             let strip_x = 2.0;
             let strip_top = 70.0;
             let strip_h = GAME_H - 100.0;
             let letter_h = strip_h / 26.0;
-            // Semi-transparent background
             gpu.push_colored_quad(0.0, strip_top, 28.0, strip_h, [0.0, 0.0, 0.0, 0.3]);
             gpu.draw_batch(None);
             for i in 0..26u8 {
