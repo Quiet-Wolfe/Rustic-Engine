@@ -146,6 +146,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     register_tween_functions(lua)?;
     register_sound_functions(lua)?;
     register_text_functions(lua)?;
+    register_window_functions(lua)?;
     register_note_type_function(lua)?;
     register_noop_stubs(lua)?;
 
@@ -327,12 +328,20 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // setObjectOrder(tag, order)
-    globals.set("setObjectOrder", lua.create_function(|_lua, (_tag, _order): (String, i32)| {
+    globals.set("setObjectOrder", lua.create_function(|lua, (tag, order): (String, i32)| {
+        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            tbl.set("order", order)?;
+        }
         Ok(())
     })?)?;
 
     // getObjectOrder(tag)
-    globals.set("getObjectOrder", lua.create_function(|_lua, _tag: String| -> LuaResult<i32> {
+    globals.set("getObjectOrder", lua.create_function(|lua, tag: String| -> LuaResult<i32> {
+        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            return Ok(tbl.get::<i32>("order").unwrap_or(0));
+        }
         Ok(0)
     })?)?;
 
@@ -542,7 +551,16 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // setBlendMode(tag, blend)
-    globals.set("setBlendMode", lua.create_function(|_lua, (_tag, _blend): (String, Option<String>)| {
+    globals.set("setBlendMode", lua.create_function(|lua, (tag, blend): (String, Option<String>)| {
+        let blend = blend.unwrap_or_else(|| "NORMAL".to_string());
+        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
+            tbl.set("_prop_blendMode", blend.clone())?;
+        }
+        let text_data: LuaTable = lua.globals().get("__text_data")?;
+        if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+            tbl.set("_prop_blendMode", blend)?;
+        }
         Ok(())
     })?)?;
 
@@ -1252,13 +1270,72 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         pending.set(pending.len()? + 1, tbl)?;
         Ok(())
     })?)?;
-    globals.set("getCharacterX", lua.create_function(|_lua, _typ: String| -> LuaResult<f64> { Ok(0.0) })?)?;
-    globals.set("getCharacterY", lua.create_function(|_lua, _typ: String| -> LuaResult<f64> { Ok(0.0) })?)?;
-    globals.set("setCharacterX", lua.create_function(|_lua, (_typ, _val): (String, f64)| { Ok(()) })?)?;
-    globals.set("setCharacterY", lua.create_function(|_lua, (_typ, _val): (String, f64)| { Ok(()) })?)?;
+    globals.set("getCharacterX", lua.create_function(|lua, typ: String| -> LuaResult<f64> {
+        let key = match typ.to_lowercase().as_str() {
+            "dad" | "opponent" | "1" => "__dad_x",
+            "boyfriend" | "bf" | "0" => "__bf_x",
+            "gf" | "girlfriend" | "2" => "__gf_x",
+            _ => "__bf_x",
+        };
+        Ok(lua.globals().get::<f64>(key).unwrap_or(0.0))
+    })?)?;
+    globals.set("getCharacterY", lua.create_function(|lua, typ: String| -> LuaResult<f64> {
+        let key = match typ.to_lowercase().as_str() {
+            "dad" | "opponent" | "1" => "__dad_y",
+            "boyfriend" | "bf" | "0" => "__bf_y",
+            "gf" | "girlfriend" | "2" => "__gf_y",
+            _ => "__bf_y",
+        };
+        Ok(lua.globals().get::<f64>(key).unwrap_or(0.0))
+    })?)?;
+    globals.set("setCharacterX", lua.create_function(|lua, (typ, val): (String, f64)| {
+        let target = match typ.to_lowercase().as_str() {
+            "dad" | "opponent" | "1" => "dad.x",
+            "boyfriend" | "bf" | "0" => "boyfriend.x",
+            "gf" | "girlfriend" | "2" => "gf.x",
+            _ => "boyfriend.x",
+        };
+        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        let tbl = lua.create_table()?;
+        tbl.set("prop", target)?;
+        tbl.set("value", val)?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
+    globals.set("setCharacterY", lua.create_function(|lua, (typ, val): (String, f64)| {
+        let target = match typ.to_lowercase().as_str() {
+            "dad" | "opponent" | "1" => "dad.y",
+            "boyfriend" | "bf" | "0" => "boyfriend.y",
+            "gf" | "girlfriend" | "2" => "gf.y",
+            _ => "boyfriend.y",
+        };
+        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        let tbl = lua.create_table()?;
+        tbl.set("prop", target)?;
+        tbl.set("value", val)?;
+        pending.set(pending.len()? + 1, tbl)?;
+        Ok(())
+    })?)?;
 
     // Health bar
-    globals.set("setHealthBarColors", lua.create_function(|_lua, (_left, _right): (LuaValue, LuaValue)| {
+    globals.set("setHealthBarColors", lua.create_function(|lua, (left, right): (LuaValue, LuaValue)| {
+        for (side, hex) in [
+            ("left", lua_value_to_color_string(&left)),
+            ("right", lua_value_to_color_string(&right)),
+        ] {
+            let (r, g, b, a) = parse_hex_rgba(&hex);
+            let props: LuaTable = lua.globals().get("__pending_props")?;
+            let entry = lua.create_table()?;
+            entry.set("type", "healthbar_color")?;
+            entry.set("side", side)?;
+            entry.set("r", r)?;
+            entry.set("g", g)?;
+            entry.set("b", b)?;
+            entry.set("a", a)?;
+            entry.set("duration", 0.0f32)?;
+            let len = props.len()? + 1;
+            props.set(len, entry)?;
+        }
         Ok(())
     })?)?;
     globals.set("setTimeBarColors", lua.create_function(|_lua, (_left, _right): (LuaValue, LuaValue)| {
@@ -1336,6 +1413,24 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         tbl.set("color", color.unwrap_or_else(|| "FFFFFF".to_string()))?;
         tbl.set("duration", duration.unwrap_or(0.5))?;
         tbl.set("alpha", 1.0)?;
+        let len = pending.len()? as i64;
+        pending.set(len + 1, tbl)?;
+        Ok(())
+    })?)?;
+
+    globals.set("cameraFade", lua.create_function(|lua, (cam, color, duration, fade_in): (String, Option<String>, Option<f64>, Option<bool>)| {
+        let pending: LuaTable = lua.globals().get("__pending_cam_fx")?;
+        let tbl = lua.create_table()?;
+        tbl.set("kind", "flash")?;
+        let cam_name = match cam.to_lowercase().as_str() {
+            "camhud" | "hud" => "camHUD",
+            "camgame" | "game" => "camGame",
+            _ => &cam,
+        };
+        tbl.set("camera", cam_name)?;
+        tbl.set("color", color.unwrap_or_else(|| "000000".to_string()))?;
+        tbl.set("duration", duration.unwrap_or(0.5))?;
+        tbl.set("alpha", if fade_in.unwrap_or(false) { 0.0 } else { 1.0 })?;
         let len = pending.len()? as i64;
         pending.set(len + 1, tbl)?;
         Ok(())
@@ -1628,6 +1723,17 @@ fn register_sound_functions(lua: &Lua) -> LuaResult<()> {
     globals.set("setSoundTime", lua.create_function(|_lua, (_tag, _time): (Option<String>, f64)| { Ok(()) })?)?;
     globals.set("luaSoundExists", lua.create_function(|_lua, _tag: String| -> LuaResult<bool> { Ok(false) })?)?;
 
+    Ok(())
+}
+
+fn register_window_functions(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+    globals.set("getScreenWidth", lua.create_function(|lua, ()| -> LuaResult<i32> {
+        Ok(lua.globals().get::<i32>("screenWidth").unwrap_or(1280))
+    })?)?;
+    globals.set("getScreenHeight", lua.create_function(|lua, ()| -> LuaResult<i32> {
+        Ok(lua.globals().get::<i32>("screenHeight").unwrap_or(720))
+    })?)?;
     Ok(())
 }
 
@@ -2030,6 +2136,15 @@ fn parse_hex_rgba(hex: &str) -> (f32, f32, f32, f32) {
         }
     }
     (0.8, 0.8, 0.8, 1.0)
+}
+
+fn lua_value_to_color_string(value: &LuaValue) -> String {
+    match value {
+        LuaValue::String(s) => s.to_string_lossy().to_string(),
+        LuaValue::Integer(i) => format!("{:06X}", (*i as i64 & 0xFFFFFF) as u32),
+        LuaValue::Number(n) => format!("{:06X}", (*n as i64 & 0xFFFFFF) as u32),
+        _ => "FFFFFF".to_string(),
+    }
 }
 
 fn lua_to_f32(val: &Option<LuaValue>) -> f32 {
