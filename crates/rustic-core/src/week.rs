@@ -20,6 +20,7 @@ pub struct WeekData {
     pub start_unlocked: bool,
     pub hide_story_mode: bool,
     pub hide_freeplay: bool,
+    pub hidden_until_unlocked: bool,
     /// File stem used for ordering (e.g. "week1", "week2").
     pub file_name: String,
 }
@@ -43,6 +44,8 @@ struct RawWeek {
     hide_story_mode: bool,
     #[serde(default, rename = "hideFreeplay")]
     hide_freeplay: bool,
+    #[serde(default, rename = "hiddenUntilUnlocked")]
+    hidden_until_unlocked: bool,
 }
 
 impl WeekData {
@@ -83,6 +86,7 @@ impl WeekData {
             start_unlocked: raw.start_unlocked,
             hide_story_mode: raw.hide_story_mode,
             hide_freeplay: raw.hide_freeplay,
+            hidden_until_unlocked: raw.hidden_until_unlocked,
             file_name: file_name.to_string(),
         })
     }
