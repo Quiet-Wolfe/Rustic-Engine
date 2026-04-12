@@ -32,6 +32,10 @@ pub struct FreeplayScreen {
     confirmed: bool,
     play_as_opponent: bool,
     highscores: HighscoreStore,
+    displayed_score: f32,
+    displayed_accuracy: f32,
+    target_score: i32,
+    target_accuracy: f32,
 }
 
 impl FreeplayScreen {
@@ -51,6 +55,10 @@ impl FreeplayScreen {
             confirmed: false,
             play_as_opponent: false,
             highscores: HighscoreStore::load(),
+            displayed_score: 0.0,
+            displayed_accuracy: 0.0,
+            target_score: 0,
+            target_accuracy: 0.0,
         }
     }
 
@@ -60,6 +68,7 @@ impl FreeplayScreen {
         self.cur_selected = ((self.cur_selected as i32 + delta).rem_euclid(len)) as usize;
         let song_idx = self.filtered[self.cur_selected];
         self.bg_color_target = self.songs[song_idx].color;
+        self.refresh_score_target();
 
         if let Some(audio) = &mut self.audio {
             let paths = AssetPaths::platform_default();
@@ -72,6 +81,7 @@ impl FreeplayScreen {
     fn change_difficulty(&mut self, delta: i32) {
         let len = DIFFICULTIES.len() as i32;
         self.cur_difficulty = ((self.cur_difficulty as i32 + delta).rem_euclid(len)) as usize;
+        self.refresh_score_target();
     }
 
     fn rebuild_filter(&mut self) {
@@ -88,6 +98,7 @@ impl FreeplayScreen {
             self.bg_color_target = self.songs[song_idx].color;
         }
         self.lerp_selected = self.cur_selected as f32;
+        self.refresh_score_target();
     }
 
     fn jump_to_letter(&mut self, letter: char) {
@@ -105,16 +116,28 @@ impl FreeplayScreen {
     }
 
     fn current_score_text(&self) -> String {
+        format!(
+            "PERSONAL BEST: {} ({:.2}%)",
+            self.displayed_score.round() as i32,
+            self.displayed_accuracy
+        )
+    }
+
+    fn refresh_score_target(&mut self) {
         let Some(&song_idx) = self.filtered.get(self.cur_selected) else {
-            return "PERSONAL BEST: 0 (0.00%)".to_string();
+            self.target_score = 0;
+            self.target_accuracy = 0.0;
+            return;
         };
 
         let song = &self.songs[song_idx];
         let diff = DIFFICULTIES[self.cur_difficulty];
         if let Some(entry) = self.highscores.get_score(&song.song_id, diff) {
-            format!("PERSONAL BEST: {} ({:.2}%)", entry.score, entry.accuracy)
+            self.target_score = entry.score;
+            self.target_accuracy = entry.accuracy;
         } else {
-            "PERSONAL BEST: 0 (0.00%)".to_string()
+            self.target_score = 0;
+            self.target_accuracy = 0.0;
         }
     }
 }
@@ -191,6 +214,9 @@ impl Screen for FreeplayScreen {
             self.bg_color = self.songs[song_idx].color;
         }
         self.lerp_selected = self.cur_selected as f32;
+        self.refresh_score_target();
+        self.displayed_score = self.target_score as f32;
+        self.displayed_accuracy = self.target_accuracy;
 
         // Audio (skip if already passed from previous screen)
         if self.audio.is_none() {
@@ -317,6 +343,18 @@ impl Screen for FreeplayScreen {
         let color_lerp = 1.0 - (-dt * 3.0).exp();
         for i in 0..3 {
             self.bg_color[i] += (self.bg_color_target[i] - self.bg_color[i]) * color_lerp;
+        }
+
+        self.displayed_score = self.target_score as f32
+            + (self.displayed_score - self.target_score as f32) * (-dt * 24.0).exp();
+        if (self.displayed_score - self.target_score as f32).abs() <= 10.0 {
+            self.displayed_score = self.target_score as f32;
+        }
+
+        self.displayed_accuracy = self.target_accuracy
+            + (self.displayed_accuracy - self.target_accuracy) * (-dt * 12.0).exp();
+        if (self.displayed_accuracy - self.target_accuracy).abs() <= 0.01 {
+            self.displayed_accuracy = self.target_accuracy;
         }
     }
 
