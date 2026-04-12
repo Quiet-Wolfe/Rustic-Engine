@@ -35,12 +35,14 @@ fn parse_hex_color(hex: &str) -> [f32; 4] {
 impl PlayScreen {
     pub(super) fn update_inner(&mut self, dt: f32) {
         self.last_dt = dt;
+        let dt_ms = dt as f64 * 1000.0;
         if self.paused { return; }
 
         // Video playback: tick video alongside normal game logic (overlay, not pause)
         if let Some(video) = &mut self.video {
             if video.is_playing() {
-                video.tick(dt as f64);
+                self.video_wall_clock_ms += dt_ms;
+                video.tick(self.video_wall_clock_ms);
             }
         }
 
@@ -78,8 +80,6 @@ impl PlayScreen {
             self.camera.y += (my - self.camera.y) * lerp;
             return;
         }
-
-        let dt_ms = dt as f64 * 1000.0;
 
         // Health drain animation (sliding health bar for harmful notes)
         if let Some(drain) = &mut self.health_drain {

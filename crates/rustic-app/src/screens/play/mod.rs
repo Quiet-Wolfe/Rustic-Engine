@@ -383,6 +383,7 @@ pub struct PlayScreen {
 
     /// Active video playback (when a cutscene is playing).
     pub(super) video: Option<VideoPlayer>,
+    pub(super) video_wall_clock_ms: f64,
 }
 
 impl PlayScreen {
@@ -463,6 +464,7 @@ impl PlayScreen {
             completed_song: false,
             score_saved: false,
             video: None,
+            video_wall_clock_ms: 0.0,
         }
     }
 

@@ -52,6 +52,7 @@ impl PlayScreen {
                         if let Some(cb) = callback {
                             player.set_on_finish(cb);
                         }
+                        self.video_wall_clock_ms = 0.0;
                         self.video = Some(player);
                     }
                     Err(e) => {

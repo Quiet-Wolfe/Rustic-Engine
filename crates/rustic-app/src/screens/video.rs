@@ -9,7 +9,12 @@ use ffmpeg::util::frame::video::Video;
 /// Video playback state: decodes an MP4 file frame-by-frame using ffmpeg
 /// and uploads each frame to a wgpu texture for rendering.
 ///
-/// Usage: call `tick(dt)` in update, then `upload(queue)` + draw in the render pass.
+/// Usage: call `tick(wall_clock_ms)` in update, then `upload(queue)` + draw in the render pass.
+struct DecodedFrame {
+    pts_ms: f64,
+    rgba: Vec<u8>,
+}
+
 pub struct VideoPlayer {
     /// Format context (kept alive for packet reading).
     ictx: ffmpeg::format::context::Input,
@@ -21,8 +26,6 @@ pub struct VideoPlayer {
     /// Duration of the video in seconds.
     #[allow(dead_code)]
     duration_secs: f64,
-    /// Current playback position in seconds.
-    position_secs: f64,
     /// Width/height of the video.
     width: u32,
     height: u32,
@@ -36,6 +39,8 @@ pub struct VideoPlayer {
     playing: bool,
     /// RGBA frame buffer (reused each decode).
     frame_buf: Vec<u8>,
+    /// Decoded frame that is not due for presentation yet.
+    pending_frame: Option<DecodedFrame>,
     /// Whether the buffer has new data to upload.
     dirty: bool,
     /// Whether we've reached EOF on the input stream.
@@ -94,7 +99,6 @@ impl VideoPlayer {
             stream_index,
             time_base,
             duration_secs,
-            position_secs: 0.0,
             width,
             height,
             texture,
@@ -102,6 +106,7 @@ impl VideoPlayer {
             finished: false,
             playing: true,
             frame_buf: vec![0u8; (width * height * 4) as usize],
+            pending_frame: None,
             dirty: false,
             eof_sent: false,
             path: path.to_path_buf(),
@@ -173,63 +178,33 @@ impl VideoPlayer {
         }
     }
 
-    /// Advance playback by dt seconds. Decodes frames to catch up to the new position.
+    /// Advance playback using wall-clock milliseconds. Decodes frames to catch up
+    /// to the latest PTS that should be visible at that clock position.
     /// Call this from update(). Does NOT touch the GPU — call `upload()` in draw().
-    pub fn tick(&mut self, dt: f64) {
+    pub fn tick(&mut self, wall_clock_ms: f64) {
         if !self.playing || self.finished { return; }
 
-        self.position_secs += dt;
-
-        // Decode frames until we catch up to the target time
         loop {
-            let mut frame = Video::empty();
-            match self.decoder.receive_frame(&mut frame) {
-                Ok(()) => {
-                    let pts = frame.pts().unwrap_or(0) as f64 * f64::from(self.time_base);
-
-                    // Scale to RGBA
-                    let mut rgb_frame = Video::empty();
-                    if self.scaler.run(&frame, &mut rgb_frame).is_ok() {
-                        self.copy_frame_to_buf(&rgb_frame);
-                        self.dirty = true;
-                    }
-
-                    // Stop if this frame is at or past our target
-                    if pts >= self.position_secs {
-                        return;
-                    }
-                }
-                Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {
-                    // Decoder needs more data — feed it
-                    if !self.feed_decoder() && self.eof_sent {
-                        // EOF sent but still EAGAIN — try one more receive
-                        let mut last = Video::empty();
-                        if self.decoder.receive_frame(&mut last).is_ok() {
-                            let mut rgb = Video::empty();
-                            if self.scaler.run(&last, &mut rgb).is_ok() {
-                                self.copy_frame_to_buf(&rgb);
-                                self.dirty = true;
-                            }
-                        }
-                        self.finished = true;
-                        self.playing = false;
-                        log::info!("Video '{}' finished", self.path.display());
-                        return;
-                    }
-                    // Fed more data, loop back to try receive again
-                }
-                Err(ffmpeg::Error::Eof) => {
-                    self.finished = true;
-                    self.playing = false;
-                    log::info!("Video '{}' finished", self.path.display());
+            if let Some(pending) = self.pending_frame.take() {
+                if pending.pts_ms > wall_clock_ms {
+                    self.pending_frame = Some(pending);
                     return;
                 }
-                Err(e) => {
-                    log::warn!("Video decode error: {}", e);
-                    self.finished = true;
-                    self.playing = false;
+                self.frame_buf = pending.rgba;
+                self.dirty = true;
+                continue;
+            }
+
+            match self.decode_frame() {
+                Some(frame) if frame.pts_ms <= wall_clock_ms => {
+                    self.frame_buf = frame.rgba;
+                    self.dirty = true;
+                }
+                Some(frame) => {
+                    self.pending_frame = Some(frame);
                     return;
                 }
+                None => return,
             }
         }
     }
@@ -255,6 +230,70 @@ impl VideoPlayer {
                 }
             }
         }
+    }
+
+    fn decode_frame(&mut self) -> Option<DecodedFrame> {
+        loop {
+            let mut frame = Video::empty();
+            match self.decoder.receive_frame(&mut frame) {
+                Ok(()) => {
+                    let pts_ms = frame.pts().unwrap_or(0) as f64 * f64::from(self.time_base) * 1000.0;
+                    let mut rgb_frame = Video::empty();
+                    if self.scaler.run(&frame, &mut rgb_frame).is_err() {
+                        continue;
+                    }
+                    return Some(DecodedFrame {
+                        pts_ms,
+                        rgba: self.copy_frame(&rgb_frame),
+                    });
+                }
+                Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {
+                    if !self.feed_decoder() && self.eof_sent {
+                        self.finish();
+                        return None;
+                    }
+                }
+                Err(ffmpeg::Error::Eof) => {
+                    self.finish();
+                    return None;
+                }
+                Err(e) => {
+                    log::warn!("Video decode error: {}", e);
+                    self.finish();
+                    return None;
+                }
+            }
+        }
+    }
+
+    fn copy_frame(&self, rgb_frame: &Video) -> Vec<u8> {
+        let mut rgba = vec![0u8; self.frame_buf.len()];
+        let data = rgb_frame.data(0);
+        let stride = rgb_frame.stride(0);
+        let w = self.width as usize;
+        let h = self.height as usize;
+
+        if stride == w * 4 {
+            let len = (w * h * 4).min(data.len()).min(rgba.len());
+            rgba[..len].copy_from_slice(&data[..len]);
+        } else {
+            for row in 0..h {
+                let src_off = row * stride;
+                let dst_off = row * w * 4;
+                let copy_len = w * 4;
+                if src_off + copy_len <= data.len() && dst_off + copy_len <= rgba.len() {
+                    rgba[dst_off..dst_off + copy_len]
+                        .copy_from_slice(&data[src_off..src_off + copy_len]);
+                }
+            }
+        }
+        rgba
+    }
+
+    fn finish(&mut self) {
+        self.finished = true;
+        self.playing = false;
+        log::info!("Video '{}' finished", self.path.display());
     }
 
     /// Upload the decoded frame buffer to the GPU texture.
