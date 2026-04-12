@@ -12,7 +12,7 @@ use winit::keyboard::KeyCode;
 use crate::screen::Screen;
 
 use super::gameplay_changers::GameplayChangersState;
-use super::play::PlayScreen;
+use super::loading::LoadingScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
 use super::story_menu_support::{
     available_difficulties, load_story_weeks, song_id, StoryMenuCharacter, StoryWeekEntry,
@@ -400,14 +400,18 @@ impl Screen for StoryMenuScreen {
                         .iter()
                         .map(|song| song_id(&song.name))
                         .collect();
-                    let mut play = PlayScreen::new_story(
-                        playlist,
+                    let mut story = super::play::SharedStorySession::new(
                         &week.week.file_name,
+                        playlist,
                         self.current_difficulty(),
-                        false,
                     );
-                    play.apply_gameplay_modifiers(self.practice_mode, self.botplay);
-                    self.next = Some(Box::new(play));
+                    story.song_index = 0;
+                    self.next = Some(Box::new(LoadingScreen::story(
+                        story,
+                        false,
+                        self.practice_mode,
+                        self.botplay,
+                    )));
                 }
             }
         }

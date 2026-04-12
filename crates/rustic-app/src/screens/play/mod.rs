@@ -26,6 +26,7 @@ use super::options::OptionsMenuState;
 use super::video::VideoPlayer;
 use self::pause::PauseMenuState;
 use self::story::StorySession;
+pub(crate) use self::story::StorySession as SharedStorySession;
 
 // === Psych Engine constants ===
 pub const GAME_W: f32 = 1280.0;

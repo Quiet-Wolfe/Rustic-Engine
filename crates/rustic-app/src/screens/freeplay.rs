@@ -13,7 +13,7 @@ use rustic_render::health_icon::{HealthIcon, IconState};
 
 use crate::screen::Screen;
 use super::gameplay_changers::GameplayChangersState;
-use super::play::PlayScreen;
+use super::loading::LoadingScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
 use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
 
@@ -225,9 +225,13 @@ impl Screen for FreeplayScreen {
                     let song_idx = self.filtered[self.cur_selected];
                     let song = &self.songs[song_idx];
                     let diff = DIFFICULTIES[self.cur_difficulty];
-                    let mut play = PlayScreen::new(&song.song_id, diff, self.play_as_opponent);
-                    play.apply_gameplay_modifiers(self.practice_mode, self.botplay);
-                    self.next = Some(Box::new(play));
+                    self.next = Some(Box::new(LoadingScreen::song(
+                        song.song_id.clone(),
+                        diff.to_string(),
+                        self.play_as_opponent,
+                        self.practice_mode,
+                        self.botplay,
+                    )));
                 }
             }
             KeyCode::Escape => {
