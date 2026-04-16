@@ -6,6 +6,7 @@ members = [
     "crates/rustic-render",
     "crates/rustic-gameplay",
     "crates/rustic-scripting",
+    "crates/rustic-hscript",
     "crates/rustic-app",
     "crates/rustanimate",
 ]
@@ -16,6 +17,7 @@ rustic-audio = { path = "crates/rustic-audio" }
 rustic-render = { path = "crates/rustic-render" }
 rustic-gameplay = { path = "crates/rustic-gameplay" }
 rustic-scripting = { path = "crates/rustic-scripting" }
+rustic-hscript = { path = "crates/rustic-hscript" }
 
 wgpu = "28"
 naga = { version = "28", features = ["glsl-in", "wgsl-out"] }

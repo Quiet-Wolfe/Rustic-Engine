@@ -1,0 +1,13 @@
+[package]
+name = "rustic-hscript"
+version = "0.1.0"
+edition = "2021"
+description = "HScript (Haxe-subset) interpreter for Psych Engine compatibility"
+
+[dependencies]
+# Rayzor's Haxe parser crate — provides the AST and parsing. Kept as a local
+# path dep (not upstream git) so we don't pull in their wasmtime/cranelift fork.
+rayzor-parser = { package = "parser", path = "../../references/rayzor/parser" }
+rayzor-diagnostics = { package = "diagnostics", path = "../../references/rayzor/diagnostics" }
+log = { workspace = true }
+thiserror = { workspace = true }
