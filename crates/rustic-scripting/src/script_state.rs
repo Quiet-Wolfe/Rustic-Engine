@@ -176,9 +176,13 @@ pub struct ScriptState {
     /// Pending note type registrations from Lua (registerNoteType calls).
     pub note_type_registrations: Vec<NoteTypeRegistration>,
 
-    /// Pending video playback requests: (video_path, on_finish_callback_name).
+    /// Pending video playback requests: (video_path, on_finish_callback_name, blocks_gameplay).
+    /// When blocks_gameplay is false, the song continues and the video renders as an overlay.
     /// Consumed by the game engine each frame.
-    pub video_requests: Vec<(String, Option<String>)>,
+    pub video_requests: Vec<(String, Option<String>, bool)>,
+    
+    pub script_load_requests: Vec<String>,
+    
     /// Pending audio control requests from Lua.
     pub audio_requests: Vec<AudioRequest>,
 
@@ -420,6 +424,7 @@ impl ScriptState {
             reflections_request: None,
             note_type_registrations: Vec::new(),
             video_requests: Vec::new(),
+            script_load_requests: Vec::new(),
             audio_requests: Vec::new(),
             downscroll: false,
         }

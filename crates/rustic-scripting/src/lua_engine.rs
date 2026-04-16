@@ -662,8 +662,16 @@ impl LuaScript {
                             "video" => {
                                 let filename: String = tbl.get("filename").unwrap_or_default();
                                 let callback: Option<String> = tbl.get("callback").ok();
+                                // Lua-initiated videos (e.g. pre-song intros) block gameplay by default.
+                                let blocks_gameplay: bool = tbl.get("blocks_gameplay").unwrap_or(true);
                                 if !filename.is_empty() {
-                                    state.video_requests.push((filename, callback));
+                                    state.video_requests.push((filename, callback, blocks_gameplay));
+                                }
+                            }
+                            "add_script" => {
+                                let script_name: String = tbl.get("script_name").unwrap_or_default();
+                                if !script_name.is_empty() {
+                                    state.script_load_requests.push(script_name);
                                 }
                             }
                             _ => {}

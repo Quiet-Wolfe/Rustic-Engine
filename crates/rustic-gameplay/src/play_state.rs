@@ -88,6 +88,7 @@ impl PlayState {
 
     /// Handle a key release.
     pub fn key_release(&mut self, lane: usize) {
+        if self.botplay { return; }
         self.keys_held[lane] = false;
     }
 
@@ -245,7 +246,7 @@ impl PlayState {
 
             let note_is_playable = if self.play_as_opponent { !self.notes[i].must_press } else { self.notes[i].must_press };
 
-            if note_is_playable && self.botplay && self.conductor.song_position >= self.notes[i].strum_time {
+            if note_is_playable && self.botplay && !self.notes[i].kind.is_harmful() && self.conductor.song_position >= self.notes[i].strum_time {
                 if let Some(judgment) = rating::judge_note(&self.ratings, 0.0) {
                     self.apply_note_hit(i, judgment);
                 }

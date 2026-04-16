@@ -348,7 +348,7 @@ impl PlayScreen {
         };
 
         let white = [1.0, 1.0, 1.0, 1.0];
-        let gray = [0.7, 0.7, 0.7, 1.0];
+        let black = [0.0, 0.0, 0.0, 1.0];
         let dark_gray = [0.5, 0.5, 0.5, 1.0];
 
         // Semi-transparent overlay
@@ -401,12 +401,12 @@ impl PlayScreen {
                         gpu.push_colored_quad(
                             box_x + 12.0, y - 4.0,
                             box_w - 24.0, item_height - 4.0,
-                            [1.0, 1.0, 1.0, 0.12],
+                            [1.0, 1.0, 1.0, 0.9],
                         );
                         gpu.draw_batch(None);
                     }
 
-                    let color = if is_selected { white } else { gray };
+                    let color = if is_selected { black } else { white };
                     let prefix = if is_selected { "> " } else { "  " };
 
                     // Special formatting for skip time
@@ -428,12 +428,12 @@ impl PlayScreen {
                         gpu.push_colored_quad(
                             box_x + 12.0, y - 4.0,
                             box_w - 24.0, item_height - 4.0,
-                            [1.0, 1.0, 1.0, 0.12],
+                            [1.0, 1.0, 1.0, 0.9],
                         );
                         gpu.draw_batch(None);
                     }
 
-                    let color = if is_selected { white } else { gray };
+                    let color = if is_selected { black } else { white };
                     let prefix = if is_selected { "> " } else { "  " };
                     let label = format!("{}{}", prefix, diff.to_uppercase());
                     gpu.draw_text(&label, box_x + 24.0, y, 26.0, color);
@@ -448,12 +448,12 @@ impl PlayScreen {
                     gpu.push_colored_quad(
                         box_x + 12.0, back_y - 4.0,
                         box_w - 24.0, item_height - 4.0,
-                        [1.0, 1.0, 1.0, 0.12],
+                        [1.0, 1.0, 1.0, 0.9],
                     );
                     gpu.draw_batch(None);
                 }
 
-                let color = if is_back_selected { white } else { gray };
+                let color = if is_back_selected { black } else { white };
                 let prefix = if is_back_selected { "> " } else { "  " };
                 gpu.draw_text(&format!("{}BACK", prefix), box_x + 24.0, back_y, 26.0, color);
             }

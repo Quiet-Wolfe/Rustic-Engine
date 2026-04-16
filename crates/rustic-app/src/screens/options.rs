@@ -3,9 +3,6 @@ use winit::keyboard::KeyCode;
 use rustic_core::prefs::Preferences;
 use rustic_render::gpu::GpuState;
 
-const GAME_W: f32 = 1280.0;
-const GAME_H: f32 = 720.0;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionsCategory {
     Gameplay,
@@ -131,9 +128,15 @@ impl OptionsMenuState {
             tab_x += 210.0;
         }
 
+        let black = [0.0, 0.0, 0.0, 1.0];
         for (i, line) in self.lines().iter().enumerate() {
             let y = 220.0 + i as f32 * 58.0;
-            let color = if i == self.selected { white } else { gray };
+            // Draw highlight background for selected item
+            if i == self.selected {
+                gpu.push_colored_quad(180.0, y - 4.0, 820.0, 50.0, [1.0, 1.0, 1.0, 0.9]);
+                gpu.draw_batch(None);
+            }
+            let color = if i == self.selected { black } else { white };
             let prefix = if i == self.selected { "> " } else { "  " };
             gpu.draw_text(&format!("{}{}", prefix, line), 190.0, y, 26.0, color);
         }

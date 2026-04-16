@@ -30,13 +30,15 @@ impl GameplayChangersState {
             [0.75, 0.75, 0.75, 1.0],
         );
 
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let black = [0.0, 0.0, 0.0, 1.0];
         for (idx, line) in self.lines().iter().enumerate() {
             let y = 320.0 + idx as f32 * 70.0;
-            let color = if idx == self.selected {
-                [1.0, 1.0, 1.0, 1.0]
-            } else {
-                [0.7, 0.7, 0.7, 1.0]
-            };
+            if idx == self.selected {
+                gpu.push_colored_quad(310.0, y - 6.0, 600.0, 50.0, [1.0, 1.0, 1.0, 0.9]);
+                gpu.draw_batch(None);
+            }
+            let color = if idx == self.selected { black } else { white };
             let prefix = if idx == self.selected { "> " } else { "  " };
             gpu.draw_text(&format!("{prefix}{line}"), 320.0, y, 28.0, color);
         }

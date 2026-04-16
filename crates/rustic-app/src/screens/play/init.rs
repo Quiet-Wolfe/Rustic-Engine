@@ -101,6 +101,7 @@ impl PlayScreen {
         let play_as_opponent = self.game.play_as_opponent;
         self.game = PlayState::new(parsed.song.bpm);
         self.game.play_as_opponent = play_as_opponent;
+        self.game.botplay = self.botplay;
         self.game.song_speed = parsed.song.speed;
         self.game.base_song_speed = parsed.song.speed;
 
@@ -132,6 +133,20 @@ impl PlayScreen {
         log::info!("Loaded {} chart events", chart_events.len());
         self.chart_events = chart_events;
         self.event_index = 0;
+
+        // Game over properties from chart (custom death character, sounds, music)
+        if !parsed.song.game_over_char.is_empty() {
+            self.death_char_name = parsed.song.game_over_char.clone();
+        }
+        if !parsed.song.game_over_sound.is_empty() {
+            self.death_sound_name = parsed.song.game_over_sound.clone();
+        }
+        if !parsed.song.game_over_loop.is_empty() {
+            self.death_loop_name = parsed.song.game_over_loop.clone();
+        }
+        if !parsed.song.game_over_end.is_empty() {
+            self.death_end_name = parsed.song.game_over_end.clone();
+        }
 
         // Build section timing data
         {
@@ -243,6 +258,23 @@ impl PlayScreen {
             self.scripts.load_script(&script_path);
         }
 
+        // Custom event scripts used by this chart
+        let mut loaded_events = std::collections::HashSet::new();
+        let custom_events = paths.custom_event_scripts();
+        for event in &self.chart_events {
+            let name = &event.name;
+            if !name.is_empty() && loaded_events.insert(name.clone()) {
+                if let Some(script_path) = custom_events.iter().find(|p| {
+                    p.file_stem()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|s| s.eq_ignore_ascii_case(name))
+                }) {
+                    log::info!("Loading custom event script '{}': {:?}", name, script_path);
+                    self.scripts.load_script(script_path);
+                }
+            }
+        }
+
         // Set default character position globals BEFORE onCreate
         // (Psych Engine sets BF_X, DAD_X etc. from stage data)
         self.scripts.set_on_all("defaultBoyfriendX", stage.boyfriend[0]);
@@ -258,6 +290,37 @@ impl PlayScreen {
         self.scripts.set_str_on_all("gfName", &parsed.song.gf_version);
         // songPath = lowercased path form (for file lookups in Lua)
         self.scripts.set_str_on_all("songPath", &self.song_name);
+
+        // Additional globals that mods expect
+        // bfVersion = player1 character name (used by wrath_phase4 stage for per-character offsets)
+        self.scripts.set_str_on_all("bfVersion", &parsed.song.player1);
+        // Story mode / cutscene globals
+        self.scripts.set_on_all("isStoryMode", self.story.is_some() as i32 as f64);
+        self.scripts.set_on_all("seenCutscene", 0.0); // set to 1 after cutscene plays
+        // Modding option globals (Psych Engine Options)
+        self.scripts.set_on_all("screenShake", 1.0);
+        self.scripts.set_on_all("modcharts", 1.0);
+        self.scripts.set_on_all("enabledUnderlay", 0.0); // underlay not implemented
+        // Strum default position globals (set to stage positions initially;
+        // updated after character sprites are created)
+        for i in 0..4 {
+            self.scripts.set_on_all(
+                &format!("defaultPlayerStrumX{}", i),
+                0.0,
+            );
+            self.scripts.set_on_all(
+                &format!("defaultPlayerStrumY{}", i),
+                0.0,
+            );
+            self.scripts.set_on_all(
+                &format!("defaultOpponentStrumX{}", i),
+                0.0,
+            );
+            self.scripts.set_on_all(
+                &format!("defaultOpponentStrumY{}", i),
+                0.0,
+            );
+        }
 
         // Call onCreate on all loaded scripts
         if self.scripts.has_scripts() {
@@ -421,12 +484,20 @@ impl PlayScreen {
         // Camera targets — compute from current character midpoints
         self.recompute_camera_targets();
 
-        // Preload bf-dead character for death screen
-        if let Some((json_path, char_def)) = parse_char(&paths, "bf-dead") {
+        // Preload death character (from chart's gameOverChar or default "bf-dead")
+        if let Some((json_path, char_def)) = parse_char(&paths, &self.death_char_name) {
             self.death_char_preloaded = load_char_sprite(
                 &paths, gpu, &json_path, &char_def,
                 stage.boyfriend[0], stage.boyfriend[1], true, stage_name,
             );
+        } else if self.death_char_name != "bf-dead" {
+            // Fall back to bf-dead if custom death char not found
+            if let Some((json_path, char_def)) = parse_char(&paths, "bf-dead") {
+                self.death_char_preloaded = load_char_sprite(
+                    &paths, gpu, &json_path, &char_def,
+                    stage.boyfriend[0], stage.boyfriend[1], true, stage_name,
+                );
+            }
         }
 
         // Start camera — use stage camera_start if specified, otherwise opponent position
@@ -458,6 +529,8 @@ impl PlayScreen {
             // If no split opponent vocals, use combined Voices.ogg as opponent too
             audio.load_opponent_vocals(&v);
         }
+        // Set vocals volume to 0.65 (Psych Engine default)
+        audio.set_vocals_volume(0.65);
         // Miss sounds from shared sounds dir
         if let Some(sounds_dir) = paths.find_dir("sounds") {
             audio.load_miss_sounds(&sounds_dir);

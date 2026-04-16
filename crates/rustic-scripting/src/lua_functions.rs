@@ -394,6 +394,45 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
+    // addAnimationByIndicesLoop(tag, anim, prefix, indices, fps) — same as addAnimationByIndices with looping=true
+    // Accepts indices as either a LuaTable or a comma-separated string
+    globals.set("addAnimationByIndicesLoop", lua.create_function(|lua, (tag, anim, prefix, indices, fps): (String, String, String, LuaValue, Option<f64>)| {
+        let fps = fps.unwrap_or(24.0);
+        let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            let anims = match tbl.get::<LuaTable>("__anims") {
+                Ok(t) => t,
+                Err(_) => {
+                    let t = lua.create_table()?;
+                    tbl.set("__anims", t.clone())?;
+                    t
+                }
+            };
+            let anim_tbl = lua.create_table()?;
+            anim_tbl.set("prefix", prefix)?;
+            anim_tbl.set("fps", fps)?;
+            anim_tbl.set("looping", true)?;
+            // Parse indices: accept both LuaTable and comma-separated string
+            match &indices {
+                LuaValue::String(s) => {
+                    let parsed: LuaTable = lua.create_table()?;
+                    for (i, part) in s.to_string_lossy().split(',').enumerate() {
+                        if let Ok(idx) = part.trim().parse::<i32>() {
+                            parsed.set(i + 1, idx)?;
+                        }
+                    }
+                    anim_tbl.set("indices", parsed)?;
+                }
+                LuaValue::Table(t) => {
+                    anim_tbl.set("indices", t.clone())?;
+                }
+                _ => {}
+            }
+            anims.set(anim, anim_tbl)?;
+        }
+        Ok(())
+    })?)?;
+
     // addAnimation(tag, anim, frames, fps, looping) — same as addAnimationByPrefix for our purposes
     globals.set("addAnimation", lua.create_function(|lua, (tag, anim, prefix, fps, looping): (String, String, String, Option<f64>, Option<bool>)| {
         let fps = fps.unwrap_or(24.0);
@@ -467,11 +506,11 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
 
     // characterPlayAnim(charType, anim, forced) — queue character anim via pending props
     globals.set("characterPlayAnim", lua.create_function(|lua, (char_type, anim, forced): (String, String, Option<bool>)| {
-        let _forced = forced.unwrap_or(false);
+        let forced = forced.unwrap_or(false);
         // Queue as a property write for the app layer to handle
         let pending: LuaTable = lua.globals().get("__pending_props")?;
         let tbl = lua.create_table()?;
-        let prop = format!("__charPlayAnim.{}", char_type);
+        let prop = format!("__charPlayAnim{}{}", if forced { "" } else { "Soft." }, char_type);
         tbl.set("prop", prop)?;
         tbl.set("value", anim)?;
         pending.set(pending.len()? + 1, tbl)?;
@@ -907,13 +946,55 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // getPropertyFromClass
-    globals.set("getPropertyFromClass", lua.create_function(|_lua, (_class, _var): (String, String)| -> LuaResult<LuaValue> {
+    // getPropertyFromClass — return values from known classes
+    globals.set("getPropertyFromClass", lua.create_function(|lua, (class, var): (String, String)| -> LuaResult<LuaValue> {
+        if class.contains("PlayState") {
+            let g = lua.globals();
+            match var.as_str() {
+                "bfVersion" => {
+                    // Return the boyfriend character name (e.g., "bf-wind")
+                    return Ok(g.get::<LuaValue>("boyfriendName").unwrap_or(LuaNil));
+                }
+                "pressedCheckpoint" => {
+                    // Check global first (set by engine), then custom_vars (set by Lua)
+                    if let Ok(val) = g.get::<LuaValue>("__pressedCheckpoint") {
+                        if !matches!(val, LuaNil) {
+                            return Ok(val);
+                        }
+                    }
+                    let custom: LuaTable = g.get("__custom_vars")?;
+                    return Ok(custom.get::<LuaValue>("__pressedCheckpoint").unwrap_or(LuaNil));
+                }
+                "endedCatastro" => {
+                    let custom: LuaTable = g.get("__custom_vars")?;
+                    return Ok(custom.get::<LuaValue>("endedCatastro").unwrap_or(LuaNil));
+                }
+                _ => {}
+            }
+        }
         Ok(LuaNil)
     })?)?;
 
-    // setPropertyFromClass
-    globals.set("setPropertyFromClass", lua.create_function(|_lua, (_class, _var, _val): (String, String, LuaValue)| {
+    // setPropertyFromClass — store values for PlayState properties
+    globals.set("setPropertyFromClass", lua.create_function(|lua, (class, var, val): (String, String, LuaValue)| {
+        if class.contains("PlayState") {
+            let custom: LuaTable = lua.globals().get("__custom_vars")?;
+            match var.as_str() {
+                "bfVersion" => {
+                    if let LuaValue::String(s) = &val {
+                        lua.globals().set("boyfriendName", s.to_string_lossy().to_string())?;
+                    }
+                }
+                "endedCatastro" | "pressedCheckpoint" => {
+                    let key = format!("__{}", var);
+                    custom.set(key.as_str(), val)?;
+                }
+                _ => {
+                    let key = format!("__class_{}_{}", class, var);
+                    custom.set(key, val)?;
+                }
+            }
+        }
         Ok(())
     })?)?;
 
@@ -1038,6 +1119,45 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
             return Ok(LuaNil);
         }
 
+        // Pattern: clothScythes manipulation (wrath_phase4 stage) — no-op
+        if code.contains("clothScythes") {
+            return Ok(LuaNil);
+        }
+
+        // Pattern: spotlight.y += N — adjust 'spotlight' sprite position
+        if code.contains("spotlight.y") {
+            if let Some(val_str) = code.split("spotlight.y").nth(1) {
+                let val_str = val_str.trim().trim_start_matches('+').trim_start_matches('=').trim();
+                if let Ok(delta) = val_str.split(';').next().unwrap_or(val_str).trim().parse::<f32>() {
+                    let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+                    if let Ok(tbl) = sprite_data.get::<LuaTable>("spotlight") {
+                        let current_y: f32 = tbl.get("y").unwrap_or(0.0);
+                        tbl.set("y", current_y + delta)?;
+                    }
+                }
+            }
+            return Ok(LuaNil);
+        }
+
+        // Pattern: game.callOnLuas('setPosition', [N]) — call setPosition from runHaxeCode
+        if code.contains("callOnLuas") && code.contains("setPosition") {
+            // Extract the position value from [N]
+            if let Some(start) = code.find('[') {
+                if let Some(end) = code.find(']') {
+                    if let Ok(pos) = code[start+1..end].trim().parse::<f64>() {
+                        // Queue as a property write that the engine will process
+                        let pending: LuaTable = lua.globals().get("__pending_props")?;
+                        let tbl = lua.create_table()?;
+                        tbl.set("prop", "__setPosition")?;
+                        tbl.set("value", pos)?;
+                        let len = pending.len()? as i64;
+                        pending.set(len + 1, tbl)?;
+                    }
+                }
+            }
+            return Ok(LuaNil);
+        }
+
         // Ignore: function definitions, camCharacters.shake, camVideo.zoom, etc.
         if code.contains("function ") || code.contains(".shake(") || code.contains("camVideo.") {
             return Ok(LuaNil);
@@ -1078,6 +1198,79 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
             // preVideoTransition — transition out of 80s mode visuals
             "preVideoTransition" => {
                 log::info!("runHaxeFunction: preVideoTransition");
+            }
+            // makeSpotlightAtlas(x, y) — create spotlight animated sprite for wrath_phase4
+            "makeSpotlightAtlas" => {
+                let x = args.as_ref()
+                    .and_then(|t| t.get::<f64>(1).ok())
+                    .unwrap_or(0.0) as f32;
+                let y = args.as_ref()
+                    .and_then(|t| t.get::<f64>(2).ok())
+                    .unwrap_or(0.0) as f32;
+                // Create as an animated lua sprite
+                let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+                let tbl = lua.create_table()?;
+                tbl.set("tag", "spotlight")?;
+                tbl.set("kind", "animated")?;
+                tbl.set("image", "Phase4/spotlight")?;
+                tbl.set("x", x - 150.0)?;
+                tbl.set("y", y)?;
+                tbl.set("scale_x", 1.2)?;
+                tbl.set("scale_y", 1.2)?;
+                tbl.set("scroll_x", 0.45)?;
+                tbl.set("scroll_y", 0.3)?;
+                tbl.set("alpha", 0.6)?;
+                tbl.set("visible", true)?;
+                tbl.set("flip_x", false)?;
+                tbl.set("antialiasing", true)?;
+                // Add animation
+                let anims = lua.create_table()?;
+                let anim_tbl = lua.create_table()?;
+                anim_tbl.set("prefix", "SpotLight Animation")?;
+                anim_tbl.set("fps", 24.0)?;
+                anim_tbl.set("looping", true)?;
+                anims.set("anim", anim_tbl)?;
+                tbl.set("__anims", anims)?;
+                sprite_data.set("spotlight", tbl)?;
+                // Queue add as sprite
+                let pending_adds: LuaTable = lua.globals().get("__pending_adds")?;
+                let add_tbl = lua.create_table()?;
+                add_tbl.set("tag", "spotlight")?;
+                add_tbl.set("in_front", false)?;
+                let len = pending_adds.len()? as i64;
+                pending_adds.set(len + 1, add_tbl)?;
+                log::info!("runHaxeFunction: makeSpotlightAtlas({}, {})", x, y);
+            }
+            // adjustPositions — compute BF position based on current step (wrath_phase4)
+            "adjustPositions" => {
+                let g = lua.globals();
+                let cur_step: f64 = g.get::<f64>("curStep").unwrap_or(0.0);
+                let ended_catastro: bool = g.get::<bool>("endedCatastro").unwrap_or(false);
+                let actual_step = if ended_catastro { 3328.0 } else { cur_step.max(0.0) };
+                // Replicate the FlxMath.remapToRange logic from the Haxe code
+                let bf_position = if actual_step <= 1792.0 {
+                    remap_to_range(actual_step, 0.0, 1472.0, 8219.1605, 2000.355)
+                } else if actual_step <= 2304.0 {
+                    remap_to_range(actual_step, 0.0, 1472.0, 8219.1605, 1847.355)
+                } else if actual_step <= 2560.0 {
+                    remap_to_range(actual_step, 2304.0, 2560.0, -1758.35969606794, -5703.23798043777)
+                } else {
+                    remap_to_range(actual_step, 2560.0, 3328.0, -5703.23798043777, -68148.9101742824)
+                };
+                // Call the Lua setPosition function directly if it exists
+                if let Ok(set_pos_fn) = g.get::<LuaFunction>("setPosition") {
+                    if let Err(e) = set_pos_fn.call::<()>(bf_position) {
+                        log::debug!("adjustPositions: setPosition({}) failed: {}", bf_position, e);
+                    }
+                } else {
+                    log::debug!("adjustPositions: setPosition function not found");
+                }
+            }
+            // dadCallback — resume dad idle when current animation completes
+            "dadCallback" => {
+                // Store flag so engine knows to re-enable dad dancing after anim finishes
+                let custom: LuaTable = lua.globals().get("__custom_vars")?;
+                custom.set("dadAnimCallback", true)?;
             }
             _ => {
                 log::debug!("runHaxeFunction: unhandled function '{}'", name);
@@ -1994,6 +2187,17 @@ fn register_note_type_function(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
+    // addLuaScript(name)
+    lua.globals().set("addLuaScript", lua.create_function(|lua, name: String| {
+        let pending: LuaTable = lua.globals().get("__pending_props")?;
+        let entry = lua.create_table()?;
+        entry.set("type", "add_script")?;
+        entry.set("script_name", name)?;
+        let len = pending.len()? + 1;
+        pending.set(len, entry)?;
+        Ok(())
+    })?)?;
+
     Ok(())
 }
 
@@ -2221,6 +2425,15 @@ fn lua_to_f32(val: &Option<LuaValue>) -> f32 {
         Some(LuaValue::Integer(i)) => *i as f32,
         _ => 0.0,
     }
+}
+
+/// Linearly remap value from [in_start, in_end] to [out_start, out_end].
+/// Equivalent to HaxeFlixel's FlxMath.remapToRange.
+fn remap_to_range(value: f64, in_start: f64, in_end: f64, out_start: f64, out_end: f64) -> f64 {
+    if (in_end - in_start).abs() < f64::EPSILON {
+        return out_start;
+    }
+    out_start + (value - in_start) * (out_end - out_start) / (in_end - in_start)
 }
 
 fn lua_val_to_f32(val: &LuaValue) -> Option<f32> {

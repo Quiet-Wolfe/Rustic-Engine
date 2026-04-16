@@ -19,11 +19,13 @@ impl PlayScreen {
             return;
         }
 
-        if let Some(super::CutsceneState::Video { skippable, .. }) = &self.cutscene {
-            if *skippable && (key == KeyCode::Enter || key == KeyCode::Escape || key == KeyCode::Space) {
-                self.skip_cutscene();
+        if let Some(super::CutsceneState::Video { skippable, blocks_gameplay, .. }) = &self.cutscene {
+            if *blocks_gameplay {
+                if *skippable && (key == KeyCode::Enter || key == KeyCode::Escape || key == KeyCode::Space) {
+                    self.skip_cutscene();
+                }
+                return;
             }
-            return;
         }
 
         if let Some(menu) = &mut self.options_menu {
@@ -39,7 +41,7 @@ impl PlayScreen {
             return;
         }
 
-        if self.paused {
+        if self.pause_menu.is_some() {
             self.handle_pause_input(key);
             return;
         }
@@ -154,7 +156,7 @@ impl PlayScreen {
             death.character.play_anim("deathConfirm", true);
             if let Some(audio) = &mut self.audio {
                 audio.stop_loop_music();
-                if let Some(sfx) = self.paths.music("gameOverEnd") {
+                if let Some(sfx) = self.paths.music(&self.death_end_name) {
                     audio.play_sound(&sfx, 1.0);
                 }
             }

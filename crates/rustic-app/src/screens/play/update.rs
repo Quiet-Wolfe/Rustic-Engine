@@ -36,19 +36,23 @@ impl PlayScreen {
     pub(super) fn update_inner(&mut self, dt: f32) {
         self.last_dt = dt;
         let dt_ms = dt as f64 * 1000.0;
-        if let Some(super::CutsceneState::Video { player, wall_clock_ms, .. }) = &mut self.cutscene {
+        let mut blocking_cutscene = false;
+        if let Some(super::CutsceneState::Video { player, wall_clock_ms, blocks_gameplay, .. }) = &mut self.cutscene {
             *wall_clock_ms += dt_ms;
             if player.is_playing() {
                 player.tick(*wall_clock_ms);
             }
+            blocking_cutscene = *blocks_gameplay;
             let finished = player.is_finished();
             if finished {
                 self.finish_cutscene();
             }
+        }
+        if blocking_cutscene {
             return;
         }
 
-        if self.paused {
+        if self.pause_menu.is_some() {
             self.update_pause(dt);
             return;
         }
@@ -65,7 +69,7 @@ impl PlayScreen {
                         death.phase = DeathPhase::Loop;
                         death.character.play_anim("deathLoop", false);
                         if let Some(audio) = &mut self.audio {
-                            if let Some(music) = self.paths.music("gameOver") {
+                            if let Some(music) = self.paths.music(&self.death_loop_name) {
                                 audio.play_loop_music(&music);
                             }
                         }
@@ -234,7 +238,8 @@ impl PlayScreen {
                     self.game.song_speed = self.game.base_song_speed * multiplier;
                 }
                 "Set GF Speed" => {
-                    // Sets GF dance frequency (not implemented yet)
+                    // v1 = frequency (1 = every beat, 2 = every 2 beats)
+                    self.gf_dance_freq = v1.parse::<i32>().unwrap_or(0);
                 }
                 "Play Animation" => {
                     // v1 = animation name, v2 = character (empty = dad)
@@ -317,9 +322,15 @@ impl PlayScreen {
                     // Play a mid-song video. v1 = video name (filename without extension).
                     // The Lua onEvent callback fires first (for character changes etc),
                     // then this queues the video for playback in the draw phase.
+                    // Non-blocking: the song keeps playing and gameplay continues.
                     if !v1.is_empty() {
-                        self.scripts.state.video_requests.push((v1.clone(), None));
+                        self.scripts.state.video_requests.push((v1.clone(), None, false));
                     }
+                }
+                "Checkpoint" => {
+                    // Store checkpoint position so getPropertyFromClass('states.PlayState', 'pressedCheckpoint') returns true
+                    self.scripts.set_on_all("__pressedCheckpoint", 1.0);
+                    log::info!("Checkpoint reached at song position {}", song_pos);
                 }
                 _ => {}
             }
@@ -466,7 +477,11 @@ impl PlayScreen {
                         }
                     }
                     if let Some(gf) = &mut self.char_gf {
-                        let freq = if gf.has_dance_idle() { 1 } else { 2 };
+                        let freq = if self.gf_dance_freq > 0 {
+                            self.gf_dance_freq
+                        } else {
+                            if gf.has_dance_idle() { 1 } else { 2 }
+                        };
                         if beat % freq == 0 {
                             gf.dance();
                         }
@@ -560,7 +575,7 @@ impl PlayScreen {
                     self.death_counter += 1;
                     if let Some(audio) = &mut self.audio {
                         audio.pause();
-                        if let Some(sfx) = self.paths.sound("fnf_loss_sfx") {
+                        if let Some(sfx) = self.paths.sound(&self.death_sound_name) {
                             audio.play_sound(&sfx, 1.0);
                         }
                     }

@@ -8,13 +8,14 @@ use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
 use crate::screen::Screen;
 use super::freeplay::FreeplayScreen;
+use super::mods::ModsScreen;
 use super::story_menu::StoryMenuScreen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
 
 /// Menu item names that match the Sparrow atlas animation prefixes.
-const MENU_ITEMS: [&str; 3] = ["story_mode", "freeplay", "credits"];
+const MENU_ITEMS: [&str; 4] = ["story_mode", "freeplay", "mods", "credits"];
 
 struct MenuItem {
     atlas: SpriteAtlas,
@@ -229,7 +230,11 @@ impl Screen for MainMenuScreen {
                     Some(&"story_mode") => {
                         self.next = Some(Box::new(StoryMenuScreen::new()));
                     }
+                    Some(&"mods") => {
+                        self.next = Some(Box::new(ModsScreen::new()));
+                    }
                     _ => {
+                        // Credits or fallback - just go to freeplay for now
                         self.next = Some(Box::new(FreeplayScreen::new()));
                     }
                 }

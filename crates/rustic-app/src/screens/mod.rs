@@ -4,6 +4,7 @@ pub(crate) mod freeplay_support;
 pub mod gameplay_changers;
 pub mod loading;
 pub mod main_menu;
+pub mod mods;
 pub mod options;
 pub mod play;
 pub mod reset_score;

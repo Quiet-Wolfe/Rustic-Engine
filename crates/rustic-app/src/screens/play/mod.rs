@@ -284,6 +284,9 @@ pub(super) enum CutsceneState {
         player: VideoPlayer,
         skippable: bool,
         wall_clock_ms: f64,
+        /// When false, the song keeps playing and gameplay continues while the
+        /// video renders as an overlay below the HUD. Used for mid-song videos.
+        blocks_gameplay: bool,
     },
 }
 
@@ -348,6 +351,10 @@ pub struct PlayScreen {
     // Death
     pub(super) death: Option<DeathState>,
     pub(super) death_char_preloaded: Option<Character>,
+    pub(super) death_char_name: String,
+    pub(super) death_sound_name: String,
+    pub(super) death_loop_name: String,
+    pub(super) death_end_name: String,
 
     // Health drain (animated slide for harmful notes)
     pub(super) health_drain: Option<HealthDrain>,
@@ -390,7 +397,6 @@ pub struct PlayScreen {
     pub(super) downscroll: bool,
 
     // Pause
-    pub(super) paused: bool,
     pub(super) pause_menu: Option<PauseMenuState>,
     pub(super) pause_skip_direction: i8,
     pub(super) practice_mode: bool,
@@ -405,6 +411,9 @@ pub struct PlayScreen {
 
     /// Active gameplay-blocking cutscene.
     pub(super) cutscene: Option<CutsceneState>,
+
+    /// GF dance frequency override (0 = use character default, 1 = every beat, 2 = every 2 beats)
+    pub(super) gf_dance_freq: i32,
 }
 
 impl PlayScreen {
@@ -458,6 +467,10 @@ impl PlayScreen {
             event_index: 0,
             death: None,
             death_char_preloaded: None,
+            death_char_name: "bf-dead".to_string(),
+            death_sound_name: "fnf_loss_sfx".to_string(),
+            death_loop_name: "gameOver".to_string(),
+            death_end_name: "gameOverEnd".to_string(),
             health_drain: None,
             scripts: ScriptManager::new(),
             lua_textures: HashMap::new(),
@@ -480,7 +493,6 @@ impl PlayScreen {
             lane_keys: lane_keys_from_prefs(&prefs),
             last_dt: 1.0 / 60.0,
             downscroll: prefs.downscroll,
-            paused: false,
             pause_menu: None,
             pause_skip_direction: 0,
             practice_mode: false,
@@ -493,6 +505,7 @@ impl PlayScreen {
             score_saved: false,
             story: None,
             cutscene: None,
+            gf_dance_freq: 0,
         }
     }
 
@@ -522,29 +535,40 @@ impl PlayScreen {
         self.game.botplay = botplay;
     }
 
-    pub(super) fn start_video_cutscene(&mut self, player: VideoPlayer, skippable: bool) {
+    pub(super) fn start_video_cutscene(&mut self, player: VideoPlayer, skippable: bool, blocks_gameplay: bool) {
         if let Some(audio) = &mut self.audio {
-            if self.game.song_started {
+            if blocks_gameplay && self.game.song_started {
                 audio.pause();
             }
-            if let Some(audio_path) = player.audio_path() {
-                audio.play_cutscene_audio(audio_path, 1.0);
+            // Mid-song videos rely on the song's own audio track; don't play the
+            // video's extracted audio over it.
+            if blocks_gameplay {
+                if let Some(audio_path) = player.audio_path() {
+                    audio.play_cutscene_audio(audio_path, 1.0);
+                }
             }
         }
-        self.cutscene = Some(CutsceneState::Video { player, skippable, wall_clock_ms: 0.0 });
+        self.cutscene = Some(CutsceneState::Video {
+            player,
+            skippable,
+            wall_clock_ms: 0.0,
+            blocks_gameplay,
+        });
     }
 
     pub(super) fn finish_cutscene(&mut self) {
-        let Some(CutsceneState::Video { mut player, .. }) = self.cutscene.take() else { return; };
+        let Some(CutsceneState::Video { mut player, blocks_gameplay, .. }) = self.cutscene.take() else { return; };
         if let Some(cb) = player.take_on_finish() {
             if self.scripts.has_scripts() {
                 self.scripts.call_lua_function(&cb, "");
             }
         }
         if let Some(audio) = &mut self.audio {
-            audio.stop_cutscene_audio();
-            if self.game.song_started && !self.game.song_ended {
-                audio.play();
+            if blocks_gameplay {
+                audio.stop_cutscene_audio();
+                if self.game.song_started && !self.game.song_ended {
+                    audio.play();
+                }
             }
         }
     }
@@ -729,6 +753,29 @@ impl PlayScreen {
             }
         }
 
+        // Pending script loads via addLuaScript
+        let load_reqs: Vec<_> = self.scripts.state.script_load_requests.drain(..).collect();
+        for req in load_reqs {
+            // Find a script across all image_roots (search roots) matching the relative path
+            let mut loaded = false;
+            for root in &self.scripts.state.image_roots {
+                let p = root.join(&req);
+                // Psych engine scripts usually omit .lua extension in addLuaScript calls
+                let p = if p.extension().is_none() { p.with_extension("lua") } else { p };
+                if p.exists() {
+                    log::info!("Dynamic loading Lua script '{}': {:?}", req, p);
+                    self.scripts.load_script(&p);
+                    // Inform the script it was dynamically loaded
+                    self.scripts.call("onCreate");
+                    self.scripts.call("onCreatePost");
+                    loaded = true;
+                    break;
+                }
+            }
+            if !loaded {
+                log::warn!("Dynamic script '{}' not found", req);
+            }
+        }
         // Post-processing requests
         // postprocess_requests (enable/disable) is handled in draw where gpu is available
         // postprocess_param_requests (individual params) is also handled in draw
@@ -1002,16 +1049,12 @@ impl PlayScreen {
                 }
                 "camFollow.x" | "camFollowPos.x" => {
                     if let Some(v) = as_f32 {
-                        if self.camera_forced_pos {
-                            self.camera.follow(v, self.camera.y);
-                        }
+                        self.camera.follow(v, self.camera.y);
                     }
                 }
                 "camFollow.y" | "camFollowPos.y" => {
                     if let Some(v) = as_f32 {
-                        if self.camera_forced_pos {
-                            self.camera.follow(self.camera.x, v);
-                        }
+                        self.camera.follow(self.camera.x, v);
                     }
                 }
                 "camZooming" => {
@@ -1039,6 +1082,13 @@ impl PlayScreen {
                         }
                     }
                 }
+                "__charPlayAnimSoft.dad" | "__charPlayAnimSoft.opponent" => {
+                    if let LuaValue::String(anim) = &val {
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.play_anim(anim, false);
+                        }
+                    }
+                }
                 "__charPlayAnim.bf" | "__charPlayAnim.boyfriend" => {
                     if let LuaValue::String(anim) = &val {
                         if let Some(bf) = &mut self.char_bf {
@@ -1046,10 +1096,24 @@ impl PlayScreen {
                         }
                     }
                 }
+                "__charPlayAnimSoft.bf" | "__charPlayAnimSoft.boyfriend" => {
+                    if let LuaValue::String(anim) = &val {
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.play_anim(anim, false);
+                        }
+                    }
+                }
                 "__charPlayAnim.gf" | "__charPlayAnim.girlfriend" => {
                     if let LuaValue::String(anim) = &val {
                         if let Some(gf) = &mut self.char_gf {
                             gf.play_anim(anim, true);
+                        }
+                    }
+                }
+                "__charPlayAnimSoft.gf" | "__charPlayAnimSoft.girlfriend" => {
+                    if let LuaValue::String(anim) = &val {
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.play_anim(anim, false);
                         }
                     }
                 }
@@ -1431,7 +1495,7 @@ impl Screen for PlayScreen {
     }
 
     fn handle_key_release(&mut self, key: KeyCode) {
-        if self.paused && matches!(key, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::KeyA | KeyCode::KeyD) {
+        if self.pause_menu.is_some() && matches!(key, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::KeyA | KeyCode::KeyD) {
             self.pause_skip_direction = 0;
         }
         if let Some(lane) = self.key_to_lane(key) {
@@ -1442,15 +1506,17 @@ impl Screen for PlayScreen {
     fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
         let (x, y) = (x as f32, y as f32);
 
-        if let Some(CutsceneState::Video { skippable, .. }) = &self.cutscene {
-            if *skippable && phase == TouchPhase::Started {
-                self.skip_cutscene();
+        if let Some(CutsceneState::Video { skippable, blocks_gameplay, .. }) = &self.cutscene {
+            if *blocks_gameplay {
+                if *skippable && phase == TouchPhase::Started {
+                    self.skip_cutscene();
+                }
+                return;
             }
-            return;
         }
 
         // Pause menu / death screen
-        if self.paused || self.death.is_some() {
+        if self.pause_menu.is_some() || self.death.is_some() {
             if phase == TouchPhase::Started {
                 if y < GAME_H * 0.33 {
                     self.handle_key_inner(KeyCode::ArrowUp);

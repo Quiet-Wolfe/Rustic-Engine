@@ -150,13 +150,17 @@ impl CharacterSprite {
             .unwrap_or_else(|| name.contains("-loop") || name == "idle");
         if force {
             self.anim.force_play(name, 24.0, looping);
-            // Mark as special animation if it's not a standard sing/miss/idle/dance.
-            // Special animations prevent dance() from interrupting until they finish.
-            let is_standard = name.starts_with("sing") || name.starts_with("miss")
-                || name == "idle" || name.starts_with("dance");
-            self.special_anim = !is_standard;
         } else if self.anim.current_anim != name || self.anim.finished {
             self.anim.play(name, 24.0, looping);
+        }
+        // For non-standard animations (custom named), set special_anim
+        // regardless of force — these should block dance() until finished.
+        let is_standard = name.starts_with("sing") || name.starts_with("miss")
+            || name == "idle" || name.starts_with("dance");
+        if !is_standard {
+            self.special_anim = true;
+        } else if force {
+            self.special_anim = false;
         }
     }
 
@@ -291,6 +295,19 @@ pub struct AtlasCharacterSprite {
     symbol_names: HashMap<String, String>,
     /// Per-animation loop flags from character JSON.
     loop_flags: HashMap<String, bool>,
+    /// Per-animation frame indices (from character JSON `indices` field).
+    /// When present, these define which frames of the main timeline to play.
+    anim_frame_indices: HashMap<String, Vec<u32>>,
+    /// Current playback frame index list (cloned from anim_frame_indices on play).
+    current_play_indices: Vec<u32>,
+    /// Current position within current_play_indices.
+    current_index_pos: usize,
+    /// Time accumulator for index-based playback (seconds).
+    index_time_accum: f32,
+    /// FPS for index-based playback.
+    index_fps: f32,
+    /// Per-animation FPS from character JSON (used for index-based playback).
+    anim_fps: HashMap<String, f32>,
     /// Current engine animation name.
     current_anim: String,
     pub x: f32,
@@ -336,16 +353,48 @@ impl AtlasCharacterSprite {
         let mut symbol_names = HashMap::new();
         let mut offsets = HashMap::new();
         let mut loop_flags = HashMap::new();
-        for anim_def in &char_def.animations {
-            for (idx, avail) in animate.available_animations.iter().enumerate() {
-                if avail.sn == anim_def.name {
-                    anim_indices.insert(anim_def.anim.clone(), idx);
-                    break;
-                }
+        let mut anim_frame_indices = HashMap::new();
+        let mut anim_fps = HashMap::new();
+
+        // Detect if all animations share the same symbol name (e.g., "AtlasExport")
+        // with different indices ranges — the Phase4 pattern.
+        let all_same_name = {
+            let names: std::collections::HashSet<&str> = char_def.animations.iter()
+                .map(|a| a.name.as_str()).collect();
+            names.len() == 1 && !char_def.animations.is_empty()
+                && !char_def.animations[0].indices.is_empty()
+        };
+
+        if all_same_name {
+            // All animations reference the same symbol with different frame indices.
+            // Map each animation to the main symbol, storing its frame indices.
+            let main_name = char_def.animations[0].name.clone();
+            for anim_def in &char_def.animations {
+                symbol_names.insert(anim_def.anim.clone(), main_name.clone());
+                anim_frame_indices.insert(anim_def.anim.clone(),
+                    anim_def.indices.iter().map(|&i| i as u32).collect());
+                offsets.insert(anim_def.anim.clone(), anim_def.offsets);
+                loop_flags.insert(anim_def.anim.clone(), anim_def.loop_anim);
+                anim_fps.insert(anim_def.anim.clone(), anim_def.fps as f32);
             }
-            symbol_names.insert(anim_def.anim.clone(), anim_def.name.clone());
-            offsets.insert(anim_def.anim.clone(), anim_def.offsets);
-            loop_flags.insert(anim_def.anim.clone(), anim_def.loop_anim);
+        } else {
+            // Standard mapping: each animation references a different sub-symbol.
+            for anim_def in &char_def.animations {
+                for (idx, avail) in animate.available_animations.iter().enumerate() {
+                    if avail.sn == anim_def.name {
+                        anim_indices.insert(anim_def.anim.clone(), idx);
+                        break;
+                    }
+                }
+                symbol_names.insert(anim_def.anim.clone(), anim_def.name.clone());
+                if !anim_def.indices.is_empty() {
+                    anim_frame_indices.insert(anim_def.anim.clone(),
+                    anim_def.indices.iter().map(|&i| i as u32).collect());
+                }
+                offsets.insert(anim_def.anim.clone(), anim_def.offsets);
+                loop_flags.insert(anim_def.anim.clone(), anim_def.loop_anim);
+                anim_fps.insert(anim_def.anim.clone(), anim_def.fps as f32);
+            }
         }
 
         let flip_x = char_def.flip_x != is_player;
@@ -359,6 +408,12 @@ impl AtlasCharacterSprite {
             anim_indices,
             symbol_names,
             loop_flags,
+            anim_frame_indices,
+            current_play_indices: Vec::new(),
+            current_index_pos: 0,
+            index_time_accum: 0.0,
+            index_fps: 24.0,
+            anim_fps,
             current_anim: String::new(),
             x,
             y,
@@ -415,7 +470,6 @@ impl AtlasCharacterSprite {
         }
         if let Some(symbol_name) = self.symbol_names.get(name) {
             self.animate.playing_symbol = symbol_name.clone();
-            self.animate.current_frame = 0;
             self.animate.time_accumulator = 0.0;
             self.animate.finished = false;
             let looping = self.loop_flags.get(name).copied()
@@ -424,11 +478,36 @@ impl AtlasCharacterSprite {
             if let Some(&idx) = self.anim_indices.get(name) {
                 self.animate.active_anim_idx = idx;
             }
+
+            // If this animation has explicit frame indices, use index-based playback
+            if let Some(indices) = self.anim_frame_indices.get(name) {
+                self.current_play_indices = indices.clone();
+                self.current_index_pos = 0;
+                self.index_time_accum = 0.0;
+                // Set the animate's current_frame to the first index
+                if !indices.is_empty() {
+                    self.animate.current_frame = indices[0];
+                }
+                // Use per-animation FPS from character JSON, fallback to animate's framerate
+                self.index_fps = self.anim_fps.get(name).copied()
+                    .unwrap_or(self.animate.framerate);
+            } else {
+                // Standard playback: start at frame 0 of the symbol
+                self.current_play_indices = Vec::new();
+                self.current_index_pos = 0;
+                self.index_time_accum = 0.0;
+                self.animate.current_frame = 0;
+            }
+
             self.current_anim = name.to_string();
-            if force {
-                let is_standard = name.starts_with("sing") || name.starts_with("miss")
-                    || name == "idle" || name.starts_with("dance");
-                self.special_anim = !is_standard;
+            // For non-standard animations (custom named), set special_anim
+            // regardless of force — these should block dance() until finished.
+            let is_standard = name.starts_with("sing") || name.starts_with("miss")
+                || name == "idle" || name.starts_with("dance");
+            if !is_standard {
+                self.special_anim = true;
+            } else if force {
+                self.special_anim = false;
             }
         } else {
             log::warn!("Atlas character: animation '{}' not found", name);
@@ -476,7 +555,35 @@ impl AtlasCharacterSprite {
     }
 
     pub fn update(&mut self, dt: f32) {
-        self.animate.update(dt);
+        if !self.current_play_indices.is_empty() {
+            // Index-based playback: advance through the stored frame indices
+            self.index_time_accum += dt;
+            let frame_duration = 1.0 / self.index_fps;
+            while self.index_time_accum >= frame_duration {
+                self.index_time_accum -= frame_duration;
+                self.current_index_pos += 1;
+            }
+
+            let looping = self.loop_flags.get(&self.current_anim).copied()
+                .unwrap_or_else(|| self.current_anim.contains("-loop") || self.current_anim == "idle");
+
+            if self.current_index_pos >= self.current_play_indices.len() {
+                if looping {
+                    self.current_index_pos %= self.current_play_indices.len();
+                } else {
+                    self.current_index_pos = self.current_play_indices.len().saturating_sub(1);
+                    self.animate.finished = true;
+                }
+            }
+
+            // Map the index position to the actual frame number
+            self.animate.current_frame = self.current_play_indices[self.current_index_pos];
+            // Don't let FlxAnimate::update overwrite our frame — set time_accum to prevent it
+            self.animate.time_accumulator = 0.0;
+        } else {
+            // Standard playback (no index list)
+            self.animate.update(dt);
+        }
     }
 
     pub fn midpoint(&self) -> (f32, f32) {

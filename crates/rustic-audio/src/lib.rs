@@ -138,7 +138,18 @@ impl AudioEngine {
     /// Unmute player vocals (on hit).
     pub fn unmute_player_vocals(&mut self) {
         if let Some(h) = &mut self.vocals_player {
-            h.set_volume(1.0, Tween::default());
+            h.set_volume(0.65, Tween::default());
+        }
+    }
+
+    /// Set the volume of all vocal tracks (0.0 to 1.0).
+    /// Psych Engine uses 0.65 as the default vocals volume.
+    pub fn set_vocals_volume(&mut self, volume: f64) {
+        if let Some(h) = &mut self.vocals_player {
+            h.set_volume(volume, Tween::default());
+        }
+        if let Some(h) = &mut self.vocals_opponent {
+            h.set_volume(volume, Tween::default());
         }
     }
 

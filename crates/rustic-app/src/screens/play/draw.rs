@@ -36,7 +36,7 @@ impl PlayScreen {
 
         // Process video playback requests from Lua (needs GPU for texture creation)
         let video_reqs: Vec<_> = self.scripts.state.video_requests.drain(..).collect();
-        for (filename, callback) in video_reqs {
+        for (filename, callback, blocks_gameplay) in video_reqs {
             if self.cutscene.is_some() {
                 break;
             }
@@ -49,12 +49,14 @@ impl PlayScreen {
                     &gpu.sampler,
                 ) {
                     Ok(player) => {
-                        log::info!("Starting video: {:?}", path);
+                        log::info!("Starting video: {:?} (blocking={})", path, blocks_gameplay);
                         let mut player = player;
                         if let Some(cb) = callback {
                             player.set_on_finish(cb);
                         }
-                        self.start_video_cutscene(player, true);
+                        // Mid-song (non-blocking) videos aren't user-skippable —
+                        // they're tied to chart timing.
+                        self.start_video_cutscene(player, blocks_gameplay, blocks_gameplay);
                     }
                     Err(e) => {
                         log::warn!("Failed to load video '{}': {}", filename, e);
@@ -208,6 +210,25 @@ impl PlayScreen {
             self.draw_lua_sprites(gpu, true);
         }
 
+        // === Mid-song (non-blocking) video overlay: above stage/characters, below HUD ===
+        if let Some(super::CutsceneState::Video {
+            player: video, blocks_gameplay: false, ..
+        }) = &mut self.cutscene {
+            let (vw, vh) = video.dimensions();
+            let scale = (GAME_W / vw as f32).min(GAME_H / vh as f32);
+            let dw = vw as f32 * scale;
+            let dh = vh as f32 * scale;
+            let dx = (GAME_W - dw) / 2.0;
+            let dy = (GAME_H - dh) / 2.0;
+            gpu.push_texture_region(
+                vw as f32, vh as f32,
+                0.0, 0.0, vw as f32, vh as f32,
+                dx, dy, dw, dh,
+                false, white,
+            );
+            gpu.draw_batch_with_bind_group(video.bind_group());
+        }
+
         // Skip HUD during death
         if self.death.is_some() {
             self.draw_death_overlay(gpu);
@@ -351,10 +372,10 @@ impl PlayScreen {
                 let bw = chb.bar_texture.width as f32 * scale;
                 let bh = chb.bar_texture.height as f32 * scale;
 
-                // Center overlay on screen; top for downscroll, bottom for upscroll
+                // Center overlay on screen; keep at the bottom in both scroll modes so
+                // the bar does not overlap the note path in downscroll.
                 let overlay_x = (GAME_W * hz - ow) / 2.0;
-                let hbar_y = if self.downscroll { GAME_H * 0.02 } else { HEALTH_BAR_Y };
-                let overlay_y = hud_y(hbar_y) - oh / 2.0;
+                let overlay_y = hud_y(HEALTH_BAR_Y) - oh / 2.0;
                 // Bar centered within overlay
                 let bar_x = overlay_x + (ow - bw) / 2.0;
                 let bar_y = overlay_y + (oh - bh) / 2.0;
@@ -448,10 +469,9 @@ impl PlayScreen {
                 gpu.draw_text(&score_text, overlay_x, overlay_y + oh + 6.0, 16.0, [a, a, a, a]);
             }
         } else {
-            // Default health bar (bottom for upscroll, top for downscroll)
+            // Default health bar: always at the bottom so it never covers the note path in downscroll.
             let hbx = hud_x(HEALTH_BAR_X);
-            let bar_base_y = if self.downscroll { 80.0 } else { HEALTH_BAR_Y };
-            let hby = hud_y(bar_base_y);
+            let hby = hud_y(HEALTH_BAR_Y);
             let hbw = hud_s(HEALTH_BAR_W);
             let hbh = hud_s(HEALTH_BAR_H);
             // Black border
@@ -524,6 +544,14 @@ impl PlayScreen {
                 self.game.score.score, self.game.score.misses, self.game.score.accuracy(), grade,
             );
             gpu.draw_text(&score_text, hbx, hby + hbh + 6.0, 16.0, white);
+
+            // Botplay / Practice mode indicators (always near top, out of the note path)
+            if self.botplay {
+                gpu.draw_text("BOTPLAY", GAME_W / 2.0 - 50.0, 60.0, 32.0, [1.0, 1.0, 1.0, 0.6]);
+            }
+            if self.practice_mode {
+                gpu.draw_text("PRACTICE MODE", GAME_W / 2.0 - 80.0, 90.0, 24.0, [1.0, 1.0, 1.0, 0.5]);
+            }
         }
 
         // === Rating popups ===
@@ -599,12 +627,12 @@ impl PlayScreen {
             }
         }
 
-        if self.paused {
+        if self.pause_menu.is_some() {
             self.draw_pause(gpu);
         }
 
         // === Song results ===
-        if self.game.song_ended && !self.paused {
+        if self.game.song_ended && self.pause_menu.is_none() {
             let fc = rating::classify_fc(
                 self.game.score.sicks, self.game.score.goods,
                 self.game.score.bads, self.game.score.shits, self.game.score.misses,
@@ -627,12 +655,12 @@ impl PlayScreen {
         }
 
         // Touch lane indicators (Android only — subtle FNF-style pads at bottom)
-        if cfg!(target_os = "android") && !self.paused && self.death.is_none() && !self.game.song_ended {
+        if cfg!(target_os = "android") && self.pause_menu.is_none() && self.death.is_none() && !self.game.song_ended {
             self.draw_touch_ui(gpu);
         }
 
-        // === Video overlay (drawn on top of everything) ===
-        if let Some(super::CutsceneState::Video { player: video, skippable, .. }) = &mut self.cutscene {
+        // === Video overlay (drawn on top of everything) — only for blocking cutscenes ===
+        if let Some(super::CutsceneState::Video { player: video, skippable, blocks_gameplay: true, .. }) = &mut self.cutscene {
             let (vw, vh) = video.dimensions();
             let scale = (GAME_W / vw as f32).min(GAME_H / vh as f32);
             let dw = vw as f32 * scale;
