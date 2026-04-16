@@ -2,3 +2,12 @@
 /crates/*/target
 Cargo.lock
 references/
+GLM.sh
+
+# Local dev artifacts
+.codex
+last.sh
+
+# User-local mod library + selection state (not versioned; 2GB+)
+/mods/
+/modsList.txt
