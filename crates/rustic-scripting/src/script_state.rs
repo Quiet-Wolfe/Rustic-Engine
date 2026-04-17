@@ -47,6 +47,18 @@ pub struct ScriptState {
     pub cur_beat: i32,
     pub cur_step: i32,
     pub cur_section: i32,
+    /// Current stage name (e.g. "stage", "philly").
+    pub cur_stage: String,
+    /// Song length in milliseconds.
+    pub song_length: f64,
+    /// Song BPM.
+    pub bpm: f64,
+    /// Scroll speed multiplier.
+    pub scroll_speed: f64,
+    /// Difficulty display name (e.g. "Normal", "Hard", "Easy").
+    pub difficulty_name: String,
+    /// Active mod folder name.
+    pub mod_folder: String,
 
     /// Asset search roots (for resolving image paths in Lua functions).
     pub image_roots: Vec<PathBuf>,
@@ -377,6 +389,12 @@ impl ScriptState {
             cur_beat: 0,
             cur_step: 0,
             cur_section: 0,
+            cur_stage: String::new(),
+            song_length: 0.0,
+            bpm: 120.0,
+            scroll_speed: 1.0,
+            difficulty_name: "Normal".to_string(),
+            mod_folder: String::new(),
             image_roots: Vec::new(),
             lua_sprites: HashMap::new(),
             sprites_to_add: Vec::new(),

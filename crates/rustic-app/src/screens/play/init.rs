@@ -247,6 +247,14 @@ impl PlayScreen {
         self.scripts.set_image_roots(paths.roots().to_vec());
         self.scripts.set_globals(&parsed.song.song, self.story.is_some());
         self.scripts.set_char_names(&parsed.song.player1, &parsed.song.player2, &parsed.song.gf_version);
+        self.scripts.set_song_metadata(
+            parsed.song.bpm,
+            parsed.song.speed,
+            0.0, // song_length — updated after audio load
+            &stage_name,
+            &self.difficulty,
+            "", // mod_folder — could derive from path if needed
+        );
 
         // Stage Lua script (loaded first — builds stage visuals)
         if let Some(lua_path) = paths.stage_lua(stage_name) {
@@ -512,8 +520,10 @@ impl PlayScreen {
 
         // Load audio
         let mut audio = AudioEngine::new();
+        let mut song_length_ms = 0.0;
         if let Some(inst) = paths.song_audio(&self.song_name, "Inst.ogg") {
             audio.load_inst(&inst);
+            song_length_ms = AudioEngine::sound_duration_ms(&inst).unwrap_or(0.0);
         }
         // Try split vocals first (Psych Engine format), then single Voices.ogg
         if let Some(vp) = paths.song_audio(&self.song_name, "Voices-Player.ogg") {
@@ -573,6 +583,9 @@ impl PlayScreen {
         self.scripts.set_bool_on_all("mustHitSection", false);
         self.scripts.set_bool_on_all("downscroll", self.downscroll);
         self.scripts.set_bool_on_all("isDownScroll", self.downscroll);
+        self.scripts.set_on_all("songLength", song_length_ms);
+        self.scripts.set_on_all("playbackRate", self.game.song_speed);
+        self.scripts.set_str_on_all("difficultyName", &self.difficulty);
 
         // Initialize countdown
         self.game.conductor.song_position = -self.game.conductor.crochet * 5.0;

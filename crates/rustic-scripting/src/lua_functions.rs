@@ -136,10 +136,46 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("combo", 0)?;
     g.set("rating", 0.0)?;
     g.set("ratingName", "?")?;
+    g.set("ratingFC", "?")?;
     g.set("version", "0.7.3")?;
     g.set("luaDebugMode", false)?;
     g.set("luaDeprecatedWarnings", false)?;
     g.set("buildTarget", "linux")?;
+
+    // Song/week globals (Psych Engine FunkinLua.hx lines 90-114)
+    // Defaults — lua_engine.rs overrides with actual values when available
+    g.set("curBpm", 120.0)?;
+    g.set("bpm", 120.0)?;
+    g.set("scrollSpeed", 1.0)?;
+    g.set("crochet", 500.0)?;
+    g.set("stepCrochet", 125.0)?;
+    g.set("songLength", 0.0)?;
+    g.set("songName", "")?;
+    g.set("songPath", "")?;
+    g.set("loadedSongName", "")?;
+    g.set("loadedSongPath", "")?;
+    g.set("chartPath", "")?;
+    g.set("curStage", "")?;
+    g.set("isStoryMode", false)?;
+    g.set("difficulty", 1)?;
+    g.set("difficultyName", "Normal")?;
+    g.set("difficultyPath", "")?;
+    g.set("difficultyNameTranslation", "Normal")?;
+    g.set("weekRaw", 0)?;
+    g.set("week", "")?;
+    g.set("seenCutscene", false)?;
+    g.set("hasVocals", true)?;
+    g.set("deaths", 0)?;
+    g.set("totalPlayed", 0)?;
+    g.set("totalNotesHit", 0)?;
+    g.set("guitarHeroSustains", false)?;
+    g.set("instakillOnMiss", false)?;
+    g.set("modFolder", "")?;
+    g.set("altAnim", false)?;
+    g.set("gfSection", false)?;
+    g.set("healthGainMult", 1.0)?;
+    g.set("healthLossMult", 1.0)?;
+    g.set("playbackRate", 1.0)?;
 
     register_sprite_functions(lua)?;
     register_property_functions(lua)?;
@@ -282,11 +318,24 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // scaleObject(tag, scaleX, scaleY)
-    globals.set("scaleObject", lua.create_function(|lua, (tag, sx, sy): (String, f64, f64)| {
+    globals.set("scaleObject", lua.create_function(|lua, (tag, sx, sy): (String, LuaValue, LuaValue)| {
         let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
         if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
-            tbl.set("scale_x", sx as f32)?;
-            tbl.set("scale_y", sy as f32)?;
+            let scale_x = match sx {
+                LuaValue::Number(n) => n as f32,
+                LuaValue::Integer(i) => i as f32,
+                LuaValue::String(s) => s.to_str()?.parse::<f32>().unwrap_or(1.0),
+                _ => 1.0,
+            };
+            let scale_y = match sy {
+                LuaValue::Number(n) => n as f32,
+                LuaValue::Integer(i) => i as f32,
+                LuaValue::String(s) => s.to_str()?.parse::<f32>().unwrap_or(scale_x), // Default to scale_x if invalid
+                LuaValue::Nil => scale_x, // Default to scale_x if omitted
+                _ => scale_x,
+            };
+            tbl.set("scale_x", scale_x)?;
+            tbl.set("scale_y", scale_y)?;
         }
         Ok(())
     })?)?;
@@ -370,7 +419,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // addAnimationByIndices(tag, anim, prefix, indices, fps, looping)
-    globals.set("addAnimationByIndices", lua.create_function(|lua, (tag, anim, prefix, indices, fps, looping): (String, String, String, LuaTable, Option<f64>, Option<bool>)| {
+    globals.set("addAnimationByIndices", lua.create_function(|lua, (tag, anim, prefix, indices, fps, looping): (String, String, String, LuaValue, Option<f64>, Option<bool>)| {
         let fps = fps.unwrap_or(24.0);
         let looping = looping.unwrap_or(true);
         let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
@@ -387,8 +436,23 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
             anim_tbl.set("prefix", prefix)?;
             anim_tbl.set("fps", fps)?;
             anim_tbl.set("looping", looping)?;
-            // Store indices as a Lua table
-            anim_tbl.set("indices", indices)?;
+            
+            // Store indices as a Lua table, handling string inputs
+            match &indices {
+                LuaValue::String(s) => {
+                    let parsed: LuaTable = lua.create_table()?;
+                    for (i, part) in s.to_string_lossy().split(',').enumerate() {
+                        if let Ok(idx) = part.trim().parse::<i32>() {
+                            parsed.set(i + 1, idx)?;
+                        }
+                    }
+                    anim_tbl.set("indices", parsed)?;
+                }
+                LuaValue::Table(t) => {
+                    anim_tbl.set("indices", t.clone())?;
+                }
+                _ => {}
+            }
             anims.set(anim, anim_tbl)?;
         }
         Ok(())
@@ -434,7 +498,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // addAnimation(tag, anim, frames, fps, looping) — same as addAnimationByPrefix for our purposes
-    globals.set("addAnimation", lua.create_function(|lua, (tag, anim, prefix, fps, looping): (String, String, String, Option<f64>, Option<bool>)| {
+    globals.set("addAnimation", lua.create_function(|lua, (tag, anim, prefix, fps, looping): (String, String, LuaValue, Option<f64>, Option<bool>)| {
         let fps = fps.unwrap_or(24.0);
         let looping = looping.unwrap_or(true);
         let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
@@ -448,7 +512,22 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 }
             };
             let anim_tbl = lua.create_table()?;
-            anim_tbl.set("prefix", prefix)?;
+            
+            // Handle prefix gracefully whether it's passed as a string or a table
+            match &prefix {
+                LuaValue::String(s) => {
+                    anim_tbl.set("prefix", s.to_str()?)?;
+                }
+                LuaValue::Table(t) => {
+                    // if they pass a table to addAnimation, they meant addAnimationByIndices.
+                    anim_tbl.set("prefix", "")?;
+                    anim_tbl.set("indices", t.clone())?;
+                }
+                _ => {
+                    anim_tbl.set("prefix", "")?;
+                }
+            }
+            
             anim_tbl.set("fps", fps)?;
             anim_tbl.set("looping", looping)?;
             anims.set(anim, anim_tbl)?;
@@ -604,10 +683,47 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // loadGraphic(tag, image)
-    globals.set("loadGraphic", lua.create_function(|_lua, (_tag, _image): (String, Option<String>)| {
+    // loadGraphic(tag, image, ?width, ?height)
+    // In Psych Engine this reloads (and optionally crops) the graphic for a sprite.
+    globals.set("loadGraphic", lua.create_function(|lua, (tag, image, width, height): (String, Option<String>, Option<f64>, Option<f64>)| {
+        if let (Some(_w), Some(_h)) = (width, height) {
+            // Store crop dimensions for the sprite — the render layer will apply them
+            if let Ok(tbl) = lua.globals().get::<LuaTable>("__sprite_data")?.get::<LuaTable>(&tag as &str) {
+                tbl.set("crop_w", _w)?;
+                tbl.set("crop_h", _h)?;
+            }
+        }
+        let _ = image; // image path — actual reload handled by render layer
         Ok(())
     })?)?;
+
+    // updateHitboxFromGroup(group, index) — deprecated Psych Engine function
+    // Calls updateHitbox on a member of a FlxTypedGroup (e.g. unspawnNotes[i]).
+    globals.set("updateHitboxFromGroup", lua.create_function(|_lua, (_group, _index): (String, i32)| {
+        // No-op: our note hitbox recalculation happens automatically on scale changes
+        Ok(())
+    })?)?;
+
+    // getColorFromRGB(r, g, b) — returns an integer color value
+    globals.set("getColorFromRGB", lua.create_function(|_lua, (r, g, b): (i32, i32, i32)| -> LuaResult<i64> {
+        Ok(((r.clamp(0, 255) as i64) << 16) | ((g.clamp(0, 255) as i64) << 8) | (b.clamp(0, 255) as i64))
+    })?)?;
+
+    // setSongTime(time) — seek to a position in the song (ms)
+    globals.set("setSongTime", lua.create_function(|lua, time: f64| {
+        let pending: LuaTable = lua.globals().get("__pending_audio")?;
+        pending.set("seek_to", time)?;
+        Ok(())
+    })?)?;
+
+    // reloadHealthBarColors() — no-op for now, health bar colors are managed differently
+    globals.set("reloadHealthBarColors", lua.create_function(|_lua, ()| { Ok(()) })?)?;
+
+    // changeIcon(character) — change the health icon for opponent/player
+    globals.set("changeIcon", lua.create_function(|_lua, _character: String| { Ok(()) })?)?;
+
+    // makeRating(sprite stuff) — create a rating popup sprite
+    globals.set("makeRating", lua.create_function(|_lua, _args: LuaMultiValue| { Ok(()) })?)?;
 
     Ok(())
 }
@@ -766,6 +882,11 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "alpha" => Ok(tbl.get::<LuaValue>("alpha").unwrap_or(LuaValue::Number(1.0))),
                     "visible" => Ok(tbl.get::<LuaValue>("visible").unwrap_or(LuaValue::Boolean(true))),
                     "angle" => Ok(tbl.get::<LuaValue>("angle").unwrap_or(LuaValue::Number(0.0))),
+                    "width" => Ok(tbl.get::<LuaValue>("width").unwrap_or(LuaValue::Number(0.0))),
+                    "text" => Ok(tbl.get::<LuaValue>("text").unwrap_or(LuaValue::String(lua.create_string("")?))),
+                    "size" => Ok(tbl.get::<LuaValue>("size").unwrap_or(LuaValue::Number(16.0))),
+                    "font" => Ok(tbl.get::<LuaValue>("font").unwrap_or(LuaValue::String(lua.create_string("")?))),
+                    "borderSize" => Ok(tbl.get::<LuaValue>("border").unwrap_or(LuaValue::Number(0.0))),
                     _ => Ok(tbl.get::<LuaValue>(format!("_prop_{field}")).unwrap_or(LuaNil)),
                 };
             }
@@ -803,7 +924,7 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
         // Handle dotted paths for game object arrays (e.g. "unspawnNotes.length")
         if prop == "unspawnNotes.length" || prop == "notes.length" {
             let g = lua.globals();
-            return Ok(g.get::<LuaValue>("__unspawnNotesLength").unwrap_or(LuaValue::Integer(0)));
+            return Ok(LuaValue::Integer(g.get::<i64>("__unspawnNotesLength").unwrap_or(0)));
         }
 
         // Known game properties — read from globals (which Lua scripts may have set)
@@ -887,6 +1008,29 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "mustPress" => Ok(note_tbl.get::<LuaValue>("mustPress").unwrap_or(LuaValue::Boolean(false))),
                     "isSustainNote" => Ok(note_tbl.get::<LuaValue>("isSustainNote").unwrap_or(LuaValue::Boolean(false))),
                     "sustainLength" => Ok(note_tbl.get::<LuaValue>("sustainLength").unwrap_or(LuaValue::Number(0.0))),
+                    // animation.curAnim.name — derive from note data
+                    "animation.curAnim.name" => {
+                        let lane: i64 = note_tbl.get("lane").unwrap_or(0);
+                        let is_sus: bool = note_tbl.get("isSustainNote").unwrap_or(false);
+                        let color = match lane % 4 {
+                            0 => "purple",
+                            1 => "blue",
+                            2 => "green",
+                            3 => "red",
+                            _ => "purple",
+                        };
+                        let name = if is_sus {
+                            // Check if note has an explicit anim override, otherwise assume hold body
+                            if let Ok(ovr) = note_tbl.get::<String>("animName") {
+                                ovr
+                            } else {
+                                format!("{color}hold")
+                            }
+                        } else {
+                            format!("{color}Scroll")
+                        };
+                        Ok(LuaValue::String(lua.create_string(&name)?))
+                    }
                     // Visual defaults for fields not yet overridden
                     "visible" => Ok(LuaValue::Boolean(true)),
                     "alpha" => Ok(LuaValue::Number(1.0)),
@@ -1013,6 +1157,17 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     globals.set("getVar", lua.create_function(|lua, name: String| -> LuaResult<LuaValue> {
+        let vars: LuaTable = lua.globals().get("__custom_vars")?;
+        Ok(vars.get::<LuaValue>(name).unwrap_or(LuaNil))
+    })?)?;
+
+    globals.set("setGlobalFromScript", lua.create_function(|lua, (_script_name, name, value): (String, String, LuaValue)| {
+        let vars: LuaTable = lua.globals().get("__custom_vars")?;
+        vars.set(name, value)?;
+        Ok(())
+    })?)?;
+
+    globals.set("getGlobalFromScript", lua.create_function(|lua, (_script_name, name): (String, String)| -> LuaResult<LuaValue> {
         let vars: LuaTable = lua.globals().get("__custom_vars")?;
         Ok(vars.get::<LuaValue>(name).unwrap_or(LuaNil))
     })?)?;
@@ -1350,16 +1505,50 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
     })?)?;
 
     // String utils
-    globals.set("stringStartsWith", lua.create_function(|_lua, (s, prefix): (String, String)| -> LuaResult<bool> {
-        Ok(s.starts_with(&prefix))
+    globals.set("stringStartsWith", lua.create_function(|_lua, (s, prefix): (LuaValue, LuaValue)| -> LuaResult<bool> {
+        let text = match s {
+            LuaValue::String(st) => st.to_str()?.to_string(),
+            LuaValue::Number(n) => n.to_string(),
+            LuaValue::Integer(i) => i.to_string(),
+            _ => String::new(),
+        };
+        let pref = match prefix {
+            LuaValue::String(st) => st.to_str()?.to_string(),
+            LuaValue::Number(n) => n.to_string(),
+            LuaValue::Integer(i) => i.to_string(),
+            _ => String::new(),
+        };
+        Ok(text.starts_with(&pref))
     })?)?;
 
-    globals.set("stringEndsWith", lua.create_function(|_lua, (s, suffix): (String, String)| -> LuaResult<bool> {
-        Ok(s.ends_with(&suffix))
+    globals.set("stringEndsWith", lua.create_function(|_lua, (s, suffix): (LuaValue, LuaValue)| -> LuaResult<bool> {
+        let text = match s {
+            LuaValue::String(st) => st.to_str()?.to_string(),
+            LuaValue::Number(n) => n.to_string(),
+            LuaValue::Integer(i) => i.to_string(),
+            _ => String::new(),
+        };
+        let suff = match suffix {
+            LuaValue::String(st) => st.to_str()?.to_string(),
+            LuaValue::Number(n) => n.to_string(),
+            LuaValue::Integer(i) => i.to_string(),
+            _ => String::new(),
+        };
+        Ok(text.ends_with(&suff))
     })?)?;
 
-    globals.set("stringSplit", lua.create_function(|lua, (s, sep): (String, String)| {
-        let parts: Vec<String> = s.split(&sep).map(|p| p.to_string()).collect();
+    globals.set("stringSplit", lua.create_function(|lua, (s, sep): (LuaValue, LuaValue)| {
+        let text = match s {
+            LuaValue::String(st) => st.to_str()?.to_string(),
+            LuaValue::Number(n) => n.to_string(),
+            LuaValue::Integer(i) => i.to_string(),
+            _ => String::new(),
+        };
+        let separator = match sep {
+            LuaValue::String(st) => st.to_str()?.to_string(),
+            _ => ",".to_string(),
+        };
+        let parts: Vec<String> = text.split(&separator).map(|p| p.to_string()).collect();
         let table = lua.create_table()?;
         for (i, part) in parts.iter().enumerate() {
             table.set(i + 1, part.as_str())?;
@@ -2203,6 +2392,18 @@ fn register_note_type_function(lua: &Lua) -> LuaResult<()> {
 
 /// Register no-op stubs for all remaining Psych Engine functions that scripts may call.
 fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
+    // getDataFromSave(saveName, key, ?default) — returns the default if not found.
+    // Critical for mod compatibility: many scripts pass a default value and branch on it.
+    lua.globals().set("getDataFromSave", lua.create_function(|_lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+        let mut args_iter = args.into_iter();
+        let _save_name = args_iter.next(); // save name — ignored
+        let _key = args_iter.next();        // key — ignored
+        // Return the third argument (default value) if provided, otherwise false
+        match args_iter.next() {
+            Some(val) => Ok(val),
+            None => Ok(LuaValue::Boolean(false)),
+        }
+    })?)?;
     // startVideo(filename, callback) — queue mid-song video playback
     // Pauses gameplay, plays video, then resumes on finish
     lua.globals().set("startVideo", lua.create_function(|lua, (filename, callback): (String, Option<String>)| {
@@ -2260,7 +2461,9 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         "gamepadJustPressed", "gamepadPressed", "gamepadReleased",
         "gamepadAnalogX", "gamepadAnalogY",
         // Save data
-        "initSaveData", "flushSaveData", "getDataFromSave", "setDataFromSave", "eraseSaveData",
+        "initSaveData", "flushSaveData", "setDataFromSave", "eraseSaveData",
+        // Presence / pause
+        "changePresence", "isPaused",
         // File I/O
         "checkFileExists", "getTextFromFile", "saveFile", "deleteFile", "directoryFileList",
         // Shader
@@ -2273,6 +2476,29 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         "getColorFromString", "getColorFromName",
         "setHudVisible",
         "addShake",
+        // Substates
+        "openCustomSubstate", "closeCustomSubstate",
+        "addLuaSpriteSubstate", "removeLuaSpriteSubstate",
+        "addLuaTextSubstate", "removeLuaTextSubstate",
+        "insertToCustomSubstate",
+        // Shader (runtime)
+        "createRuntimeShader",
+        // Text queries
+        "getTextFont", "getTextSize", "getTextWidth",
+        // Sound
+        "getSoundPitch", "setSoundPitch",
+        // Pixel
+        "getPixelColor",
+        // Atlas
+        "loadAnimateAtlas", "loadFrames", "loadMultipleFrames",
+        "makeFlxAnimateSprite",
+        "addAnimationBySymbol", "addAnimationBySymbolIndices",
+        // Deprecated aliases (Psych Engine DeprecatedFunctions.hx)
+        "luaSpriteMakeGraphic", "luaSpriteAddAnimationByPrefix",
+        "luaSpriteAddAnimationByIndices", "luaSpritePlayAnimation",
+        "setLuaSpriteCamera", "setLuaSpriteScrollFactor",
+        "scaleLuaSprite", "getPropertyLuaSprite", "setPropertyLuaSprite",
+        "musicFadeIn", "musicFadeOut",
         // Timers
         "onTweenCompleted", "onTimerCompleted", "onSoundFinished",
     ] {

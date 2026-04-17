@@ -51,6 +51,42 @@ impl LuaScript {
                 .map_err(|e| format!("Failed to set modcharts: {}", e))?;
             globals.set("difficulty", 1) // normal = 1
                 .map_err(|e| format!("Failed to set difficulty: {}", e))?;
+
+            // Song metadata globals — override the defaults from register_all
+            let song_path = state.song_name.to_lowercase().replace(' ', "-");
+            globals.set("songPath", song_path.clone())
+                .map_err(|e| format!("Failed to set songPath: {}", e))?;
+            globals.set("loadedSongName", state.song_name.clone())
+                .map_err(|e| format!("Failed to set loadedSongName: {}", e))?;
+            globals.set("loadedSongPath", song_path)
+                .map_err(|e| format!("Failed to set loadedSongPath: {}", e))?;
+            globals.set("curStage", state.cur_stage.clone())
+                .map_err(|e| format!("Failed to set curStage: {}", e))?;
+            globals.set("songLength", state.song_length)
+                .map_err(|e| format!("Failed to set songLength: {}", e))?;
+            globals.set("bpm", state.bpm)
+                .map_err(|e| format!("Failed to set bpm: {}", e))?;
+            globals.set("curBpm", state.bpm)
+                .map_err(|e| format!("Failed to set curBpm: {}", e))?;
+            globals.set("scrollSpeed", state.scroll_speed)
+                .map_err(|e| format!("Failed to set scrollSpeed: {}", e))?;
+            if state.bpm > 0.0 {
+                let crochet = 60000.0 / state.bpm;
+                globals.set("crochet", crochet)
+                    .map_err(|e| format!("Failed to set crochet: {}", e))?;
+                globals.set("stepCrochet", crochet / 4.0)
+                    .map_err(|e| format!("Failed to set stepCrochet: {}", e))?;
+            }
+            if !state.difficulty_name.is_empty() {
+                globals.set("difficultyName", state.difficulty_name.clone())
+                    .map_err(|e| format!("Failed to set difficultyName: {}", e))?;
+            }
+            if !state.mod_folder.is_empty() {
+                globals.set("modFolder", state.mod_folder.clone())
+                    .map_err(|e| format!("Failed to set modFolder: {}", e))?;
+            }
+            globals.set("downscroll", state.downscroll)
+                .map_err(|e| format!("Failed to set downscroll: {}", e))?;
         }
 
         // Store image search roots so Lua functions can resolve image paths
