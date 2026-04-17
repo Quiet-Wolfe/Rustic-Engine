@@ -9,6 +9,14 @@ use serde::{Deserialize, Serialize};
 /// [left, down, up, right] — matching Psych Engine's input layout.
 pub const LOOKAHEAD_NOTES: usize = 4;
 
+/// Sentinel for "no upcoming note in this slot". Chosen as a large finite
+/// value (roughly a full minute of song) instead of `f32::INFINITY` because
+/// JSON has no standard infinity encoding — serde silently maps `Infinity`
+/// to `null`, which then fails to deserialize back into an `f32`. A big
+/// finite number round-trips cleanly and still reads as "very far in the
+/// future" to any policy that clamps its inputs.
+pub const NO_NOTE_TIME: f32 = 60_000.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
     /// Song position in ms. Lets policies reason about section/beat phase.
@@ -20,7 +28,7 @@ pub struct Observation {
     /// Which keys the engine currently sees as pressed.
     pub keys_held: [bool; 4],
     /// Next `LOOKAHEAD_NOTES` notes per lane. (time_until_hit_ms, sustain_ms).
-    /// Shorter slots are padded with (f32::INFINITY, 0.0).
+    /// Shorter slots are padded with `(NO_NOTE_TIME, 0.0)`.
     pub upcoming: [[(f32, f32); LOOKAHEAD_NOTES]; 4],
 }
 
@@ -31,7 +39,7 @@ impl Observation {
             bpm: 0.0,
             health: 1.0,
             keys_held: [false; 4],
-            upcoming: [[(f32::INFINITY, 0.0); LOOKAHEAD_NOTES]; 4],
+            upcoming: [[(NO_NOTE_TIME, 0.0); LOOKAHEAD_NOTES]; 4],
         }
     }
 }

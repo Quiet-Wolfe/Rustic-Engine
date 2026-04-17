@@ -35,7 +35,9 @@ rustic-rl = { workspace = true, optional = true }
 [features]
 default = []
 # Pulls in the RL harness and exposes --rustic-rl / --rl-config CLI flags.
-rl = ["dep:rustic-rl"]
+# Forwarding `rl-train` enables the candle-backed Harness (policy network,
+# REINFORCE trainer, BC pretrainer) — the minimum for live in-engine training.
+rl = ["dep:rustic-rl", "rustic-rl/rl-train"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6.0", features = ["native-activity"] }

@@ -614,5 +614,37 @@ impl PlayScreen {
             self.process_lua_extensions();
             self.process_char_positions();
         }
+
+        #[cfg(feature = "rl")]
+        self.attach_rl_harness();
+    }
+
+    /// Attach an RL harness when the process-wide `--rustic-rl` switch is on.
+    /// Silently no-op when disabled — keeps normal play paths untouched.
+    #[cfg(feature = "rl")]
+    fn attach_rl_harness(&mut self) {
+        let Some(opts) = crate::rl_boot::get() else { return; };
+        let mut cfg = if opts.control_gameplay {
+            rustic_rl::HarnessConfig::live_train()
+        } else {
+            rustic_rl::HarnessConfig::record_only()
+        };
+        cfg.record_demos = true;
+
+        match rustic_rl::Harness::new(cfg, &self.song_name, &self.difficulty) {
+            Ok(mut h) => {
+                if opts.bc_warmup_epochs > 0 {
+                    if let Err(e) = h.bootstrap_from_disk(opts.bc_warmup_epochs) {
+                        log::warn!("rustic-rl: BC warm-up failed: {e}");
+                    }
+                }
+                log::info!(
+                    "rustic-rl: harness attached (control={}, song={}/{})",
+                    opts.control_gameplay, self.song_name, self.difficulty
+                );
+                self.rl_harness = Some(h);
+            }
+            Err(e) => log::warn!("rustic-rl: failed to create harness: {e}"),
+        }
     }
 }

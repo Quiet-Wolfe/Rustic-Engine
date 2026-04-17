@@ -1,6 +1,9 @@
 pub mod screen;
 pub mod screens;
 
+#[cfg(feature = "rl")]
+pub mod rl_boot;
+
 use std::sync::Arc;
 use std::time::Instant;
 

@@ -5,6 +5,9 @@ mod story;
 mod update;
 mod draw;
 
+#[cfg(feature = "rl")]
+mod rl;
+
 use std::collections::HashMap;
 
 use winit::event::TouchPhase;
@@ -414,6 +417,13 @@ pub struct PlayScreen {
 
     /// GF dance frequency override (0 = use character default, 1 = every beat, 2 = every 2 beats)
     pub(super) gf_dance_freq: i32,
+
+    /// Optional RL harness. Owns the policy, REINFORCE trainer, and
+    /// demo recorder. Attached at `init_inner` time when the `rustic-rl`
+    /// global opts are set; when None, PlayScreen behaves exactly as
+    /// before.
+    #[cfg(feature = "rl")]
+    pub(super) rl_harness: Option<rustic_rl::Harness>,
 }
 
 impl PlayScreen {
@@ -506,6 +516,8 @@ impl PlayScreen {
             story: None,
             cutscene: None,
             gf_dance_freq: 0,
+            #[cfg(feature = "rl")]
+            rl_harness: None,
         }
     }
 

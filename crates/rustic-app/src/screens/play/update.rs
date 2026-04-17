@@ -194,6 +194,11 @@ impl PlayScreen {
         }
         self.process_audio_requests();
 
+        // === RL: observe and act (before gameplay update so presses feed
+        //       into this tick's hit-detection).
+        #[cfg(feature = "rl")]
+        self.rl_pre_update();
+
         // === Call into gameplay logic ===
         let audio_pos = if self.game.song_started {
             self.audio.as_ref().map(|a| a.position_ms())
@@ -202,6 +207,10 @@ impl PlayScreen {
         };
         let audio_finished = self.audio.as_ref().is_some_and(|a| a.is_finished());
         self.game.update(dt, audio_pos, audio_finished);
+
+        // === RL: pair reward + record step after the game state has advanced.
+        #[cfg(feature = "rl")]
+        self.rl_post_update();
 
         // === Dispatch chart events (onEvent) ===
         let song_pos = self.game.conductor.song_position;
