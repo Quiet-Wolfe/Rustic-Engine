@@ -681,6 +681,9 @@ impl PlayScreen {
             }
         }
 
+        #[cfg(feature = "rl")]
+        self.draw_rl_hud(gpu);
+
         gpu.end_frame();
     }
 

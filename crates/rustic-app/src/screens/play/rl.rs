@@ -5,6 +5,7 @@
 //! Kept isolated so the feature-gate stays legible. Only compiled when
 //! `rustic-app` is built with `--features rl`.
 
+use rustic_render::gpu::GpuState;
 use rustic_rl::{build_observation, Action, UpcomingNote};
 
 use super::PlayScreen;
@@ -85,12 +86,73 @@ impl PlayScreen {
         if let Err(e) = harness.end_step(score, health, human_action) {
             log::warn!("rustic-rl: end_step failed: {e}");
         }
+
+        // Auto-restart: when RL is driving the run, short-circuit death and
+        // song-end back into another attempt so training doesn't halt at the
+        // death screen or results screen. Flush the recorder first so the
+        // finished run is persisted.
+        if self.game.dead || self.game.song_ended {
+            harness.flush();
+            self.wants_restart = true;
+            self.game.dead = false;
+            self.game.song_ended = false;
+            // Clear the death screen state machine so next_screen doesn't wait
+            // for the confirm animation.
+            self.death = None;
+        }
     }
 
     /// Flush any buffered demo steps. Called from song end / screen drop.
     pub(super) fn rl_flush(&mut self) {
         if let Some(h) = self.rl_harness.as_mut() {
             h.flush();
+        }
+    }
+
+    /// Small top-left overlay showing live training telemetry. Human-only —
+    /// the observation the agent sees does not include any of this (it sees
+    /// only gameplay state), so there's no information leakage.
+    pub(super) fn draw_rl_hud(&self, gpu: &mut GpuState) {
+        let Some(harness) = self.rl_harness.as_ref() else { return };
+        let white = [1.0, 1.0, 1.0, 0.9];
+        let dim = [0.85, 0.85, 0.85, 0.75];
+
+        let x = 14.0;
+        let mut y = 14.0;
+        let line_h = 18.0;
+
+        // Background for readability.
+        gpu.push_colored_quad(x - 6.0, y - 6.0, 290.0, line_h * 5.0 + 12.0, [0.0, 0.0, 0.0, 0.45]);
+        gpu.draw_batch(None);
+
+        let mode = if harness.control_gameplay() { "AGENT" } else { "RECORD" };
+        gpu.draw_text(&format!("RL · {mode}"), x, y, 16.0, white);
+        y += line_h;
+
+        gpu.draw_text(
+            &format!("buffer {}/{}", harness.trajectory_len(), 64),
+            x, y, 14.0, dim,
+        );
+        y += line_h;
+
+        gpu.draw_text(
+            &format!("demos this run: {}", harness.demo_step_count()),
+            x, y, 14.0, dim,
+        );
+        y += line_h;
+
+        if let Some(stats) = harness.last_stats {
+            gpu.draw_text(
+                &format!("upd #{}  loss {:.3}", stats.step, stats.loss),
+                x, y, 14.0, dim,
+            );
+            y += line_h;
+            gpu.draw_text(
+                &format!("reward µ {:+.3}  Σ {:+.2}", stats.mean_reward, stats.total_reward),
+                x, y, 14.0, dim,
+            );
+        } else {
+            gpu.draw_text("no updates yet", x, y, 14.0, dim);
         }
     }
 }
