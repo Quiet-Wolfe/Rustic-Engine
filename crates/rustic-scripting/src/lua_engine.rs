@@ -29,6 +29,10 @@ impl LuaScript {
     pub fn load(path: &Path, state: &mut ScriptState) -> Result<Self, String> {
         let lua = Lua::new();
 
+        // Register Lua functions first so they don't overwrite our state
+        lua_functions::register_all(&lua)
+            .map_err(|e| format!("Failed to register Lua functions: {}", e))?;
+
         // Set built-in global variables
         {
             let globals = lua.globals();
@@ -100,10 +104,6 @@ impl LuaScript {
             lua.globals().set("__image_roots", roots_table)
                 .map_err(|e| format!("Failed to set __image_roots: {}", e))?;
         }
-
-        // Register Lua functions
-        lua_functions::register_all(&lua)
-            .map_err(|e| format!("Failed to register Lua functions: {}", e))?;
 
         // Execute the script file
         let source = std::fs::read_to_string(path)

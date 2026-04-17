@@ -699,7 +699,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
 
     // updateHitboxFromGroup(group, index) — deprecated Psych Engine function
     // Calls updateHitbox on a member of a FlxTypedGroup (e.g. unspawnNotes[i]).
-    globals.set("updateHitboxFromGroup", lua.create_function(|_lua, (_group, _index): (String, i32)| {
+    globals.set("updateHitboxFromGroup", lua.create_function(|_lua, (_group, _index): (LuaValue, LuaValue)| {
         // No-op: our note hitbox recalculation happens automatically on scale changes
         Ok(())
     })?)?;
@@ -2418,6 +2418,10 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         pending.set(len, entry)?;
         Ok(())
     })?)?;
+    lua.globals().set("changePresence", lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> {
+        Ok(LuaNil)
+    })?)?;
+
     let noop = lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> {
         Ok(LuaNil)
     })?;
