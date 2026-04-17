@@ -2,8 +2,11 @@
 name = "rustic-rl"
 version = "0.1.0"
 edition = "2021"
+description = "Optional RL harness for RusticV2. Skeleton only — inference-in-engine, training out-of-engine."
 
 [dependencies]
 rand = "0.9"
 rand_distr = "0.5"
 log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

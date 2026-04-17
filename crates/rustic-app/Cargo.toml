@@ -30,6 +30,12 @@ bytemuck = { workspace = true }
 image = { workspace = true }
 wgpu = { workspace = true }
 libc = "0.2"
+rustic-rl = { workspace = true, optional = true }
+
+[features]
+default = []
+# Pulls in the RL harness and exposes --rustic-rl / --rl-config CLI flags.
+rl = ["dep:rustic-rl"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6.0", features = ["native-activity"] }
