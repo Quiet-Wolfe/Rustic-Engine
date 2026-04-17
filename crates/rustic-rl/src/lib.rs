@@ -9,6 +9,9 @@ pub mod agent;
 pub mod network;
 pub mod observe;
 
+#[cfg(feature = "rl-train")]
+pub mod arch;
+
 pub use agent::{Config, IdlePolicy, NetworkPolicy, Policy, PolicyKind, RLAgent, RandomPolicy};
 pub use network::{greedy_action, Network, NullNetwork};
 pub use observe::{Action, Observation, LOOKAHEAD_NOTES};
