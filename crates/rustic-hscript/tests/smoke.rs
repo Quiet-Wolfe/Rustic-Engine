@@ -1,5 +1,9 @@
 use rustic_hscript::{Interp, NoopHost, Value};
 
+fn make() -> (Interp, NoopHost) {
+    (Interp::new(), NoopHost)
+}
+
 #[test]
 fn runs_simple_arithmetic_function() {
     let src = r#"
@@ -8,11 +12,11 @@ fn runs_simple_arithmetic_function() {
         }
     "#;
 
-    let mut interp = Interp::new(NoopHost);
-    interp.load("test.hx", src).expect("load");
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
 
     let out = interp
-        .call("add", &[Value::Int(3), Value::Int(4)])
+        .call("add", &[Value::Int(3), Value::Int(4)], &mut host)
         .expect("call")
         .expect("add defined");
 
@@ -32,10 +36,10 @@ fn while_loop_with_break() {
         }
     "#;
 
-    let mut interp = Interp::new(NoopHost);
-    interp.load("test.hx", src).expect("load");
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
     let out = interp
-        .call("count", &[])
+        .call("count", &[], &mut host)
         .expect("call")
         .expect("count defined");
     assert!(matches!(out, Value::Int(5)), "got {out:?}");
@@ -53,13 +57,12 @@ fn for_range_loop_sums() {
         }
     "#;
 
-    let mut interp = Interp::new(NoopHost);
-    interp.load("test.hx", src).expect("load");
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
     let out = interp
-        .call("sumTo", &[Value::Int(5)])
+        .call("sumTo", &[Value::Int(5)], &mut host)
         .expect("call")
         .expect("sumTo defined");
-    // 0 + 1 + 2 + 3 + 4 = 10
     assert!(matches!(out, Value::Int(10)), "got {out:?}");
 }
 
@@ -73,11 +76,11 @@ fn top_level_var_is_captured_by_function() {
         }
     "#;
 
-    let mut interp = Interp::new(NoopHost);
-    interp.load("test.hx", src).expect("load");
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
 
-    let a = interp.call("bump", &[]).unwrap().unwrap();
-    let b = interp.call("bump", &[]).unwrap().unwrap();
+    let a = interp.call("bump", &[], &mut host).unwrap().unwrap();
+    let b = interp.call("bump", &[], &mut host).unwrap().unwrap();
 
     assert!(matches!(a, Value::Int(1)), "first bump: {a:?}");
     assert!(matches!(b, Value::Int(2)), "second bump: {b:?}");
@@ -91,11 +94,57 @@ fn string_interpolation_works() {
         }
     "#;
 
-    let mut interp = Interp::new(NoopHost);
-    interp.load("test.hx", src).expect("load");
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
     let out = interp
-        .call("greet", &[Value::from_str("psych")])
+        .call("greet", &[Value::from_str("psych")], &mut host)
         .unwrap()
         .unwrap();
     assert_eq!(out.as_str(), Some("hello, psych!"));
+}
+
+/// Host with a mutable counter that scripts can read/write as `hostCounter`.
+/// Exercises the per-call host pattern.
+#[derive(Default)]
+struct CountingHost {
+    counter: i64,
+}
+
+impl rustic_hscript::HostBridge for CountingHost {
+    fn global_get(&mut self, name: &str) -> Result<Value, String> {
+        match name {
+            "hostCounter" => Ok(Value::Int(self.counter)),
+            _ => Ok(Value::Null),
+        }
+    }
+
+    fn global_set(&mut self, name: &str, value: &Value) -> Result<bool, String> {
+        if name == "hostCounter" {
+            self.counter = value.as_i64().unwrap_or(0);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+#[test]
+fn host_globals_round_trip() {
+    let src = r#"
+        function bumpHost() {
+            hostCounter = hostCounter + 1;
+            return hostCounter;
+        }
+    "#;
+
+    let mut interp = Interp::new();
+    let mut host = CountingHost::default();
+    interp.load("test.hx", src, &mut host).expect("load");
+
+    let a = interp.call("bumpHost", &[], &mut host).unwrap().unwrap();
+    let b = interp.call("bumpHost", &[], &mut host).unwrap().unwrap();
+
+    assert!(matches!(a, Value::Int(1)), "first: {a:?}");
+    assert!(matches!(b, Value::Int(2)), "second: {b:?}");
+    assert_eq!(host.counter, 2, "host saw the write");
 }

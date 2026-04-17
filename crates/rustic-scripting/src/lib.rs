@@ -1,17 +1,27 @@
+mod hscript_engine;
 mod lua_engine;
 mod lua_functions;
 mod script_state;
 pub mod tweens;
 
+pub use hscript_engine::HScriptEngine;
 pub use lua_engine::LuaScript;
 pub use script_state::{AudioRequest, ScriptState, LuaSprite, LuaSpriteKind, LuaValue, StrumProps, NoteTypeRegistration};
 pub use tweens::{TweenManager, Tween, TweenProperty, EaseFunc, LuaTimer};
 
 use std::path::{Path, PathBuf};
 
-/// Manages all Lua scripts for a song (stage script + song scripts).
+/// A loaded script — dispatches Lua vs HScript by file extension at load time.
+/// Callbacks are fanned out across both flavors so `onUpdate` etc. fire
+/// regardless of which language the mod used.
+enum Script {
+    Lua(LuaScript),
+    HScript(HScriptEngine),
+}
+
+/// Manages all scripts for a song (stage + song + custom event scripts).
 pub struct ScriptManager {
-    scripts: Vec<LuaScript>,
+    scripts: Vec<Script>,
     /// Shared mutable state that Lua functions read/write.
     pub state: ScriptState,
 }
@@ -30,6 +40,24 @@ impl ScriptManager {
         self.state.is_story_mode = is_story_mode;
     }
 
+    /// Set song metadata globals (BPM, stage, scroll speed, difficulty, etc.).
+    pub fn set_song_metadata(
+        &mut self,
+        bpm: f64,
+        scroll_speed: f64,
+        song_length: f64,
+        cur_stage: &str,
+        difficulty_name: &str,
+        mod_folder: &str,
+    ) {
+        self.state.bpm = bpm;
+        self.state.scroll_speed = scroll_speed;
+        self.state.song_length = song_length;
+        self.state.cur_stage = cur_stage.to_string();
+        self.state.difficulty_name = difficulty_name.to_string();
+        self.state.mod_folder = mod_folder.to_string();
+    }
+
     /// Set character names (for Lua globals and runHaxeCode switch resolution).
     pub fn set_char_names(&mut self, bf: &str, dad: &str, gf: &str) {
         self.state.bf_name = bf.to_string();
@@ -42,15 +70,34 @@ impl ScriptManager {
         self.state.image_roots = roots;
     }
 
-    /// Load a Lua script from a file path.
+    /// Load a script file. Dispatches by extension: `.hx` → HScript,
+    /// anything else → Lua.
     pub fn load_script(&mut self, path: &Path) {
-        match LuaScript::load(path, &mut self.state) {
-            Ok(script) => {
-                log::info!("Loaded Lua script: {:?}", path);
-                self.scripts.push(script);
+        let is_hscript = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("hx"))
+            .unwrap_or(false);
+
+        if is_hscript {
+            match HScriptEngine::load(path, &mut self.state) {
+                Ok(engine) => {
+                    log::info!("Loaded HScript: {:?}", path);
+                    self.scripts.push(Script::HScript(engine));
+                }
+                Err(e) => {
+                    log::error!("Failed to load HScript {:?}: {}", path, e);
+                }
             }
-            Err(e) => {
-                log::error!("Failed to load Lua script {:?}: {}", path, e);
+        } else {
+            match LuaScript::load(path, &mut self.state) {
+                Ok(script) => {
+                    log::info!("Loaded Lua script: {:?}", path);
+                    self.scripts.push(Script::Lua(script));
+                }
+                Err(e) => {
+                    log::error!("Failed to load Lua script {:?}: {}", path, e);
+                }
             }
         }
     }
@@ -58,8 +105,12 @@ impl ScriptManager {
     /// Call a named callback on all scripts with no arguments.
     pub fn call(&mut self, callback: &str) {
         for script in &mut self.scripts {
-            if let Err(e) = script.call_callback(callback, &mut self.state, &[]) {
-                log::error!("Lua callback '{}' error: {}", callback, e);
+            let result = match script {
+                Script::Lua(s) => s.call_callback(callback, &mut self.state, &[]),
+                Script::HScript(s) => s.call_callback(callback, &mut self.state, &[]),
+            };
+            if let Err(e) = result {
+                log::error!("callback '{}' error: {}", callback, e);
             }
         }
     }
@@ -67,17 +118,37 @@ impl ScriptManager {
     /// Call a named callback on all scripts, passing `elapsed` (dt) as the first arg.
     pub fn call_with_elapsed(&mut self, callback: &str, elapsed: f64) {
         for script in &mut self.scripts {
-            if let Err(e) = script.call_callback(callback, &mut self.state, &[elapsed]) {
-                log::error!("Lua callback '{}' error: {}", callback, e);
+            let result = match script {
+                Script::Lua(s) => s.call_callback(callback, &mut self.state, &[elapsed]),
+                Script::HScript(s) => s.call_callback(callback, &mut self.state, &[elapsed]),
+            };
+            if let Err(e) = result {
+                log::error!("callback '{}' error: {}", callback, e);
             }
         }
     }
 
     /// Call a note-hit callback with Psych Engine's standard arguments.
+    /// HScript side receives them as four positional args in the same order.
     pub fn call_note_hit(&mut self, callback: &str, members_index: usize, note_data: usize, note_type: &str, is_sustain: bool) {
         for script in &mut self.scripts {
-            if let Err(e) = script.call_note_callback(callback, &mut self.state, members_index, note_data, note_type, is_sustain) {
-                log::error!("Lua callback '{}' error: {}", callback, e);
+            let result = match script {
+                Script::Lua(s) => s.call_note_callback(
+                    callback, &mut self.state, members_index, note_data, note_type, is_sustain,
+                ),
+                Script::HScript(s) => {
+                    // HScript bridge takes numeric-only or string-only right now;
+                    // wrap as strings so mods can use them uniformly.
+                    let mi = members_index.to_string();
+                    let nd = note_data.to_string();
+                    let sus = if is_sustain { "true" } else { "false" };
+                    s.call_callback_str(
+                        callback, &mut self.state, &[&mi, &nd, note_type, sus],
+                    )
+                }
+            };
+            if let Err(e) = result {
+                log::error!("callback '{}' error: {}", callback, e);
             }
         }
     }
@@ -151,7 +222,15 @@ impl ScriptManager {
         let completed: Vec<(String, String)> = self.state.tweens.completed_tweens.drain(..).collect();
         for (tag, vars) in completed {
             for script in &mut self.scripts {
-                if let Err(e) = script.call_callback_str("onTweenCompleted", &mut self.state, &[&tag, &vars]) {
+                let result = match script {
+                    Script::Lua(s) => s.call_callback_str(
+                        "onTweenCompleted", &mut self.state, &[&tag, &vars],
+                    ),
+                    Script::HScript(s) => s.call_callback_str(
+                        "onTweenCompleted", &mut self.state, &[&tag, &vars],
+                    ),
+                };
+                if let Err(e) = result {
                     log::error!("onTweenCompleted error: {}", e);
                 }
             }
@@ -161,9 +240,19 @@ impl ScriptManager {
         let timer_completed: Vec<(String, i32, i32)> = self.state.tweens.completed_timers.drain(..).collect();
         for (tag, loops_done, loops_left) in timer_completed {
             for script in &mut self.scripts {
-                if let Err(e) = script.call_callback_with_mixed(
-                    "onTimerCompleted", &mut self.state, &tag, loops_done, loops_left,
-                ) {
+                let result = match script {
+                    Script::Lua(s) => s.call_callback_with_mixed(
+                        "onTimerCompleted", &mut self.state, &tag, loops_done, loops_left,
+                    ),
+                    Script::HScript(s) => {
+                        let done = loops_done.to_string();
+                        let left = loops_left.to_string();
+                        s.call_callback_str(
+                            "onTimerCompleted", &mut self.state, &[&tag, &done, &left],
+                        )
+                    }
+                };
+                if let Err(e) = result {
                     log::error!("onTimerCompleted error: {}", e);
                 }
             }
@@ -174,52 +263,78 @@ impl ScriptManager {
         !self.scripts.is_empty()
     }
 
-    /// Populate note data into all Lua VMs so modcharts can query/modify individual notes.
+    /// Populate note data into all script VMs so modcharts can query/modify
+    /// individual notes. HScript side stores the same info but doesn't expose
+    /// a per-note API yet, so it's a no-op there.
     /// Each tuple is (strum_time, lane, must_press, sustain_length).
     pub fn populate_note_data(&mut self, notes: &[(f64, usize, bool, f64)]) {
         self.state.note_count = notes.len();
         self.state.note_read_data = notes.to_vec();
 
         for script in &mut self.scripts {
-            script.populate_note_data(notes);
+            if let Script::Lua(s) = script {
+                s.populate_note_data(notes);
+            }
         }
     }
 
     /// Set a numeric global on all loaded scripts (like Psych Engine's setOnScripts).
     pub fn set_on_all(&mut self, name: &str, value: f64) {
         for script in &mut self.scripts {
-            script.set_global_number(name, value);
+            match script {
+                Script::Lua(s) => s.set_global_number(name, value),
+                Script::HScript(s) => s.set_global_number(name, value),
+            }
         }
     }
 
     /// Set a boolean global on all loaded scripts.
     pub fn set_bool_on_all(&mut self, name: &str, value: bool) {
         for script in &mut self.scripts {
-            script.set_global_bool(name, value);
+            match script {
+                Script::Lua(s) => s.set_global_bool(name, value),
+                Script::HScript(s) => s.set_global_bool(name, value),
+            }
         }
     }
 
     /// Set a string global on all loaded scripts.
     pub fn set_str_on_all(&mut self, name: &str, value: &str) {
         for script in &mut self.scripts {
-            script.set_global_string(name, value);
+            match script {
+                Script::Lua(s) => s.set_global_string(name, value),
+                Script::HScript(s) => s.set_global_string(name, value),
+            }
         }
     }
 
     /// Call onEvent(name, value1, value2) on all scripts.
     pub fn call_event(&mut self, name: &str, value1: &str, value2: &str) {
         for script in &mut self.scripts {
-            if let Err(e) = script.call_callback_str("onEvent", &mut self.state, &[name, value1, value2]) {
+            let result = match script {
+                Script::Lua(s) => s.call_callback_str(
+                    "onEvent", &mut self.state, &[name, value1, value2],
+                ),
+                Script::HScript(s) => s.call_callback_str(
+                    "onEvent", &mut self.state, &[name, value1, value2],
+                ),
+            };
+            if let Err(e) = result {
                 log::error!("onEvent error: {}", e);
             }
         }
     }
 
-    /// Call a named Lua function with a single string argument across all scripts.
-    /// Used by the "Wildcard" event type (VS Retrospecter) to invoke arbitrary Lua functions.
+    /// Call a named function with a single string argument across all scripts.
+    /// Used by the "Wildcard" event type (VS Retrospecter) to invoke arbitrary
+    /// script functions by name.
     pub fn call_lua_function(&mut self, func_name: &str, arg: &str) {
         for script in &mut self.scripts {
-            if let Err(e) = script.call_callback_str(func_name, &mut self.state, &[arg]) {
+            let result = match script {
+                Script::Lua(s) => s.call_callback_str(func_name, &mut self.state, &[arg]),
+                Script::HScript(s) => s.call_callback_str(func_name, &mut self.state, &[arg]),
+            };
+            if let Err(e) = result {
                 log::warn!("Wildcard {}({}): {}", func_name, arg, e);
             }
         }
