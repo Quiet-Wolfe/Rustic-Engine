@@ -4,24 +4,28 @@ use super::super::{GAME_H, GAME_W};
 
 pub(super) fn draw_backing_text_flow(gpu: &mut GpuState, frame: usize, alpha: f32) {
     let messages = ["BIG SHOES", "YEAH", "YES YES YES", "GET IT"];
-    let drift = (frame as f32 * 1.15) % 360.0;
+    let drift = (frame as f32 * 0.7) % 190.0;
+    let text_left = 18.0;
+    let text_width = 595.0;
     for row in 0..5 {
         let y = 126.0 + row as f32 * 72.0;
-        let offset = if row % 2 == 0 { drift } else { 360.0 - drift };
+        let row_drift = if row % 2 == 0 { drift } else { 190.0 - drift };
         for col in 0..4 {
             let msg = messages[(row + col) % messages.len()];
-            let x = -330.0 + col as f32 * 250.0 + offset;
+            let wrapped = (col as f32 * 190.0 + row_drift) % text_width;
+            let x = text_left + wrapped;
             gpu.draw_text(msg, x, y, 38.0, [1.0, 0.73, 0.04, 0.18 * alpha]);
         }
     }
 }
 
 pub(super) fn draw_transition_wedge(gpu: &mut GpuState, cutout_w: f32, alpha: f32) {
+    let seam_x = cutout_w * 0.74;
     let positions = [
-        [cutout_w - 105.0, 0.0],
-        [cutout_w + 132.0, 0.0],
-        [cutout_w + 24.0, GAME_H],
-        [cutout_w - 214.0, GAME_H],
+        [seam_x - 30.0, 0.0],
+        [seam_x + 122.0, 0.0],
+        [seam_x - 42.0, GAME_H],
+        [seam_x - 194.0, GAME_H],
     ];
     gpu.push_raw_quad(
         positions,
