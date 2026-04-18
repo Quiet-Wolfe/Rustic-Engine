@@ -1,6 +1,7 @@
 mod init;
 mod input;
 mod pause;
+mod pause_draw;
 mod story;
 mod update;
 mod draw;
