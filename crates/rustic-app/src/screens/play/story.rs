@@ -44,4 +44,3 @@ impl StorySession {
         self.total_score + final_score
     }
 }
-

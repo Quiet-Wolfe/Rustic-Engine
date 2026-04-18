@@ -21,7 +21,13 @@ impl GameplayChangersState {
         gpu.push_colored_quad(180.0, 160.0, 920.0, 360.0, [0.0, 0.0, 0.0, 0.86]);
         gpu.draw_batch(None);
 
-        gpu.draw_text("GAMEPLAY CHANGERS", 320.0, 200.0, 34.0, [1.0, 1.0, 1.0, 1.0]);
+        gpu.draw_text(
+            "GAMEPLAY CHANGERS",
+            320.0,
+            200.0,
+            34.0,
+            [1.0, 1.0, 1.0, 1.0],
+        );
         gpu.draw_text(
             "Press CTRL or ESCAPE to close",
             320.0,
@@ -80,6 +86,9 @@ impl GameplayChangersState {
 }
 
 fn on_off(enabled: bool) -> &'static str {
-    if enabled { "ON" } else { "OFF" }
+    if enabled {
+        "ON"
+    } else {
+        "OFF"
+    }
 }
-

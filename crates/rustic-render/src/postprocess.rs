@@ -2,9 +2,9 @@
 //!
 //! Supports both built-in effects (VCR/CRT) and runtime-loaded GLSL shaders from mods.
 
+use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
-use bytemuck::{Pod, Zeroable};
 
 /// Uniform data passed to every post-processing shader.
 #[repr(C)]
@@ -202,42 +202,44 @@ impl PostProcessor {
         });
 
         // Texture bind group layout: screen texture + sampler
-        let texture_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("PostProcess Texture Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let texture_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("PostProcess Texture Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
 
         // Uniform bind group layout
-        let uniform_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("PostProcess Uniform Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let uniform_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("PostProcess Uniform Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let uniforms = PostProcessUniforms {
             resolution: [width as f32, height as f32],
@@ -258,19 +260,27 @@ impl PostProcessor {
         });
 
         // Create offscreen render target
-        let (offscreen_texture, offscreen_view) = create_offscreen_target(device, format, width, height);
-        let texture_bind_group = create_texture_bind_group(
-            device, &texture_bind_layout, &offscreen_view, &sampler,
-        );
+        let (offscreen_texture, offscreen_view) =
+            create_offscreen_target(device, format, width, height);
+        let texture_bind_group =
+            create_texture_bind_group(device, &texture_bind_layout, &offscreen_view, &sampler);
 
         // Build pipelines
         let vcr_pipeline = build_postprocess_pipeline(
-            device, format, &texture_bind_layout, &uniform_bind_layout,
-            &combine_shader(FULLSCREEN_VERT, VCR_FRAG), "VCR",
+            device,
+            format,
+            &texture_bind_layout,
+            &uniform_bind_layout,
+            &combine_shader(FULLSCREEN_VERT, VCR_FRAG),
+            "VCR",
         );
         let passthrough_pipeline = build_postprocess_pipeline(
-            device, format, &texture_bind_layout, &uniform_bind_layout,
-            &combine_shader(FULLSCREEN_VERT, PASSTHROUGH_FRAG), "Passthrough",
+            device,
+            format,
+            &texture_bind_layout,
+            &uniform_bind_layout,
+            &combine_shader(FULLSCREEN_VERT, PASSTHROUGH_FRAG),
+            "Passthrough",
         );
 
         Self {
@@ -316,13 +326,20 @@ impl PostProcessor {
         self.offscreen_texture = tex;
         self.offscreen_view = view;
         self.texture_bind_group = create_texture_bind_group(
-            device, &self.texture_bind_layout, &self.offscreen_view, &self.sampler,
+            device,
+            &self.texture_bind_layout,
+            &self.offscreen_view,
+            &self.sampler,
         );
     }
 
     /// Upload current uniforms to GPU.
     pub fn update_uniforms(&self, queue: &wgpu::Queue) {
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[self.uniforms]));
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[self.uniforms]),
+        );
     }
 
     /// Apply post-processing: read from offscreen texture, write to the given surface view.
@@ -334,7 +351,8 @@ impl PostProcessor {
         viewport: (f32, f32, f32, f32), // (x, y, w, h)
     ) {
         let pipeline = if !self.active_shader.is_empty() {
-            self.custom_pipelines.get(&self.active_shader)
+            self.custom_pipelines
+                .get(&self.active_shader)
                 .unwrap_or(&self.passthrough_pipeline)
         } else if self.uniforms.enabled != 0 {
             &self.vcr_pipeline
@@ -378,8 +396,12 @@ impl PostProcessor {
         let wgsl_frag = glsl_to_wgsl(frag_glsl)?;
         let combined = combine_shader(FULLSCREEN_VERT, &wgsl_frag);
         let pipeline = build_postprocess_pipeline(
-            device, self.format, &self.texture_bind_layout, &self.uniform_bind_layout,
-            &combined, name,
+            device,
+            self.format,
+            &self.texture_bind_layout,
+            &self.uniform_bind_layout,
+            &combined,
+            name,
         );
         self.custom_pipelines.insert(name.to_string(), pipeline);
         Ok(())
@@ -393,16 +415,15 @@ impl PostProcessor {
 
 /// Convert GLSL fragment shader source to WGSL using naga.
 pub fn glsl_to_wgsl(glsl_src: &str) -> Result<String, String> {
-    use naga::front::glsl;
     use naga::back::wgsl;
+    use naga::front::glsl;
 
     let mut parser = glsl::Frontend::default();
     let options = glsl::Options::from(naga::ShaderStage::Fragment);
-    let module = parser.parse(&options, glsl_src)
-        .map_err(|errors| {
-            let msgs: Vec<String> = errors.errors.iter().map(|e| format!("{e}")).collect();
-            format!("GLSL parse errors: {}", msgs.join("; "))
-        })?;
+    let module = parser.parse(&options, glsl_src).map_err(|errors| {
+        let msgs: Vec<String> = errors.errors.iter().map(|e| format!("{e}")).collect();
+        format!("GLSL parse errors: {}", msgs.join("; "))
+    })?;
 
     // Validate
     let info = naga::valid::Validator::new(
@@ -455,8 +476,14 @@ fn create_texture_bind_group(
         label: Some("PostProcess Texture Bind Group"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
         ],
     })
 }

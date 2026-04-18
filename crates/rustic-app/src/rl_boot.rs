@@ -14,6 +14,9 @@ pub struct RlOpts {
     /// Epochs of BC warm-up against already-recorded demos at session start.
     /// 0 disables.
     pub bc_warmup_epochs: usize,
+    /// Which `ArchConfig` preset the Omni backbone uses. `None` falls back
+    /// to `ArchSize::default()` (`Large`).
+    pub arch_size: Option<rustic_rl::ArchSize>,
 }
 
 static OPTS: OnceLock<RlOpts> = OnceLock::new();

@@ -7,24 +7,26 @@ use rustic_gameplay::play_state::{PlayState, SectionInfo};
 use rustic_render::gpu::GpuState;
 use rustic_render::sprites::SpriteAtlas;
 
-use super::{
-    PlayScreen, NoteAssets, RatingAssets, DrawLayer, STRUM_Y, STRUM_Y_DOWN,
-    NOTE_ANIMS, NOTE_PREFIXES, STRUM_ANIMS, PRESS_ANIMS, CONFIRM_ANIMS,
-    HOLD_PIECE_ANIMS, HOLD_END_ANIMS, SPLASH_PREFIXES,
-};
 use super::super::characters::{AtlasCharacterSprite, Character, CharacterSprite, StageBgSprite};
+use super::{
+    DrawLayer, NoteAssets, PlayScreen, RatingAssets, CONFIRM_ANIMS, HOLD_END_ANIMS,
+    HOLD_PIECE_ANIMS, NOTE_ANIMS, NOTE_PREFIXES, PRESS_ANIMS, SPLASH_PREFIXES, STRUM_ANIMS,
+    STRUM_Y, STRUM_Y_DOWN,
+};
 
 impl PlayScreen {
     pub(super) fn init_inner(&mut self, gpu: &GpuState) {
         let paths = AssetPaths::platform_default();
 
         // Load note atlas
-        let note_png = paths.image("noteSkins/NOTE_assets")
+        let note_png = paths
+            .image("noteSkins/NOTE_assets")
             .expect("NOTE_assets.png not found");
-        let note_xml_path = paths.image_xml("noteSkins/NOTE_assets")
+        let note_xml_path = paths
+            .image_xml("noteSkins/NOTE_assets")
             .expect("NOTE_assets.xml not found");
-        let note_xml = std::fs::read_to_string(&note_xml_path)
-            .expect("Failed to read NOTE_assets.xml");
+        let note_xml =
+            std::fs::read_to_string(&note_xml_path).expect("Failed to read NOTE_assets.xml");
 
         let note_tex = gpu.load_texture_from_path(&note_png);
         let mut atlas = SpriteAtlas::from_xml(&note_xml);
@@ -32,8 +34,11 @@ impl PlayScreen {
         for (anim, prefix) in NOTE_ANIMS.iter().zip(NOTE_PREFIXES.iter()) {
             atlas.add_by_prefix(anim, prefix);
         }
-        for prefix in STRUM_ANIMS.iter().chain(PRESS_ANIMS.iter())
-            .chain(CONFIRM_ANIMS.iter()).chain(HOLD_PIECE_ANIMS.iter())
+        for prefix in STRUM_ANIMS
+            .iter()
+            .chain(PRESS_ANIMS.iter())
+            .chain(CONFIRM_ANIMS.iter())
+            .chain(HOLD_PIECE_ANIMS.iter())
             .chain(HOLD_END_ANIMS.iter())
         {
             atlas.add_by_prefix(prefix, prefix);
@@ -75,13 +80,21 @@ impl PlayScreen {
             Some(gpu.load_texture_from_path(&p))
         };
         if let (Some(sick), Some(good), Some(bad), Some(shit)) = (
-            load_rating_tex("sick"), load_rating_tex("good"),
-            load_rating_tex("bad"), load_rating_tex("shit"),
+            load_rating_tex("sick"),
+            load_rating_tex("good"),
+            load_rating_tex("bad"),
+            load_rating_tex("shit"),
         ) {
             let nums = std::array::from_fn(|i| {
                 load_rating_tex(&format!("num{i}")).expect("Missing combo number sprite")
             });
-            self.rating_assets = Some(RatingAssets { sick, good, bad, shit, nums });
+            self.rating_assets = Some(RatingAssets {
+                sick,
+                good,
+                bad,
+                shit,
+                nums,
+            });
         }
 
         // Load countdown sprites
@@ -90,7 +103,8 @@ impl PlayScreen {
         self.countdown_go = paths.image("go").map(|p| gpu.load_texture_from_path(&p));
 
         // Load chart
-        let chart_file = paths.chart(&self.song_name, &self.difficulty)
+        let chart_file = paths
+            .chart(&self.song_name, &self.difficulty)
             .unwrap_or_else(|| panic!("Chart not found: {} ({})", self.song_name, self.difficulty));
 
         let chart_json = std::fs::read_to_string(&chart_file)
@@ -105,16 +119,25 @@ impl PlayScreen {
         self.game.song_speed = parsed.song.speed;
         self.game.base_song_speed = parsed.song.speed;
 
-        let sections: Vec<(bool, f64, f64)> = parsed.song.notes.iter()
+        let sections: Vec<(bool, f64, f64)> = parsed
+            .song
+            .notes
+            .iter()
             .map(|s| {
-                let bpm = if s.change_bpm && s.bpm > 0.0 { s.bpm } else { parsed.song.bpm };
+                let bpm = if s.change_bpm && s.bpm > 0.0 {
+                    s.bpm
+                } else {
+                    parsed.song.bpm
+                };
                 (s.change_bpm, bpm, s.section_beats)
             })
             .collect();
-        self.game.conductor.map_bpm_changes(parsed.song.bpm, sections);
+        self.game
+            .conductor
+            .map_bpm_changes(parsed.song.bpm, sections);
 
         let mut notes = parsed.notes;
-        
+
         notes.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap());
         self.game.notes = notes;
 
@@ -153,7 +176,9 @@ impl PlayScreen {
             let mut section_time = 0.0;
             let mut cur_bpm = parsed.song.bpm;
             for s in &parsed.song.notes {
-                if s.change_bpm && s.bpm > 0.0 { cur_bpm = s.bpm; }
+                if s.change_bpm && s.bpm > 0.0 {
+                    cur_bpm = s.bpm;
+                }
                 self.game.sections.push(SectionInfo {
                     must_hit: s.must_hit_section,
                     start_time: section_time,
@@ -182,10 +207,22 @@ impl PlayScreen {
 
         // Load stage background sprites — data-driven from objects array,
         // with hardcoded fallback for legacy stages without objects.
-        let load_stage_sprite = |gpu: &GpuState, paths: &AssetPaths, image: &str, stage_dir: &str, x: f32, y: f32, scale: f32, scroll_x: f32, scroll_y: f32, flip_x: bool| -> Option<StageBgSprite> {
+        let load_stage_sprite = |gpu: &GpuState,
+                                 paths: &AssetPaths,
+                                 image: &str,
+                                 stage_dir: &str,
+                                 x: f32,
+                                 y: f32,
+                                 scale: f32,
+                                 scroll_x: f32,
+                                 scroll_y: f32,
+                                 flip_x: bool|
+         -> Option<StageBgSprite> {
             let png = paths.stage_image(image, stage_dir)?;
             let tex = gpu.load_texture_from_path(&png);
-            Some(StageBgSprite::new(tex, x, y, scale, scroll_x, scroll_y, flip_x))
+            Some(StageBgSprite::new(
+                tex, x, y, scale, scroll_x, scroll_y, flip_x,
+            ))
         };
 
         let stage_dir = &stage.directory;
@@ -199,10 +236,15 @@ impl PlayScreen {
                     "boyfriend" | "boyfriendGroup" => self.draw_order.push(DrawLayer::Bf),
                     "sprite" | "animatedSprite" => {
                         if let Some(bg) = load_stage_sprite(
-                            gpu, &paths, &obj.image, stage_dir,
-                            obj.x as f32, obj.y as f32,
+                            gpu,
+                            &paths,
+                            &obj.image,
+                            stage_dir,
+                            obj.x as f32,
+                            obj.y as f32,
                             obj.scale[0] as f32,
-                            obj.scroll[0] as f32, obj.scroll[1] as f32,
+                            obj.scroll[0] as f32,
+                            obj.scroll[1] as f32,
                             obj.flip_x,
                         ) {
                             let idx = self.stage_bg.len();
@@ -217,14 +259,16 @@ impl PlayScreen {
             // Legacy fallback: hardcoded sprites for known stages
             let hardcoded: &[(&str, f32, f32, f32, f32, f32)] = match stage_name.as_str() {
                 "stage" | "" => &[
-                    ("stageback",    -600.0, -200.0, 1.0, 0.9, 0.9),
-                    ("stagefront",   -650.0,  600.0, 1.1, 0.9, 0.9),
-                    ("stagecurtains",-500.0, -300.0, 0.9, 1.3, 1.3),
+                    ("stageback", -600.0, -200.0, 1.0, 0.9, 0.9),
+                    ("stagefront", -650.0, 600.0, 1.1, 0.9, 0.9),
+                    ("stagecurtains", -500.0, -300.0, 0.9, 1.3, 1.3),
                 ],
                 _ => &[],
             };
             for &(image, x, y, scale, sx, sy) in hardcoded {
-                if let Some(bg) = load_stage_sprite(gpu, &paths, image, stage_dir, x, y, scale, sx, sy, false) {
+                if let Some(bg) =
+                    load_stage_sprite(gpu, &paths, image, stage_dir, x, y, scale, sx, sy, false)
+                {
                     let idx = self.stage_bg.len();
                     self.stage_bg.push(bg);
                     self.draw_order.push(DrawLayer::StageBg(idx));
@@ -245,8 +289,13 @@ impl PlayScreen {
 
         // Load Lua scripts
         self.scripts.set_image_roots(paths.roots().to_vec());
-        self.scripts.set_globals(&parsed.song.song, self.story.is_some());
-        self.scripts.set_char_names(&parsed.song.player1, &parsed.song.player2, &parsed.song.gf_version);
+        self.scripts
+            .set_globals(&parsed.song.song, self.story.is_some());
+        self.scripts.set_char_names(
+            &parsed.song.player1,
+            &parsed.song.player2,
+            &parsed.song.gf_version,
+        );
         self.scripts.set_song_metadata(
             parsed.song.bpm,
             parsed.song.speed,
@@ -285,49 +334,51 @@ impl PlayScreen {
 
         // Set default character position globals BEFORE onCreate
         // (Psych Engine sets BF_X, DAD_X etc. from stage data)
-        self.scripts.set_on_all("defaultBoyfriendX", stage.boyfriend[0]);
-        self.scripts.set_on_all("defaultBoyfriendY", stage.boyfriend[1]);
-        self.scripts.set_on_all("defaultOpponentX", stage.opponent[0]);
-        self.scripts.set_on_all("defaultOpponentY", stage.opponent[1]);
-        self.scripts.set_on_all("defaultGirlfriendX", stage.girlfriend[0]);
-        self.scripts.set_on_all("defaultGirlfriendY", stage.girlfriend[1]);
+        self.scripts
+            .set_on_all("defaultBoyfriendX", stage.boyfriend[0]);
+        self.scripts
+            .set_on_all("defaultBoyfriendY", stage.boyfriend[1]);
+        self.scripts
+            .set_on_all("defaultOpponentX", stage.opponent[0]);
+        self.scripts
+            .set_on_all("defaultOpponentY", stage.opponent[1]);
+        self.scripts
+            .set_on_all("defaultGirlfriendX", stage.girlfriend[0]);
+        self.scripts
+            .set_on_all("defaultGirlfriendY", stage.girlfriend[1]);
 
         // Set character name globals (Psych Engine: boyfriendName, dadName, gfName)
-        self.scripts.set_str_on_all("boyfriendName", &parsed.song.player1);
+        self.scripts
+            .set_str_on_all("boyfriendName", &parsed.song.player1);
         self.scripts.set_str_on_all("dadName", &parsed.song.player2);
-        self.scripts.set_str_on_all("gfName", &parsed.song.gf_version);
+        self.scripts
+            .set_str_on_all("gfName", &parsed.song.gf_version);
         // songPath = lowercased path form (for file lookups in Lua)
         self.scripts.set_str_on_all("songPath", &self.song_name);
 
         // Additional globals that mods expect
         // bfVersion = player1 character name (used by wrath_phase4 stage for per-character offsets)
-        self.scripts.set_str_on_all("bfVersion", &parsed.song.player1);
+        self.scripts
+            .set_str_on_all("bfVersion", &parsed.song.player1);
         // Story mode / cutscene globals
-        self.scripts.set_on_all("isStoryMode", self.story.is_some() as i32 as f64);
+        self.scripts
+            .set_on_all("isStoryMode", self.story.is_some() as i32 as f64);
         self.scripts.set_on_all("seenCutscene", 0.0); // set to 1 after cutscene plays
-        // Modding option globals (Psych Engine Options)
+                                                      // Modding option globals (Psych Engine Options)
         self.scripts.set_on_all("screenShake", 1.0);
         self.scripts.set_on_all("modcharts", 1.0);
         self.scripts.set_on_all("enabledUnderlay", 0.0); // underlay not implemented
-        // Strum default position globals (set to stage positions initially;
-        // updated after character sprites are created)
+                                                         // Strum default position globals (set to stage positions initially;
+                                                         // updated after character sprites are created)
         for i in 0..4 {
-            self.scripts.set_on_all(
-                &format!("defaultPlayerStrumX{}", i),
-                0.0,
-            );
-            self.scripts.set_on_all(
-                &format!("defaultPlayerStrumY{}", i),
-                0.0,
-            );
-            self.scripts.set_on_all(
-                &format!("defaultOpponentStrumX{}", i),
-                0.0,
-            );
-            self.scripts.set_on_all(
-                &format!("defaultOpponentStrumY{}", i),
-                0.0,
-            );
+            self.scripts
+                .set_on_all(&format!("defaultPlayerStrumX{}", i), 0.0);
+            self.scripts
+                .set_on_all(&format!("defaultPlayerStrumY{}", i), 0.0);
+            self.scripts
+                .set_on_all(&format!("defaultOpponentStrumX{}", i), 0.0);
+            self.scripts
+                .set_on_all(&format!("defaultOpponentStrumY{}", i), 0.0);
         }
 
         // Call onCreate on all loaded scripts
@@ -339,15 +390,24 @@ impl PlayScreen {
         }
 
         // Helper: parse character JSON and extract metadata
-        let parse_char = |paths: &AssetPaths, name: &str| -> Option<(std::path::PathBuf, CharacterFile)> {
-            let json_path = paths.character_json(name)?;
-            let json_str = std::fs::read_to_string(&json_path).ok()?;
-            let char_def = CharacterFile::from_json(&json_str).ok()?;
-            Some((json_path, char_def))
-        };
+        let parse_char =
+            |paths: &AssetPaths, name: &str| -> Option<(std::path::PathBuf, CharacterFile)> {
+                let json_path = paths.character_json(name)?;
+                let json_str = std::fs::read_to_string(&json_path).ok()?;
+                let char_def = CharacterFile::from_json(&json_str).ok()?;
+                Some((json_path, char_def))
+            };
 
         // Helper: try to load character sprite — detects Adobe Animate atlas vs Sparrow XML.
-        let load_char_sprite = |paths: &AssetPaths, gpu: &GpuState, json_path: &std::path::Path, char_def: &CharacterFile, stage_x: f64, stage_y: f64, is_player: bool, stage_name: &str| -> Option<Character> {
+        let load_char_sprite = |paths: &AssetPaths,
+                                gpu: &GpuState,
+                                json_path: &std::path::Path,
+                                char_def: &CharacterFile,
+                                stage_x: f64,
+                                stage_y: f64,
+                                is_player: bool,
+                                stage_name: &str|
+         -> Option<Character> {
             let effective_image = char_def.effective_image();
             if effective_image.is_empty() {
                 log::warn!("Character has empty image field, skipping sprite");
@@ -355,8 +415,18 @@ impl PlayScreen {
             }
             // Check for Adobe Animate atlas first (directory with Animation.json)
             if let Some(animate_dir) = paths.character_animate_dir(effective_image) {
-                log::info!("Loading Adobe Animate atlas character from {:?}", animate_dir);
-                let mut sprite = AtlasCharacterSprite::load(gpu, char_def, &animate_dir, stage_x, stage_y, is_player);
+                log::info!(
+                    "Loading Adobe Animate atlas character from {:?}",
+                    animate_dir
+                );
+                let mut sprite = AtlasCharacterSprite::load(
+                    gpu,
+                    char_def,
+                    &animate_dir,
+                    stage_x,
+                    stage_y,
+                    is_player,
+                );
                 if let Some(&stage_scale) = char_def.stage_scale.get(stage_name) {
                     sprite.scale = stage_scale as f32;
                 }
@@ -364,7 +434,8 @@ impl PlayScreen {
             }
             // Fall back to Sparrow XML atlas
             let atlas_dir = paths.character_atlas_dir(effective_image)?;
-            let mut sprite = CharacterSprite::load(gpu, json_path, &atlas_dir, stage_x, stage_y, is_player);
+            let mut sprite =
+                CharacterSprite::load(gpu, json_path, &atlas_dir, stage_x, stage_y, is_player);
             if let Some(&stage_scale) = char_def.stage_scale.get(stage_name) {
                 sprite.scale = stage_scale as f32;
             }
@@ -372,13 +443,26 @@ impl PlayScreen {
         };
 
         let srgb_to_linear = |s: f32| -> f32 {
-            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            if s <= 0.04045 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            }
         };
 
         // Load BF
         let bf_def = parse_char(&paths, &parsed.song.player1);
         if let Some((json_path, char_def)) = &bf_def {
-            self.char_bf = load_char_sprite(&paths, gpu, json_path, char_def, stage.boyfriend[0], stage.boyfriend[1], true, stage_name);
+            self.char_bf = load_char_sprite(
+                &paths,
+                gpu,
+                json_path,
+                char_def,
+                stage.boyfriend[0],
+                stage.boyfriend[1],
+                true,
+                stage_name,
+            );
             // Extract health info even if sprite failed to load
             let c = char_def.healthbar_colors;
             self.hb_color_bf = [
@@ -387,18 +471,29 @@ impl PlayScreen {
                 srgb_to_linear(c[2] as f32 / 255.0),
                 1.0,
             ];
-            self.icon_bf = paths.health_icon(&char_def.healthicon)
+            self.icon_bf = paths
+                .health_icon(&char_def.healthicon)
                 .map(|p| gpu.load_texture_from_path(&p));
         }
         if self.icon_bf.is_none() {
-            self.icon_bf = paths.health_icon("bf")
+            self.icon_bf = paths
+                .health_icon("bf")
                 .map(|p| gpu.load_texture_from_path(&p));
         }
 
         // Load Dad
         let dad_def = parse_char(&paths, &parsed.song.player2);
         if let Some((json_path, char_def)) = &dad_def {
-            self.char_dad = load_char_sprite(&paths, gpu, json_path, char_def, stage.opponent[0], stage.opponent[1], false, stage_name);
+            self.char_dad = load_char_sprite(
+                &paths,
+                gpu,
+                json_path,
+                char_def,
+                stage.opponent[0],
+                stage.opponent[1],
+                false,
+                stage_name,
+            );
             let c = char_def.healthbar_colors;
             self.hb_color_dad = [
                 srgb_to_linear(c[0] as f32 / 255.0),
@@ -406,53 +501,83 @@ impl PlayScreen {
                 srgb_to_linear(c[2] as f32 / 255.0),
                 1.0,
             ];
-            self.icon_dad = paths.health_icon(&char_def.healthicon)
+            self.icon_dad = paths
+                .health_icon(&char_def.healthicon)
                 .map(|p| gpu.load_texture_from_path(&p));
         }
         if self.icon_dad.is_none() {
-            self.icon_dad = paths.health_icon("dad")
+            self.icon_dad = paths
+                .health_icon("dad")
                 .map(|p| gpu.load_texture_from_path(&p));
         }
 
         // Load GF
         if !stage.hide_girlfriend {
             if let Some((json_path, char_def)) = parse_char(&paths, &parsed.song.gf_version) {
-                self.char_gf = load_char_sprite(&paths, gpu, &json_path, &char_def, stage.girlfriend[0], stage.girlfriend[1], false, stage_name);
+                self.char_gf = load_char_sprite(
+                    &paths,
+                    gpu,
+                    &json_path,
+                    &char_def,
+                    stage.girlfriend[0],
+                    stage.girlfriend[1],
+                    false,
+                    stage_name,
+                );
             }
         }
 
         // Load note skins: chart arrowSkinDAD/arrowSkinBF take priority, then character JSON skin field
         if !parsed.song.arrow_skin_dad.is_empty() {
-            self.opp_note_assets = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_dad, None, None, None);
+            self.opp_note_assets =
+                self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_dad, None, None, None);
             if self.opp_note_assets.is_some() {
-                log::info!("Loaded opponent note skin from chart: {}", parsed.song.arrow_skin_dad);
+                log::info!(
+                    "Loaded opponent note skin from chart: {}",
+                    parsed.song.arrow_skin_dad
+                );
             }
         }
         if !parsed.song.arrow_skin_bf.is_empty() {
-            let bf_skin = self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_bf, None, None, None);
+            let bf_skin =
+                self.load_note_skin(gpu, &paths, &parsed.song.arrow_skin_bf, None, None, None);
             if bf_skin.is_some() {
-                log::info!("Loaded player note skin from chart: {}", parsed.song.arrow_skin_bf);
+                log::info!(
+                    "Loaded player note skin from chart: {}",
+                    parsed.song.arrow_skin_bf
+                );
                 self.note_assets = bf_skin;
             }
         }
         // Fall back to character-defined skin if chart didn't specify
         if let Some((_, char_def)) = &dad_def {
             if self.opp_note_assets.is_none() && !char_def.skin.is_empty() {
-                self.opp_note_assets = self.load_note_skin(gpu, &paths, &char_def.skin, None, None, None);
+                self.opp_note_assets =
+                    self.load_note_skin(gpu, &paths, &char_def.skin, None, None, None);
                 if self.opp_note_assets.is_some() {
-                    log::info!("Loaded opponent note skin from character: {}", char_def.skin);
+                    log::info!(
+                        "Loaded opponent note skin from character: {}",
+                        char_def.skin
+                    );
                 }
             }
             // Load custom health bar if character defines one (Retrospecter-fork field).
             if !char_def.health_bar_img.is_empty() {
                 let hb_name = &char_def.health_bar_img;
                 let bar_path = paths.find(&format!("images/healthBars/{}/bar.png", hb_name));
-                let overlay_path = paths.find(&format!("images/healthBars/{}/overlay.png", hb_name));
+                let overlay_path =
+                    paths.find(&format!("images/healthBars/{}/overlay.png", hb_name));
                 if let (Some(bp), Some(op)) = (bar_path, overlay_path) {
                     let bar_tex = gpu.load_texture_from_path(&bp);
                     let overlay_tex = gpu.load_texture_from_path(&op);
-                    log::info!("Loaded custom health bar '{}': bar={}x{}, overlay={}x{}",
-                        hb_name, bar_tex.width, bar_tex.height, overlay_tex.width, overlay_tex.height);
+                    log::info!(
+                        "Loaded custom health bar '{}': bar={}x{}, overlay={}x{}",
+                        hb_name,
+                        bar_tex.width,
+                        bar_tex.height,
+                        overlay_tex.width,
+                        overlay_tex.height
+                    );
                     let mut chb = super::CustomHealthBar::new(bar_tex, overlay_tex);
                     // Set initial opponent color from character healthbar color (sRGB → linear)
                     let hbc = char_def.healthbar_colors;
@@ -470,21 +595,33 @@ impl PlayScreen {
 
         // Store camera offsets for dynamic recomputation at section changes
         self.bf_cam_off = if let Some((_, char_def)) = &bf_def {
-            let off = char_def.stage_camera.get(stage_name).copied()
+            let off = char_def
+                .stage_camera
+                .get(stage_name)
+                .copied()
                 .unwrap_or(char_def.camera_position);
             [off[0] as f32, off[1] as f32]
         } else {
             [0.0, 0.0]
         };
         self.dad_cam_off = if let Some((_, char_def)) = &dad_def {
-            let off = char_def.stage_camera.get(stage_name).copied()
+            let off = char_def
+                .stage_camera
+                .get(stage_name)
+                .copied()
                 .unwrap_or(char_def.camera_position);
             [off[0] as f32, off[1] as f32]
         } else {
             [0.0, 0.0]
         };
-        self.stage_cam_bf = [stage.camera_boyfriend[0] as f32, stage.camera_boyfriend[1] as f32];
-        self.stage_cam_dad = [stage.camera_opponent[0] as f32, stage.camera_opponent[1] as f32];
+        self.stage_cam_bf = [
+            stage.camera_boyfriend[0] as f32,
+            stage.camera_boyfriend[1] as f32,
+        ];
+        self.stage_cam_dad = [
+            stage.camera_opponent[0] as f32,
+            stage.camera_opponent[1] as f32,
+        ];
 
         // Apply character position adjustments from runHaxeCode (must be after chars loaded)
         self.process_char_positions();
@@ -495,15 +632,27 @@ impl PlayScreen {
         // Preload death character (from chart's gameOverChar or default "bf-dead")
         if let Some((json_path, char_def)) = parse_char(&paths, &self.death_char_name) {
             self.death_char_preloaded = load_char_sprite(
-                &paths, gpu, &json_path, &char_def,
-                stage.boyfriend[0], stage.boyfriend[1], true, stage_name,
+                &paths,
+                gpu,
+                &json_path,
+                &char_def,
+                stage.boyfriend[0],
+                stage.boyfriend[1],
+                true,
+                stage_name,
             );
         } else if self.death_char_name != "bf-dead" {
             // Fall back to bf-dead if custom death char not found
             if let Some((json_path, char_def)) = parse_char(&paths, "bf-dead") {
                 self.death_char_preloaded = load_char_sprite(
-                    &paths, gpu, &json_path, &char_def,
-                    stage.boyfriend[0], stage.boyfriend[1], true, stage_name,
+                    &paths,
+                    gpu,
+                    &json_path,
+                    &char_def,
+                    stage.boyfriend[0],
+                    stage.boyfriend[1],
+                    true,
+                    stage_name,
                 );
             }
         }
@@ -549,7 +698,11 @@ impl PlayScreen {
 
         // Initialize strum default positions for modchart property access
         self.scripts.state.downscroll = self.downscroll;
-        let default_strum_y = if self.downscroll { STRUM_Y_DOWN } else { STRUM_Y };
+        let default_strum_y = if self.downscroll {
+            STRUM_Y_DOWN
+        } else {
+            STRUM_Y
+        };
         for lane in 0..4 {
             let opp_x = Self::strum_x(lane, false, self.game.play_as_opponent);
             let plr_x = Self::strum_x(lane, true, self.game.play_as_opponent);
@@ -564,28 +717,43 @@ impl PlayScreen {
         for lane in 0..4usize {
             let opp_x = Self::strum_x(lane, false, self.game.play_as_opponent) as f64;
             let plr_x = Self::strum_x(lane, true, self.game.play_as_opponent) as f64;
-            self.scripts.set_on_all(&format!("defaultOpponentStrumX{lane}"), opp_x);
-            self.scripts.set_on_all(&format!("defaultOpponentStrumY{lane}"), default_strum_y as f64);
-            self.scripts.set_on_all(&format!("defaultPlayerStrumX{lane}"), plr_x);
-            self.scripts.set_on_all(&format!("defaultPlayerStrumY{lane}"), default_strum_y as f64);
+            self.scripts
+                .set_on_all(&format!("defaultOpponentStrumX{lane}"), opp_x);
+            self.scripts.set_on_all(
+                &format!("defaultOpponentStrumY{lane}"),
+                default_strum_y as f64,
+            );
+            self.scripts
+                .set_on_all(&format!("defaultPlayerStrumX{lane}"), plr_x);
+            self.scripts.set_on_all(
+                &format!("defaultPlayerStrumY{lane}"),
+                default_strum_y as f64,
+            );
         }
         // Also set the non-indexed variants
-        self.scripts.set_on_all("defaultOpponentStrumY0", default_strum_y as f64);
-        self.scripts.set_on_all("defaultPlayerStrumY0", default_strum_y as f64);
+        self.scripts
+            .set_on_all("defaultOpponentStrumY0", default_strum_y as f64);
+        self.scripts
+            .set_on_all("defaultPlayerStrumY0", default_strum_y as f64);
 
         // Set crochet/stepCrochet globals
-        self.scripts.set_on_all("crochet", self.game.conductor.crochet);
-        self.scripts.set_on_all("stepCrochet", self.game.conductor.step_crochet);
+        self.scripts
+            .set_on_all("crochet", self.game.conductor.crochet);
+        self.scripts
+            .set_on_all("stepCrochet", self.game.conductor.step_crochet);
 
         // Set misc globals scripts expect
         self.scripts.set_bool_on_all("flashingLights", true);
         self.scripts.set_bool_on_all("modcharts", true);
         self.scripts.set_bool_on_all("mustHitSection", false);
         self.scripts.set_bool_on_all("downscroll", self.downscroll);
-        self.scripts.set_bool_on_all("isDownScroll", self.downscroll);
+        self.scripts
+            .set_bool_on_all("isDownScroll", self.downscroll);
         self.scripts.set_on_all("songLength", song_length_ms);
-        self.scripts.set_on_all("playbackRate", self.game.song_speed);
-        self.scripts.set_str_on_all("difficultyName", &self.difficulty);
+        self.scripts
+            .set_on_all("playbackRate", self.game.song_speed);
+        self.scripts
+            .set_str_on_all("difficultyName", &self.difficulty);
 
         // Initialize countdown
         self.game.conductor.song_position = -self.game.conductor.crochet * 5.0;
@@ -593,14 +761,25 @@ impl PlayScreen {
 
         log::info!(
             "PlayScreen: {} ({}) - {} notes, speed {:.1}, BPM {:.0}, stage '{}', scripts: {}",
-            self.song_name, self.difficulty, self.game.notes.len(),
-            self.game.song_speed, self.game.conductor.bpm, stage_name,
-            if self.scripts.has_scripts() { "yes" } else { "none" },
+            self.song_name,
+            self.difficulty,
+            self.game.notes.len(),
+            self.game.song_speed,
+            self.game.conductor.bpm,
+            stage_name,
+            if self.scripts.has_scripts() {
+                "yes"
+            } else {
+                "none"
+            },
         );
 
         // Populate note data into Lua VMs so modcharts can query/modify individual notes
         if self.scripts.has_scripts() {
-            let note_tuples: Vec<(f64, usize, bool, f64)> = self.game.notes.iter()
+            let note_tuples: Vec<(f64, usize, bool, f64)> = self
+                .game
+                .notes
+                .iter()
                 .map(|n| (n.strum_time, n.lane, n.must_press, n.sustain_length))
                 .collect();
             self.scripts.populate_note_data(&note_tuples);
@@ -623,13 +802,18 @@ impl PlayScreen {
     /// Silently no-op when disabled — keeps normal play paths untouched.
     #[cfg(feature = "rl")]
     fn attach_rl_harness(&mut self) {
-        let Some(opts) = crate::rl_boot::get() else { return; };
+        let Some(opts) = crate::rl_boot::get() else {
+            return;
+        };
         let mut cfg = if opts.control_gameplay {
             rustic_rl::HarnessConfig::live_train()
         } else {
             rustic_rl::HarnessConfig::record_only()
         };
         cfg.record_demos = true;
+        if let Some(arch) = opts.arch_size {
+            cfg.arch_size = arch;
+        }
 
         match rustic_rl::Harness::new(cfg, &self.song_name, &self.difficulty) {
             Ok(mut h) => {
@@ -640,7 +824,9 @@ impl PlayScreen {
                 }
                 log::info!(
                     "rustic-rl: harness attached (control={}, song={}/{})",
-                    opts.control_gameplay, self.song_name, self.difficulty
+                    opts.control_gameplay,
+                    self.song_name,
+                    self.difficulty
                 );
                 self.rl_harness = Some(h);
             }

@@ -1,10 +1,10 @@
+mod draw;
 mod init;
 mod input;
 mod pause;
 mod pause_draw;
 mod story;
 mod update;
-mod draw;
 
 #[cfg(feature = "rl")]
 mod rl;
@@ -15,22 +15,22 @@ use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
-use rustic_core::prefs::Preferences;
-use rustic_core::paths::AssetPaths;
 use rustic_core::highscore::HighscoreStore;
+use rustic_core::paths::AssetPaths;
+use rustic_core::prefs::Preferences;
 use rustic_gameplay::play_state::PlayState;
 use rustic_render::camera::GameCamera;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::SpriteAtlas;
-use rustic_scripting::{AudioRequest, ScriptManager, LuaSpriteKind};
+use rustic_scripting::{AudioRequest, LuaSpriteKind, ScriptManager};
 
-use crate::screen::Screen;
-use super::characters::{Character, StageBgSprite};
-use super::options::OptionsMenuState;
-use super::video::VideoPlayer;
 use self::pause::PauseMenuState;
 use self::story::StorySession;
 pub(crate) use self::story::StorySession as SharedStorySession;
+use super::characters::{Character, StageBgSprite};
+use super::options::OptionsMenuState;
+use super::video::VideoPlayer;
+use crate::screen::Screen;
 
 // === Psych Engine constants ===
 pub const GAME_W: f32 = 1280.0;
@@ -59,9 +59,24 @@ pub(super) const NOTE_ANIMS: [&str; 4] = ["purpleScroll", "blueScroll", "greenSc
 pub(super) const NOTE_PREFIXES: [&str; 4] = ["purple0", "blue0", "green0", "red0"];
 pub(super) const STRUM_ANIMS: [&str; 4] = ["arrowLEFT", "arrowDOWN", "arrowUP", "arrowRIGHT"];
 pub(super) const PRESS_ANIMS: [&str; 4] = ["left press", "down press", "up press", "right press"];
-pub(super) const CONFIRM_ANIMS: [&str; 4] = ["left confirm", "down confirm", "up confirm", "right confirm"];
-pub(super) const HOLD_PIECE_ANIMS: [&str; 4] = ["purple hold piece", "blue hold piece", "green hold piece", "red hold piece"];
-pub(super) const HOLD_END_ANIMS: [&str; 4] = ["purple hold end", "blue hold end", "green hold end", "red hold end"];
+pub(super) const CONFIRM_ANIMS: [&str; 4] = [
+    "left confirm",
+    "down confirm",
+    "up confirm",
+    "right confirm",
+];
+pub(super) const HOLD_PIECE_ANIMS: [&str; 4] = [
+    "purple hold piece",
+    "blue hold piece",
+    "green hold piece",
+    "red hold piece",
+];
+pub(super) const HOLD_END_ANIMS: [&str; 4] = [
+    "purple hold end",
+    "blue hold end",
+    "green hold end",
+    "red hold end",
+];
 
 /// A rating popup (visual only, Psych Engine physics).
 pub(super) struct RatingPopup {
@@ -107,8 +122,10 @@ pub(super) struct NoteSplash {
 pub(super) const SPLASH_FPS: f64 = 24.0;
 pub(super) const SPLASH_FRAMES: usize = 4;
 pub(super) const SPLASH_PREFIXES: [&str; 4] = [
-    "note splash purple 1", "note splash blue 1",
-    "note splash green 1", "note splash red 1",
+    "note splash purple 1",
+    "note splash blue 1",
+    "note splash green 1",
+    "note splash red 1",
 ];
 
 /// Animated health drain state (e.g. for scythe notes).
@@ -118,7 +135,6 @@ pub(super) struct HealthDrain {
     pub target: f32,
     pub elapsed: f32,
     pub duration: f32,
-    pub death_safe: bool,
 }
 
 /// Draw order layer — determines what gets drawn when.
@@ -194,8 +210,6 @@ pub(super) struct CustomHealthBar {
     pub color_tween_start_right: [f32; 4],
     pub color_tween_target_left: [f32; 4],
     pub color_tween_target_right: [f32; 4],
-    /// Saved player color (restored after form changes).
-    pub saved_player_color: [f32; 4],
     /// Whether the bar has faded in yet.
     pub visible: bool,
 }
@@ -219,7 +233,6 @@ impl CustomHealthBar {
             color_tween_start_right: default_right,
             color_tween_target_left: default_left,
             color_tween_target_right: default_right,
-            saved_player_color: default_right,
             visible: false,
         }
     }
@@ -313,13 +326,12 @@ pub struct PlayScreen {
     pub(super) icon_scale_dad: f32,
 
     // Sprite assets
-    pub(super) note_assets: Option<NoteAssets>,        // default / player note skin
-    pub(super) opp_note_assets: Option<NoteAssets>,    // opponent note skin (if different)
+    pub(super) note_assets: Option<NoteAssets>, // default / player note skin
+    pub(super) opp_note_assets: Option<NoteAssets>, // opponent note skin (if different)
     pub(super) rating_assets: Option<RatingAssets>,
     pub(super) splash_atlas: Option<NoteAssets>,
     pub(super) icon_bf: Option<GpuTexture>,
     pub(super) icon_dad: Option<GpuTexture>,
-    pub(super) healthbar_tex: Option<GpuTexture>,
     /// Custom health bar (loaded when opponent has healthBarImg).
     pub(super) custom_healthbar: Option<CustomHealthBar>,
     pub(super) countdown_ready: Option<GpuTexture>,
@@ -367,13 +379,19 @@ pub struct PlayScreen {
     pub(super) scripts: ScriptManager,
     pub(super) lua_textures: HashMap<String, GpuTexture>,
     pub(super) lua_atlases: HashMap<String, SpriteAtlas>,
-    pub(super) lua_behind: Vec<String>,  // sprite tags drawn behind characters
-    pub(super) lua_front: Vec<String>,   // sprite tags drawn in front of characters
+    pub(super) lua_behind: Vec<String>, // sprite tags drawn behind characters
+    pub(super) lua_front: Vec<String>,  // sprite tags drawn in front of characters
     pub(super) paths: AssetPaths,
     /// Per-note-type custom skin assets, keyed by type string (e.g. "scytheNote").
     pub(super) custom_note_assets: HashMap<String, NoteAssets>,
     /// Pending note skin loads: (note_type_name, skin_path, custom_anims). Processed in draw phase with GPU.
-    pub(super) pending_note_skin_loads: Vec<(String, String, Option<[String; 4]>, Option<[String; 4]>, Option<[String; 4]>)>,
+    pub(super) pending_note_skin_loads: Vec<(
+        String,
+        String,
+        Option<[String; 4]>,
+        Option<[String; 4]>,
+        Option<[String; 4]>,
+    )>,
     /// Whether the character camera layer is visible (toggled by camCharacters.visible).
     pub(super) cam_characters_visible: bool,
     /// Whether character reflections are drawn (flipY copies below characters).
@@ -431,8 +449,9 @@ impl PlayScreen {
     pub fn new(song_name: &str, difficulty: &str, play_as_opponent: bool) -> Self {
         let mut game = PlayState::new(100.0);
         game.play_as_opponent = play_as_opponent;
+        game.set_stock_hold_mechanics_enabled(true);
         let prefs = Preferences::load();
-        
+
         Self {
             game,
             audio: None,
@@ -451,7 +470,6 @@ impl PlayScreen {
             splash_atlas: None,
             icon_bf: None,
             icon_dad: None,
-            healthbar_tex: None,
             custom_healthbar: None,
             countdown_ready: None,
             countdown_set: None,
@@ -548,7 +566,12 @@ impl PlayScreen {
         self.game.botplay = botplay;
     }
 
-    pub(super) fn start_video_cutscene(&mut self, player: VideoPlayer, skippable: bool, blocks_gameplay: bool) {
+    pub(super) fn start_video_cutscene(
+        &mut self,
+        player: VideoPlayer,
+        skippable: bool,
+        blocks_gameplay: bool,
+    ) {
         if let Some(audio) = &mut self.audio {
             if blocks_gameplay && self.game.song_started {
                 audio.pause();
@@ -570,7 +593,14 @@ impl PlayScreen {
     }
 
     pub(super) fn finish_cutscene(&mut self) {
-        let Some(CutsceneState::Video { mut player, blocks_gameplay, .. }) = self.cutscene.take() else { return; };
+        let Some(CutsceneState::Video {
+            mut player,
+            blocks_gameplay,
+            ..
+        }) = self.cutscene.take()
+        else {
+            return;
+        };
         if let Some(cb) = player.take_on_finish() {
             if self.scripts.has_scripts() {
                 self.scripts.call_lua_function(&cb, "");
@@ -597,9 +627,15 @@ impl PlayScreen {
         let requests: Vec<_> = self.scripts.state.audio_requests.drain(..).collect();
         for request in requests {
             match request {
-                AudioRequest::PlayMusic { path, volume, looping: _ } => {
+                AudioRequest::PlayMusic {
+                    path,
+                    volume,
+                    looping: _,
+                } => {
                     let music_path = self.resolve_audio_path(&path);
-                    let Some(audio) = &mut self.audio else { continue; };
+                    let Some(audio) = &mut self.audio else {
+                        continue;
+                    };
                     if let Some(music_path) = music_path {
                         audio.play_loop_music_vol(&music_path, volume);
                     }
@@ -656,7 +692,11 @@ impl PlayScreen {
 
     pub(super) fn strum_x(lane: usize, player: bool, _play_as_opponent: bool) -> f32 {
         let base = STRUM_X + 50.0 + NOTE_WIDTH * lane as f32;
-        if player { base + GAME_W / 2.0 } else { base }
+        if player {
+            base + GAME_W / 2.0
+        } else {
+            base
+        }
     }
 
     // === Generic stage overlay methods ===
@@ -689,28 +729,44 @@ impl PlayScreen {
     pub(super) fn update_stage_overlay(&mut self, dt: f32) {
         if self.stage_overlay.tween_left_active {
             self.stage_overlay.tween_left_elapsed += dt;
-            let t = (self.stage_overlay.tween_left_elapsed / self.stage_overlay.tween_left_duration).min(1.0);
+            let t = (self.stage_overlay.tween_left_elapsed
+                / self.stage_overlay.tween_left_duration)
+                .min(1.0);
             for i in 0..4 {
                 self.stage_overlay.color_left[i] = self.stage_overlay.tween_left_start[i]
-                    + (self.stage_overlay.tween_left_target[i] - self.stage_overlay.tween_left_start[i]) * t;
+                    + (self.stage_overlay.tween_left_target[i]
+                        - self.stage_overlay.tween_left_start[i])
+                        * t;
             }
-            if t >= 1.0 { self.stage_overlay.tween_left_active = false; }
+            if t >= 1.0 {
+                self.stage_overlay.tween_left_active = false;
+            }
         }
         if self.stage_overlay.tween_right_active {
             self.stage_overlay.tween_right_elapsed += dt;
-            let t = (self.stage_overlay.tween_right_elapsed / self.stage_overlay.tween_right_duration).min(1.0);
+            let t = (self.stage_overlay.tween_right_elapsed
+                / self.stage_overlay.tween_right_duration)
+                .min(1.0);
             for i in 0..4 {
                 self.stage_overlay.color_right[i] = self.stage_overlay.tween_right_start[i]
-                    + (self.stage_overlay.tween_right_target[i] - self.stage_overlay.tween_right_start[i]) * t;
+                    + (self.stage_overlay.tween_right_target[i]
+                        - self.stage_overlay.tween_right_start[i])
+                        * t;
             }
-            if t >= 1.0 { self.stage_overlay.tween_right_active = false; }
+            if t >= 1.0 {
+                self.stage_overlay.tween_right_active = false;
+            }
         }
     }
 
     /// Process Lua extension requests (stage color, post-processing, health bar, etc.).
     pub(super) fn process_lua_extensions(&mut self) {
         let srgb = |s: f32| -> f32 {
-            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            if s <= 0.04045 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            }
         };
 
         // Stage color requests (collect first to avoid borrow conflict)
@@ -725,7 +781,12 @@ impl PlayScreen {
         }
 
         // Stage color swap requests
-        let swap_reqs: Vec<_> = self.scripts.state.stage_color_swap_requests.drain(..).collect();
+        let swap_reqs: Vec<_> = self
+            .scripts
+            .state
+            .stage_color_swap_requests
+            .drain(..)
+            .collect();
         for dur in swap_reqs {
             let old_left = self.stage_overlay.color_left;
             let old_right = self.stage_overlay.color_right;
@@ -745,7 +806,12 @@ impl PlayScreen {
 
         // Custom health bar color requests
         // Accumulate targets so multiple requests in the same frame don't overwrite each other
-        let hb_reqs: Vec<_> = self.scripts.state.healthbar_color_requests.drain(..).collect();
+        let hb_reqs: Vec<_> = self
+            .scripts
+            .state
+            .healthbar_color_requests
+            .drain(..)
+            .collect();
         if !hb_reqs.is_empty() {
             if let Some(chb) = &mut self.custom_healthbar {
                 let mut new_left: Option<[f32; 4]> = None;
@@ -757,7 +823,10 @@ impl PlayScreen {
                     match side.as_str() {
                         "left" => new_left = Some(color),
                         "right" => new_right = Some(color),
-                        _ => { new_left = Some(color); new_right = Some(color); }
+                        _ => {
+                            new_left = Some(color);
+                            new_right = Some(color);
+                        }
                     }
                 }
                 let left = new_left.unwrap_or(chb.left_color);
@@ -774,7 +843,11 @@ impl PlayScreen {
             for root in &self.scripts.state.image_roots {
                 let p = root.join(&req);
                 // Psych engine scripts usually omit .lua extension in addLuaScript calls
-                let p = if p.extension().is_none() { p.with_extension("lua") } else { p };
+                let p = if p.extension().is_none() {
+                    p.with_extension("lua")
+                } else {
+                    p
+                };
                 if p.exists() {
                     log::info!("Dynamic loading Lua script '{}': {:?}", req, p);
                     self.scripts.load_script(&p);
@@ -810,8 +883,18 @@ impl PlayScreen {
         if sp.custom {
             (sp.x, sp.y, sp.alpha, sp.angle, sp.scale_x)
         } else {
-            let default_y = if self.is_strum_downscroll(lane, player) { STRUM_Y_DOWN } else { STRUM_Y };
-            (Self::strum_x(lane, player, self.game.play_as_opponent), default_y, 1.0, 0.0, NOTE_SCALE)
+            let default_y = if self.is_strum_downscroll(lane, player) {
+                STRUM_Y_DOWN
+            } else {
+                STRUM_Y
+            };
+            (
+                Self::strum_x(lane, player, self.game.play_as_opponent),
+                default_y,
+                1.0,
+                0.0,
+                NOTE_SCALE,
+            )
         }
     }
 
@@ -835,8 +918,11 @@ impl PlayScreen {
         for (anim, prefix) in NOTE_ANIMS.iter().zip(NOTE_PREFIXES.iter()) {
             atlas.add_by_prefix(anim, prefix);
         }
-        for prefix in STRUM_ANIMS.iter().chain(PRESS_ANIMS.iter())
-            .chain(CONFIRM_ANIMS.iter()).chain(HOLD_PIECE_ANIMS.iter())
+        for prefix in STRUM_ANIMS
+            .iter()
+            .chain(PRESS_ANIMS.iter())
+            .chain(CONFIRM_ANIMS.iter())
+            .chain(HOLD_PIECE_ANIMS.iter())
             .chain(HOLD_END_ANIMS.iter())
         {
             atlas.add_by_prefix(prefix, prefix);
@@ -907,8 +993,8 @@ impl PlayScreen {
 
     /// Process queued character change requests (needs GPU for texture loading).
     pub(super) fn process_char_changes(&mut self, gpu: &GpuState) {
-        use rustic_core::character::CharacterFile;
         use super::characters::{AtlasCharacterSprite, CharacterSprite};
+        use rustic_core::character::CharacterFile;
 
         let requests: Vec<(String, String)> = self.char_change_requests.drain(..).collect();
         for (target, char_name) in requests {
@@ -945,22 +1031,43 @@ impl PlayScreen {
             };
 
             // Load the new character (atlas or sparrow)
-            let new_char = if let Some(animate_dir) = self.paths.character_animate_dir(&effective_image) {
-                log::info!("Change Character: loading atlas {} from {:?}", char_name, animate_dir);
-                let mut sprite = AtlasCharacterSprite::load(gpu, &char_def, &animate_dir, stage_x, stage_y, is_player);
+            let new_char = if let Some(animate_dir) =
+                self.paths.character_animate_dir(&effective_image)
+            {
+                log::info!(
+                    "Change Character: loading atlas {} from {:?}",
+                    char_name,
+                    animate_dir
+                );
+                let mut sprite = AtlasCharacterSprite::load(
+                    gpu,
+                    &char_def,
+                    &animate_dir,
+                    stage_x,
+                    stage_y,
+                    is_player,
+                );
                 if let Some(&s) = char_def.stage_scale.get(&self.stage_name) {
                     sprite.scale = s as f32;
                 }
                 Some(Character::Atlas(sprite))
             } else if let Some(atlas_dir) = self.paths.character_atlas_dir(&effective_image) {
-                log::info!("Change Character: loading sparrow {} from {:?}", char_name, atlas_dir);
-                let mut sprite = CharacterSprite::load(gpu, &json_path, &atlas_dir, stage_x, stage_y, is_player);
+                log::info!(
+                    "Change Character: loading sparrow {} from {:?}",
+                    char_name,
+                    atlas_dir
+                );
+                let mut sprite =
+                    CharacterSprite::load(gpu, &json_path, &atlas_dir, stage_x, stage_y, is_player);
                 if let Some(&s) = char_def.stage_scale.get(&self.stage_name) {
                     sprite.scale = s as f32;
                 }
                 Some(Character::Sparrow(sprite))
             } else {
-                log::warn!("Change Character: can't find atlas for image '{}'", effective_image);
+                log::warn!(
+                    "Change Character: can't find atlas for image '{}'",
+                    effective_image
+                );
                 None
             };
 
@@ -1000,33 +1107,45 @@ impl PlayScreen {
         use rustic_scripting::LuaValue;
 
         // Process pending note type registrations from Lua scripts
-        let note_regs: Vec<_> = self.scripts.state.note_type_registrations.drain(..).collect();
+        let note_regs: Vec<_> = self
+            .scripts
+            .state
+            .note_type_registrations
+            .drain(..)
+            .collect();
         for reg in note_regs {
             // Queue skin load if a custom skin path was specified
             if let Some(ref skin) = reg.note_skin {
                 if !skin.is_empty() && !self.custom_note_assets.contains_key(&reg.name) {
                     self.pending_note_skin_loads.push((
-                        reg.name.clone(), skin.clone(),
-                        reg.note_anims.clone(), reg.strum_anims.clone(), reg.confirm_anims.clone(),
+                        reg.name.clone(),
+                        skin.clone(),
+                        reg.note_anims.clone(),
+                        reg.strum_anims.clone(),
+                        reg.confirm_anims.clone(),
                     ));
                 }
             }
-            rustic_core::note::register_note_type(&reg.name, rustic_core::note::NoteTypeConfig {
-                hit_causes_miss: reg.hit_causes_miss,
-                hit_damage: reg.hit_damage,
-                ignore_miss: reg.ignore_miss,
-                note_skin: reg.note_skin,
-                note_anims: reg.note_anims,
-                strum_anims: reg.strum_anims,
-                confirm_anims: reg.confirm_anims,
-                hit_sfx: reg.hit_sfx,
-                health_drain_pct: reg.health_drain_pct,
-                drain_death_safe: reg.drain_death_safe,
-            });
+            rustic_core::note::register_note_type(
+                &reg.name,
+                rustic_core::note::NoteTypeConfig {
+                    hit_causes_miss: reg.hit_causes_miss,
+                    hit_damage: reg.hit_damage,
+                    ignore_miss: reg.ignore_miss,
+                    note_skin: reg.note_skin,
+                    note_anims: reg.note_anims,
+                    strum_anims: reg.strum_anims,
+                    confirm_anims: reg.confirm_anims,
+                    hit_sfx: reg.hit_sfx,
+                    health_drain_pct: reg.health_drain_pct,
+                    drain_death_safe: reg.drain_death_safe,
+                },
+            );
             log::info!("Registered note type '{}' from Lua", reg.name);
         }
 
-        let writes: Vec<(String, LuaValue)> = self.scripts.state.property_writes.drain(..).collect();
+        let writes: Vec<(String, LuaValue)> =
+            self.scripts.state.property_writes.drain(..).collect();
         for (prop, val) in writes {
             let as_f32 = match &val {
                 LuaValue::Float(f) => Some(*f as f32),
@@ -1214,31 +1333,67 @@ impl PlayScreen {
                 }
                 // Character position/alpha/visibility
                 "dad.x" | "dadGroup.x" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_dad { c.set_x(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_dad {
+                            c.set_x(v);
+                        }
+                    }
                 }
                 "dad.y" | "dadGroup.y" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_dad { c.set_y(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_dad {
+                            c.set_y(v);
+                        }
+                    }
                 }
                 "boyfriend.x" | "bf.x" | "boyfriendGroup.x" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_bf { c.set_x(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_bf {
+                            c.set_x(v);
+                        }
+                    }
                 }
                 "boyfriend.y" | "bf.y" | "boyfriendGroup.y" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_bf { c.set_y(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_bf {
+                            c.set_y(v);
+                        }
+                    }
                 }
                 "gf.x" | "girlfriend.x" | "gfGroup.x" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_gf { c.set_x(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_gf {
+                            c.set_x(v);
+                        }
+                    }
                 }
                 "gf.y" | "girlfriend.y" | "gfGroup.y" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_gf { c.set_y(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_gf {
+                            c.set_y(v);
+                        }
+                    }
                 }
                 "dad.alpha" | "dadGroup.alpha" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_dad { c.set_alpha(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_dad {
+                            c.set_alpha(v);
+                        }
+                    }
                 }
                 "boyfriend.alpha" | "bf.alpha" | "boyfriendGroup.alpha" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_bf { c.set_alpha(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_bf {
+                            c.set_alpha(v);
+                        }
+                    }
                 }
                 "gf.alpha" | "girlfriend.alpha" | "gfGroup.alpha" => {
-                    if let Some(v) = as_f32 { if let Some(c) = &mut self.char_gf { c.set_alpha(v); } }
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_gf {
+                            c.set_alpha(v);
+                        }
+                    }
                 }
                 "hud.zoom" => {
                     if let Some(v) = as_f32 {
@@ -1255,7 +1410,9 @@ impl PlayScreen {
         if !self.scripts.state.note_overrides.is_empty() {
             let overrides = std::mem::take(&mut self.scripts.state.note_overrides);
             for (idx, fields) in overrides {
-                if idx >= self.game.notes.len() { continue; }
+                if idx >= self.game.notes.len() {
+                    continue;
+                }
                 let note = &mut self.game.notes[idx];
                 for (field, val) in &fields {
                     match field.as_str() {
@@ -1281,8 +1438,12 @@ impl PlayScreen {
 
     /// Process pending character position adjustments from runHaxeCode.
     pub(super) fn process_char_positions(&mut self) {
-        let adjustments: Vec<(String, String, f64)> =
-            self.scripts.state.char_position_adjustments.drain(..).collect();
+        let adjustments: Vec<(String, String, f64)> = self
+            .scripts
+            .state
+            .char_position_adjustments
+            .drain(..)
+            .collect();
 
         let mut i = 0;
         while i < adjustments.len() {
@@ -1317,7 +1478,13 @@ impl PlayScreen {
             ("y", false) => ch.set_y(value),
             _ => {}
         }
-        log::debug!("char position: {}.{} {} {}", char_name, field, if is_delta { "+=" } else { "=" }, value);
+        log::debug!(
+            "char position: {}.{} {} {}",
+            char_name,
+            field,
+            if is_delta { "+=" } else { "=" },
+            value
+        );
     }
 
     /// Process pending Lua sprite additions: load textures and add to draw lists.
@@ -1325,7 +1492,9 @@ impl PlayScreen {
         let adds: Vec<(String, bool)> = self.scripts.state.sprites_to_add.drain(..).collect();
         for (tag, in_front) in adds {
             // Skip if already added
-            if self.lua_textures.contains_key(&tag) { continue; }
+            if self.lua_textures.contains_key(&tag) {
+                continue;
+            }
 
             // Load texture based on sprite kind
             let sprite = match self.scripts.state.lua_sprites.get(&tag) {
@@ -1354,9 +1523,11 @@ impl PlayScreen {
                         continue;
                     }
                 }
-                LuaSpriteKind::Graphic { width, height, color } => {
-                    gpu.create_solid_texture(*width as u32, *height as u32, color)
-                }
+                LuaSpriteKind::Graphic {
+                    width,
+                    height,
+                    color,
+                } => gpu.create_solid_texture(*width as u32, *height as u32, color),
                 LuaSpriteKind::Animated(image) => {
                     if let Some(png) = self.paths.image(image) {
                         // Load XML atlas alongside the PNG
@@ -1369,7 +1540,11 @@ impl PlayScreen {
                                         if def.indices.is_empty() {
                                             atlas.add_by_prefix(anim_name, &def.prefix);
                                         } else {
-                                            atlas.add_by_indices(anim_name, &def.prefix, &def.indices);
+                                            atlas.add_by_indices(
+                                                anim_name,
+                                                &def.prefix,
+                                                &def.indices,
+                                            );
                                         }
                                     }
                                 }
@@ -1508,10 +1683,21 @@ impl Screen for PlayScreen {
     }
 
     fn handle_key_release(&mut self, key: KeyCode) {
-        if self.pause_menu.is_some() && matches!(key, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::KeyA | KeyCode::KeyD) {
+        if self.pause_menu.is_some()
+            && matches!(
+                key,
+                KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::KeyA | KeyCode::KeyD
+            )
+        {
             self.pause_skip_direction = 0;
         }
         if let Some(lane) = self.key_to_lane(key) {
+            #[cfg(feature = "rl")]
+            if let Some(harness) = &self.rl_harness {
+                if harness.control_gameplay() {
+                    return; // Ignore human input when agent is driving
+                }
+            }
             self.game.key_release(lane);
         }
     }
@@ -1519,7 +1705,12 @@ impl Screen for PlayScreen {
     fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
         let (x, y) = (x as f32, y as f32);
 
-        if let Some(CutsceneState::Video { skippable, blocks_gameplay, .. }) = &self.cutscene {
+        if let Some(CutsceneState::Video {
+            skippable,
+            blocks_gameplay,
+            ..
+        }) = &self.cutscene
+        {
             if *blocks_gameplay {
                 if *skippable && phase == TouchPhase::Started {
                     self.skip_cutscene();
@@ -1555,6 +1746,14 @@ impl Screen for PlayScreen {
         // Gameplay: full screen divided into 4 equal lane columns
         let lane = ((x / GAME_W) * 4.0) as usize;
         let lane = lane.min(3);
+
+        #[cfg(feature = "rl")]
+        if let Some(harness) = &self.rl_harness {
+            if harness.control_gameplay() {
+                return; // Ignore human input when agent is driving
+            }
+        }
+
         match phase {
             TouchPhase::Started => self.game.key_press(lane),
             TouchPhase::Ended | TouchPhase::Cancelled => self.game.key_release(lane),
@@ -1574,8 +1773,15 @@ impl Screen for PlayScreen {
         if self.wants_restart {
             self.wants_restart = false;
             Some(match self.story.clone() {
-                Some(story) => Box::new(PlayScreen::from_story_session(story, self.game.play_as_opponent)) as Box<dyn Screen>,
-                None => Box::new(PlayScreen::new(&self.song_name, &self.difficulty, self.game.play_as_opponent)),
+                Some(story) => Box::new(PlayScreen::from_story_session(
+                    story,
+                    self.game.play_as_opponent,
+                )) as Box<dyn Screen>,
+                None => Box::new(PlayScreen::new(
+                    &self.song_name,
+                    &self.difficulty,
+                    self.game.play_as_opponent,
+                )),
             })
         } else if self.game.song_ended {
             if self.completed_song && !self.score_saved && !self.practice_mode && !self.botplay {
@@ -1593,21 +1799,33 @@ impl Screen for PlayScreen {
             if let Some(story) = self.story.clone() {
                 let next_screen: Box<dyn Screen> = if self.completed_song {
                     if let Some(next_story) = story.advance(self.game.score.score) {
-                        Box::new(PlayScreen::from_story_session(next_story, self.game.play_as_opponent))
+                        Box::new(PlayScreen::from_story_session(
+                            next_story,
+                            self.game.play_as_opponent,
+                        ))
                     } else {
                         if !self.practice_mode && !self.botplay {
                             let mut store = HighscoreStore::load();
                             let total_score = story.completed_total(self.game.score.score);
-                            if total_score > store.get_week_score(&story.week_id, &story.difficulty) {
+                            if total_score > store.get_week_score(&story.week_id, &story.difficulty)
+                            {
                                 store.reset_week(&story.week_id, &story.difficulty);
-                                store.add_week_score(&story.week_id, &story.difficulty, total_score);
+                                store.add_week_score(
+                                    &story.week_id,
+                                    &story.difficulty,
+                                    total_score,
+                                );
                                 store.save();
                             }
                         }
-                        Box::new(super::story_menu::StoryMenuScreen::with_week(Some(story.week_id)))
+                        Box::new(super::story_menu::StoryMenuScreen::with_week(Some(
+                            story.week_id,
+                        )))
                     }
                 } else {
-                    Box::new(super::story_menu::StoryMenuScreen::with_week(Some(story.week_id)))
+                    Box::new(super::story_menu::StoryMenuScreen::with_week(Some(
+                        story.week_id,
+                    )))
                 };
                 self.game.song_ended = false;
                 return Some(next_screen);

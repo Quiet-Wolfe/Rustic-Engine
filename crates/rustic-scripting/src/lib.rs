@@ -6,8 +6,10 @@ pub mod tweens;
 
 pub use hscript_engine::HScriptEngine;
 pub use lua_engine::LuaScript;
-pub use script_state::{AudioRequest, ScriptState, LuaSprite, LuaSpriteKind, LuaValue, StrumProps, NoteTypeRegistration};
-pub use tweens::{TweenManager, Tween, TweenProperty, EaseFunc, LuaTimer};
+pub use script_state::{
+    AudioRequest, LuaSprite, LuaSpriteKind, LuaValue, NoteTypeRegistration, ScriptState, StrumProps,
+};
+pub use tweens::{EaseFunc, LuaTimer, Tween, TweenManager, TweenProperty};
 
 use std::path::{Path, PathBuf};
 
@@ -130,11 +132,23 @@ impl ScriptManager {
 
     /// Call a note-hit callback with Psych Engine's standard arguments.
     /// HScript side receives them as four positional args in the same order.
-    pub fn call_note_hit(&mut self, callback: &str, members_index: usize, note_data: usize, note_type: &str, is_sustain: bool) {
+    pub fn call_note_hit(
+        &mut self,
+        callback: &str,
+        members_index: usize,
+        note_data: usize,
+        note_type: &str,
+        is_sustain: bool,
+    ) {
         for script in &mut self.scripts {
             let result = match script {
                 Script::Lua(s) => s.call_note_callback(
-                    callback, &mut self.state, members_index, note_data, note_type, is_sustain,
+                    callback,
+                    &mut self.state,
+                    members_index,
+                    note_data,
+                    note_type,
+                    is_sustain,
                 ),
                 Script::HScript(s) => {
                     // HScript bridge takes numeric-only or string-only right now;
@@ -142,9 +156,7 @@ impl ScriptManager {
                     let mi = members_index.to_string();
                     let nd = note_data.to_string();
                     let sus = if is_sustain { "true" } else { "false" };
-                    s.call_callback_str(
-                        callback, &mut self.state, &[&mi, &nd, note_type, sus],
-                    )
+                    s.call_callback_str(callback, &mut self.state, &[&mi, &nd, note_type, sus])
                 }
             };
             if let Err(e) = result {
@@ -170,19 +182,26 @@ impl ScriptManager {
         self.state.tweens.update(dt);
 
         // Apply tween values to sprites and strums
-        let game_tweens = self.state.tweens.apply_to_sprites(&mut self.state.lua_sprites, &mut self.state.strum_props);
+        let game_tweens = self
+            .state
+            .tweens
+            .apply_to_sprites(&mut self.state.lua_sprites, &mut self.state.strum_props);
 
         // Convert game tweens to property writes so PlayScreen can process them
         for (target, prop, val) in game_tweens {
             // Variable tweens: update custom_vars directly
             if let Some(var_name) = target.strip_prefix("__var_") {
-                self.state.custom_vars.insert(var_name.to_string(), LuaValue::Float(val as f64));
+                self.state
+                    .custom_vars
+                    .insert(var_name.to_string(), LuaValue::Float(val as f64));
                 continue;
             }
 
             // Character/group tweens → emit property writes
-            let is_char_target = matches!(target.as_str(),
-                "dad" | "dadGroup" | "boyfriend" | "boyfriendGroup" | "gf" | "gfGroup");
+            let is_char_target = matches!(
+                target.as_str(),
+                "dad" | "dadGroup" | "boyfriend" | "boyfriendGroup" | "gf" | "gfGroup"
+            );
             if is_char_target {
                 let char_prefix = match target.as_str() {
                     "dad" | "dadGroup" => "dad",
@@ -197,38 +216,41 @@ impl ScriptManager {
                     TweenProperty::Angle => format!("{}.angle", char_prefix),
                     _ => continue,
                 };
-                self.state.property_writes.push((
-                    prop_name,
-                    LuaValue::Float(val as f64),
-                ));
+                self.state
+                    .property_writes
+                    .push((prop_name, LuaValue::Float(val as f64)));
                 continue;
             }
 
             let prop_name = match prop {
                 TweenProperty::Zoom => {
-                    if target == "camGame" { "camera.zoom" }
-                    else if target == "camHUD" { "hud.zoom" }
-                    else { continue; }
+                    if target == "camGame" {
+                        "camera.zoom"
+                    } else if target == "camHUD" {
+                        "hud.zoom"
+                    } else {
+                        continue;
+                    }
                 }
                 _ => continue,
             };
-            self.state.property_writes.push((
-                prop_name.to_string(),
-                LuaValue::Float(val as f64),
-            ));
+            self.state
+                .property_writes
+                .push((prop_name.to_string(), LuaValue::Float(val as f64)));
         }
 
         // Fire onTweenCompleted callbacks
-        let completed: Vec<(String, String)> = self.state.tweens.completed_tweens.drain(..).collect();
+        let completed: Vec<(String, String)> =
+            self.state.tweens.completed_tweens.drain(..).collect();
         for (tag, vars) in completed {
             for script in &mut self.scripts {
                 let result = match script {
-                    Script::Lua(s) => s.call_callback_str(
-                        "onTweenCompleted", &mut self.state, &[&tag, &vars],
-                    ),
-                    Script::HScript(s) => s.call_callback_str(
-                        "onTweenCompleted", &mut self.state, &[&tag, &vars],
-                    ),
+                    Script::Lua(s) => {
+                        s.call_callback_str("onTweenCompleted", &mut self.state, &[&tag, &vars])
+                    }
+                    Script::HScript(s) => {
+                        s.call_callback_str("onTweenCompleted", &mut self.state, &[&tag, &vars])
+                    }
                 };
                 if let Err(e) = result {
                     log::error!("onTweenCompleted error: {}", e);
@@ -237,18 +259,25 @@ impl ScriptManager {
         }
 
         // Fire onTimerCompleted callbacks
-        let timer_completed: Vec<(String, i32, i32)> = self.state.tweens.completed_timers.drain(..).collect();
+        let timer_completed: Vec<(String, i32, i32)> =
+            self.state.tweens.completed_timers.drain(..).collect();
         for (tag, loops_done, loops_left) in timer_completed {
             for script in &mut self.scripts {
                 let result = match script {
                     Script::Lua(s) => s.call_callback_with_mixed(
-                        "onTimerCompleted", &mut self.state, &tag, loops_done, loops_left,
+                        "onTimerCompleted",
+                        &mut self.state,
+                        &tag,
+                        loops_done,
+                        loops_left,
                     ),
                     Script::HScript(s) => {
                         let done = loops_done.to_string();
                         let left = loops_left.to_string();
                         s.call_callback_str(
-                            "onTimerCompleted", &mut self.state, &[&tag, &done, &left],
+                            "onTimerCompleted",
+                            &mut self.state,
+                            &[&tag, &done, &left],
                         )
                     }
                 };
@@ -312,12 +341,12 @@ impl ScriptManager {
     pub fn call_event(&mut self, name: &str, value1: &str, value2: &str) {
         for script in &mut self.scripts {
             let result = match script {
-                Script::Lua(s) => s.call_callback_str(
-                    "onEvent", &mut self.state, &[name, value1, value2],
-                ),
-                Script::HScript(s) => s.call_callback_str(
-                    "onEvent", &mut self.state, &[name, value1, value2],
-                ),
+                Script::Lua(s) => {
+                    s.call_callback_str("onEvent", &mut self.state, &[name, value1, value2])
+                }
+                Script::HScript(s) => {
+                    s.call_callback_str("onEvent", &mut self.state, &[name, value1, value2])
+                }
             };
             if let Err(e) = result {
                 log::error!("onEvent error: {}", e);

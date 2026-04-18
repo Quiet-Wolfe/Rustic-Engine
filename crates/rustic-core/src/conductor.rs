@@ -165,10 +165,7 @@ mod tests {
     #[test]
     fn test_bpm_change_map() {
         let mut c = Conductor::new(120.0);
-        let sections = vec![
-            (false, 120.0, 4.0),
-            (true, 180.0, 4.0),
-        ];
+        let sections = vec![(false, 120.0, 4.0), (true, 180.0, 4.0)];
         c.map_bpm_changes(120.0, sections);
 
         assert_eq!(c.bpm_change_map.len(), 1);
@@ -179,10 +176,7 @@ mod tests {
     #[test]
     fn test_step_with_bpm_change() {
         let mut c = Conductor::new(120.0);
-        let sections = vec![
-            (false, 120.0, 4.0),
-            (true, 180.0, 4.0),
-        ];
+        let sections = vec![(false, 120.0, 4.0), (true, 180.0, 4.0)];
         c.map_bpm_changes(120.0, sections);
 
         let change_time = c.bpm_change_map[0].song_time;

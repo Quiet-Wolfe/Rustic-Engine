@@ -53,7 +53,11 @@ impl DemoRecorder {
         let safe_song = sanitize(song);
         let safe_diff = sanitize(difficulty);
         let path = dir.join(format!("{safe_song}_{safe_diff}_{ts}.jsonl"));
-        Ok(Self { writer: None, path, step_count: 0 })
+        Ok(Self {
+            writer: None,
+            path,
+            step_count: 0,
+        })
     }
 
     /// Directory where all demo files live.
@@ -75,7 +79,10 @@ impl DemoRecorder {
             if let Some(parent) = self.path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?;
             self.writer = Some(BufWriter::new(file));
         }
         let line = serde_json::to_string(step)
@@ -104,7 +111,13 @@ impl Drop for DemoRecorder {
 
 fn sanitize(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -124,6 +137,25 @@ pub fn load_all_demos() -> std::io::Result<Vec<DemoStep>> {
 
 /// Same as `load_all_demos` but reads from an explicit directory.
 pub fn load_demos_from(dir: &Path) -> std::io::Result<Vec<DemoStep>> {
+    let per_file = load_demo_files_from(dir)?;
+    Ok(per_file.into_iter().flat_map(|f| f.steps).collect())
+}
+
+/// One demo file on disk, decoded. `name` is the filename only (no
+/// directory), `size` is the raw byte length of the file at load time —
+/// together they make a cheap fingerprint for "have we already BC'd on
+/// this?" tracking.
+#[derive(Debug, Clone)]
+pub struct DemoFile {
+    pub name: String,
+    pub size: u64,
+    pub steps: Vec<DemoStep>,
+}
+
+/// Load every `.jsonl` file in `dir` and return them per-file. Caller can
+/// fingerprint individual files and filter before flattening into a training
+/// corpus. Invalid lines are skipped with a warning.
+pub fn load_demo_files_from(dir: &Path) -> std::io::Result<Vec<DemoFile>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -134,13 +166,18 @@ pub fn load_demos_from(dir: &Path) -> std::io::Result<Vec<DemoStep>> {
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()).map(String::from) else {
+            continue;
+        };
+        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let text = fs::read_to_string(&path)?;
+        let mut steps = Vec::new();
         for (line_no, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
             match serde_json::from_str::<DemoStep>(line) {
-                Ok(step) => out.push(step),
+                Ok(step) => steps.push(step),
                 Err(e) => {
                     log::warn!(
                         "rustic-rl: skipping bad demo line {}:{}: {}",
@@ -151,6 +188,7 @@ pub fn load_demos_from(dir: &Path) -> std::io::Result<Vec<DemoStep>> {
                 }
             }
         }
+        out.push(DemoFile { name, size, steps });
     }
     Ok(out)
 }
@@ -166,7 +204,9 @@ mod tests {
         let mut rec = DemoRecorder::new_in(&tmp, "song-A", "hard").expect("new");
         let step = DemoStep {
             obs: Observation::zero(),
-            action: Action { press: [true, false, true, false] },
+            action: Action {
+                press: [true, false, true, false],
+            },
             reward: 1.5,
         };
         rec.record(&step).expect("record");

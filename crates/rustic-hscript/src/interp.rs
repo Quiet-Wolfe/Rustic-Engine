@@ -173,7 +173,11 @@ impl Interp {
 
             ExprKind::Ident(name) => self.lookup_ident(name, host),
 
-            ExprKind::Field { expr, field, is_optional } => {
+            ExprKind::Field {
+                expr,
+                field,
+                is_optional,
+            } => {
                 let target = self.eval_expr(expr, host)?;
                 if *is_optional && matches!(target, Value::Null) {
                     return Ok(Value::Null);
@@ -189,7 +193,9 @@ impl Interp {
 
             ExprKind::Call { expr, args } => self.eval_call(expr, args, host),
 
-            ExprKind::New { type_path, args, .. } => {
+            ExprKind::New {
+                type_path, args, ..
+            } => {
                 let evaluated: Vec<Value> = args
                     .iter()
                     .map(|a| self.eval_expr(a, host))
@@ -203,7 +209,11 @@ impl Interp {
             ExprKind::Binary { left, op, right } => self.eval_binary(left, *op, right, host),
             ExprKind::Assign { left, op, right } => self.eval_assign(left, *op, right, host),
 
-            ExprKind::Ternary { cond, then_expr, else_expr } => {
+            ExprKind::Ternary {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
                 if self.eval_expr(cond, host)?.is_truthy() {
                     self.eval_expr(then_expr, host)
                 } else {
@@ -308,7 +318,11 @@ impl Interp {
                 Err(Flow::Throw(v))
             }
 
-            ExprKind::If { cond, then_branch, else_branch } => {
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 if self.eval_expr(cond, host)?.is_truthy() {
                     self.eval_expr(then_branch, host)
                 } else if let Some(else_b) = else_branch {
@@ -345,9 +359,12 @@ impl Interp {
                 Ok(Value::Null)
             }
 
-            ExprKind::For { var, key_var, iter, body } => {
-                self.eval_for(var, key_var.as_deref(), iter, body, host)
-            }
+            ExprKind::For {
+                var,
+                key_var,
+                iter,
+                body,
+            } => self.eval_for(var, key_var.as_deref(), iter, body, host),
 
             ExprKind::Try { expr, catches, .. } => match self.eval_expr(expr, host) {
                 Err(Flow::Throw(thrown)) => {
@@ -377,11 +394,7 @@ impl Interp {
         }
     }
 
-    fn eval_block(
-        &mut self,
-        elements: &[BlockElement],
-        host: &mut dyn HostBridge,
-    ) -> EvalResult {
+    fn eval_block(&mut self, elements: &[BlockElement], host: &mut dyn HostBridge) -> EvalResult {
         self.scope.push();
         let mut last = Value::Null;
         let mut result: EvalResult = Ok(Value::Null);
@@ -415,11 +428,15 @@ impl Interp {
         host: &mut dyn HostBridge,
     ) -> EvalResult {
         // Range literal `a...b` shows up as a Binary with op Range.
-        if let ExprKind::Binary { left, op: BinaryOp::Range, right } = &iter.kind {
-            let start = self
-                .eval_expr(left, host)?
-                .as_i64()
-                .ok_or_else(|| Flow::Err(HScriptError::Runtime("range start not integer".into())))?;
+        if let ExprKind::Binary {
+            left,
+            op: BinaryOp::Range,
+            right,
+        } = &iter.kind
+        {
+            let start = self.eval_expr(left, host)?.as_i64().ok_or_else(|| {
+                Flow::Err(HScriptError::Runtime("range start not integer".into()))
+            })?;
             let end = self
                 .eval_expr(right, host)?
                 .as_i64()
@@ -461,8 +478,11 @@ impl Interp {
                 Ok(Value::Null)
             }
             Value::Object(map) => {
-                let snapshot: Vec<(String, Value)> =
-                    map.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let snapshot: Vec<(String, Value)> = map
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 for (k, v) in snapshot {
                     self.scope.push();
                     if let Some(kn) = key_var {
@@ -497,12 +517,7 @@ impl Interp {
             .map_err(|e| Flow::Err(HScriptError::Runtime(e)))
     }
 
-    fn field_get(
-        &mut self,
-        target: &Value,
-        field: &str,
-        host: &mut dyn HostBridge,
-    ) -> EvalResult {
+    fn field_get(&mut self, target: &Value, field: &str, host: &mut dyn HostBridge) -> EvalResult {
         match target {
             Value::Object(map) => Ok(map.borrow().get(field).cloned().unwrap_or(Value::Null)),
             Value::Array(arr) => match field {
@@ -599,12 +614,7 @@ impl Interp {
         }
     }
 
-    fn eval_call(
-        &mut self,
-        callee: &Expr,
-        args: &[Expr],
-        host: &mut dyn HostBridge,
-    ) -> EvalResult {
+    fn eval_call(&mut self, callee: &Expr, args: &[Expr], host: &mut dyn HostBridge) -> EvalResult {
         let arg_values: Vec<Value> = args
             .iter()
             .map(|a| self.eval_expr(a, host))
@@ -616,7 +626,9 @@ impl Interp {
             let target = self.eval_expr(expr, host)?;
             if let Value::Object(map) = &target {
                 if let Some(inner) = map.borrow().get(field).cloned() {
-                    return self.call_value(&inner, &arg_values, host).map_err(Flow::Err);
+                    return self
+                        .call_value(&inner, &arg_values, host)
+                        .map_err(Flow::Err);
                 }
             }
             return host
@@ -625,7 +637,8 @@ impl Interp {
         }
 
         let callee_value = self.eval_expr(callee, host)?;
-        self.call_value(&callee_value, &arg_values, host).map_err(Flow::Err)
+        self.call_value(&callee_value, &arg_values, host)
+            .map_err(Flow::Err)
     }
 
     fn eval_unary(&mut self, op: UnaryOp, expr: &Expr, host: &mut dyn HostBridge) -> EvalResult {
@@ -744,12 +757,7 @@ impl Interp {
         Ok(new_value)
     }
 
-    fn store(
-        &mut self,
-        target: &Expr,
-        value: Value,
-        host: &mut dyn HostBridge,
-    ) -> EvalResult {
+    fn store(&mut self, target: &Expr, value: Value, host: &mut dyn HostBridge) -> EvalResult {
         match &target.kind {
             ExprKind::Ident(name) => {
                 if self.scope.assign(name, value.clone()) {

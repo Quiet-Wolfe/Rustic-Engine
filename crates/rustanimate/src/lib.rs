@@ -83,14 +83,17 @@ impl FlxAnimate {
 
         let mut sprite_map = HashMap::new();
         for s in &sprites.atlas.sprites {
-            sprite_map.insert(s.sprite.name.clone(), spritemap::AnimateSpriteData {
-                name: s.sprite.name.clone(),
-                x: s.sprite.x,
-                y: s.sprite.y,
-                w: s.sprite.w,
-                h: s.sprite.h,
-                rotated: s.sprite.rotated,
-            });
+            sprite_map.insert(
+                s.sprite.name.clone(),
+                spritemap::AnimateSpriteData {
+                    name: s.sprite.name.clone(),
+                    x: s.sprite.x,
+                    y: s.sprite.y,
+                    w: s.sprite.w,
+                    h: s.sprite.h,
+                    rotated: s.sprite.rotated,
+                },
+            );
         }
 
         let mut symbol_map = HashMap::new();
@@ -101,17 +104,20 @@ impl FlxAnimate {
                 symbol_map.insert(symbol.sn.clone(), cloned_sym);
             }
         }
-        
+
         let main_sn = atlas.an.sn.clone().unwrap_or_else(|| atlas.an.n.clone());
         if let Some(tl) = &atlas.an.tl {
-            symbol_map.insert(main_sn.clone(), animation::SymbolData {
-                sn: main_sn.clone(),
-                tl: tl.clone(),
-            });
+            symbol_map.insert(
+                main_sn.clone(),
+                animation::SymbolData {
+                    sn: main_sn.clone(),
+                    tl: tl.clone(),
+                },
+            );
         }
 
         let framerate = atlas.md.as_ref().and_then(|md| md.frt).unwrap_or(24.0);
-        
+
         let mut available_animations = Vec::new();
         if let Some(main_sym) = symbol_map.get(&main_sn) {
             for layer in &main_sym.tl.l {
@@ -236,7 +242,12 @@ impl FlxAnimate {
                 m3d: None,
                 mx: None,
             };
-            self.draw_symbol_instance(&dummy_si, base_transform, self.current_frame, &mut draw_calls);
+            self.draw_symbol_instance(
+                &dummy_si,
+                base_transform,
+                self.current_frame,
+                &mut draw_calls,
+            );
         }
 
         draw_calls
@@ -259,36 +270,37 @@ impl FlxAnimate {
             m3d: None,
             mx: None,
         };
-        self.draw_symbol_instance(&dummy_si, base_transform, self.current_frame, &mut draw_calls);
+        self.draw_symbol_instance(
+            &dummy_si,
+            base_transform,
+            self.current_frame,
+            &mut draw_calls,
+        );
 
         draw_calls
     }
 
     fn draw_symbol_instance(
-        &self, 
-        si: &animation::SymbolInstance, 
-        parent_transform: glam::Mat3, 
+        &self,
+        si: &animation::SymbolInstance,
+        parent_transform: glam::Mat3,
         parent_frame: u32,
-        draw_calls: &mut Vec<DrawCall>
+        draw_calls: &mut Vec<DrawCall>,
     ) {
         // Resolve matrix
         let mut local_transform = glam::Mat3::IDENTITY;
-        
+
         // Use M3D if available
         if let Some(m3d) = &si.m3d {
             if m3d.len() == 16 {
                 local_transform = glam::Mat3::from_cols_array(&[
-                    m3d[0], m3d[1], 0.0,
-                    m3d[4], m3d[5], 0.0,
-                    m3d[12], m3d[13], 1.0,
+                    m3d[0], m3d[1], 0.0, m3d[4], m3d[5], 0.0, m3d[12], m3d[13], 1.0,
                 ]);
             }
         } else if let Some(mx) = &si.mx {
             if mx.len() == 6 {
                 local_transform = glam::Mat3::from_cols_array(&[
-                    mx[0], mx[1], 0.0,
-                    mx[2], mx[3], 0.0,
-                    mx[4], mx[5], 1.0,
+                    mx[0], mx[1], 0.0, mx[2], mx[3], 0.0, mx[4], mx[5], 1.0,
                 ]);
             }
         }
@@ -308,13 +320,16 @@ impl FlxAnimate {
             // Apply loop type and first frame
             let ff = si.ff.unwrap_or(0);
             let mut local_frame = parent_frame + ff;
-            
+
             // Handle looping (assuming Loop by default for now if lp is missing)
-            if si.lp.as_deref() == Some("PO") { // Play Once
+            if si.lp.as_deref() == Some("PO") {
+                // Play Once
                 local_frame = local_frame.min(child_len.saturating_sub(1));
-            } else if si.lp.as_deref() == Some("SF") { // Single Frame
+            } else if si.lp.as_deref() == Some("SF") {
+                // Single Frame
                 local_frame = ff;
-            } else { // LP (Loop) or None
+            } else {
+                // LP (Loop) or None
                 if child_len > 0 {
                     local_frame = local_frame % child_len;
                 }
@@ -334,7 +349,12 @@ impl FlxAnimate {
                     let relative_frame = local_frame - kf.i;
                     for element in &kf.e {
                         if let Some(child_si) = &element.si {
-                            self.draw_symbol_instance(child_si, transform, relative_frame, draw_calls);
+                            self.draw_symbol_instance(
+                                child_si,
+                                transform,
+                                relative_frame,
+                                draw_calls,
+                            );
                         } else if let Some(asi) = &element.asi {
                             self.draw_atlas_symbol(asi, transform, draw_calls);
                         }
@@ -344,23 +364,24 @@ impl FlxAnimate {
         }
     }
 
-    fn draw_atlas_symbol(&self, asi: &animation::AtlasSymbolInstance, parent_transform: glam::Mat3, draw_calls: &mut Vec<DrawCall>) {
+    fn draw_atlas_symbol(
+        &self,
+        asi: &animation::AtlasSymbolInstance,
+        parent_transform: glam::Mat3,
+        draw_calls: &mut Vec<DrawCall>,
+    ) {
         let mut local_transform = glam::Mat3::IDENTITY;
 
         if let Some(m3d) = &asi.m3d {
             if m3d.len() == 16 {
                 local_transform = glam::Mat3::from_cols_array(&[
-                    m3d[0], m3d[1], 0.0,
-                    m3d[4], m3d[5], 0.0,
-                    m3d[12], m3d[13], 1.0,
+                    m3d[0], m3d[1], 0.0, m3d[4], m3d[5], 0.0, m3d[12], m3d[13], 1.0,
                 ]);
             }
         } else if let Some(mx) = &asi.mx {
             if mx.len() == 6 {
                 local_transform = glam::Mat3::from_cols_array(&[
-                    mx[0], mx[1], 0.0,
-                    mx[2], mx[3], 0.0,
-                    mx[4], mx[5], 1.0,
+                    mx[0], mx[1], 0.0, mx[2], mx[3], 0.0, mx[4], mx[5], 1.0,
                 ]);
             }
         }
@@ -415,14 +436,30 @@ impl FlxAnimate {
             };
 
             let color = [1.0, 1.0, 1.0, 1.0]; // Default white tint
-            
-            let vertex_0 = RenderVertex { position: [p0.x, p0.y], uv: [uv0.x, uv0.y], color };
-            let vertex_1 = RenderVertex { position: [p1.x, p1.y], uv: [uv1.x, uv1.y], color };
-            let vertex_2 = RenderVertex { position: [p2.x, p2.y], uv: [uv2.x, uv2.y], color };
-            let vertex_3 = RenderVertex { position: [p3.x, p3.y], uv: [uv3.x, uv3.y], color };
+
+            let vertex_0 = RenderVertex {
+                position: [p0.x, p0.y],
+                uv: [uv0.x, uv0.y],
+                color,
+            };
+            let vertex_1 = RenderVertex {
+                position: [p1.x, p1.y],
+                uv: [uv1.x, uv1.y],
+                color,
+            };
+            let vertex_2 = RenderVertex {
+                position: [p2.x, p2.y],
+                uv: [uv2.x, uv2.y],
+                color,
+            };
+            let vertex_3 = RenderVertex {
+                position: [p3.x, p3.y],
+                uv: [uv3.x, uv3.y],
+                color,
+            };
 
             let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
-            
+
             draw_calls.push(DrawCall {
                 vertices: [vertex_0, vertex_1, vertex_2, vertex_3],
                 indices,

@@ -43,18 +43,42 @@ pub enum TweenProperty {
 #[derive(Debug, Clone, Copy)]
 pub enum EaseFunc {
     Linear,
-    QuadIn, QuadOut, QuadInOut,
-    CubeIn, CubeOut, CubeInOut,
-    QuartIn, QuartOut, QuartInOut,
-    QuintIn, QuintOut, QuintInOut,
-    SineIn, SineOut, SineInOut,
-    ExpoIn, ExpoOut, ExpoInOut,
-    CircIn, CircOut, CircInOut,
-    BackIn, BackOut, BackInOut,
-    BounceIn, BounceOut, BounceInOut,
-    ElasticIn, ElasticOut, ElasticInOut,
-    SmoothStepIn, SmoothStepOut, SmoothStepInOut,
-    SmootherStepIn, SmootherStepOut, SmootherStepInOut,
+    QuadIn,
+    QuadOut,
+    QuadInOut,
+    CubeIn,
+    CubeOut,
+    CubeInOut,
+    QuartIn,
+    QuartOut,
+    QuartInOut,
+    QuintIn,
+    QuintOut,
+    QuintInOut,
+    SineIn,
+    SineOut,
+    SineInOut,
+    ExpoIn,
+    ExpoOut,
+    ExpoInOut,
+    CircIn,
+    CircOut,
+    CircInOut,
+    BackIn,
+    BackOut,
+    BackInOut,
+    BounceIn,
+    BounceOut,
+    BounceInOut,
+    ElasticIn,
+    ElasticOut,
+    ElasticInOut,
+    SmoothStepIn,
+    SmoothStepOut,
+    SmoothStepInOut,
+    SmootherStepIn,
+    SmootherStepOut,
+    SmootherStepInOut,
 }
 
 impl EaseFunc {
@@ -108,52 +132,99 @@ impl EaseFunc {
             Self::QuadOut => -t * (t - 2.0),
             Self::QuadInOut => {
                 let t = t * 2.0;
-                if t < 1.0 { 0.5 * t * t }
-                else { let t = t - 1.0; -0.5 * (t * (t - 2.0) - 1.0) }
+                if t < 1.0 {
+                    0.5 * t * t
+                } else {
+                    let t = t - 1.0;
+                    -0.5 * (t * (t - 2.0) - 1.0)
+                }
             }
             Self::CubeIn => t * t * t,
-            Self::CubeOut => { let t = t - 1.0; t * t * t + 1.0 }
+            Self::CubeOut => {
+                let t = t - 1.0;
+                t * t * t + 1.0
+            }
             Self::CubeInOut => {
                 let t = t * 2.0;
-                if t < 1.0 { 0.5 * t * t * t }
-                else { let t = t - 2.0; 0.5 * (t * t * t + 2.0) }
+                if t < 1.0 {
+                    0.5 * t * t * t
+                } else {
+                    let t = t - 2.0;
+                    0.5 * (t * t * t + 2.0)
+                }
             }
             Self::QuartIn => t * t * t * t,
-            Self::QuartOut => { let t = t - 1.0; -(t * t * t * t - 1.0) }
+            Self::QuartOut => {
+                let t = t - 1.0;
+                -(t * t * t * t - 1.0)
+            }
             Self::QuartInOut => {
                 let t = t * 2.0;
-                if t < 1.0 { 0.5 * t * t * t * t }
-                else { let t = t - 2.0; -0.5 * (t * t * t * t - 2.0) }
+                if t < 1.0 {
+                    0.5 * t * t * t * t
+                } else {
+                    let t = t - 2.0;
+                    -0.5 * (t * t * t * t - 2.0)
+                }
             }
             Self::QuintIn => t * t * t * t * t,
-            Self::QuintOut => { let t = t - 1.0; t * t * t * t * t + 1.0 }
+            Self::QuintOut => {
+                let t = t - 1.0;
+                t * t * t * t * t + 1.0
+            }
             Self::QuintInOut => {
                 let t = t * 2.0;
-                if t < 1.0 { 0.5 * t * t * t * t * t }
-                else { let t = t - 2.0; 0.5 * (t * t * t * t * t + 2.0) }
+                if t < 1.0 {
+                    0.5 * t * t * t * t * t
+                } else {
+                    let t = t - 2.0;
+                    0.5 * (t * t * t * t * t + 2.0)
+                }
             }
             Self::SineIn => 1.0 - (t * PI / 2.0).cos(),
             Self::SineOut => (t * PI / 2.0).sin(),
             Self::SineInOut => -0.5 * ((PI * t).cos() - 1.0),
             Self::ExpoIn => {
-                if t == 0.0 { 0.0 } else { 2.0_f32.powf(10.0 * (t - 1.0)) }
+                if t == 0.0 {
+                    0.0
+                } else {
+                    2.0_f32.powf(10.0 * (t - 1.0))
+                }
             }
             Self::ExpoOut => {
-                if t == 1.0 { 1.0 } else { 1.0 - 2.0_f32.powf(-10.0 * t) }
+                if t == 1.0 {
+                    1.0
+                } else {
+                    1.0 - 2.0_f32.powf(-10.0 * t)
+                }
             }
             Self::ExpoInOut => {
-                if t == 0.0 { return 0.0; }
-                if t == 1.0 { return 1.0; }
+                if t == 0.0 {
+                    return 0.0;
+                }
+                if t == 1.0 {
+                    return 1.0;
+                }
                 let t = t * 2.0;
-                if t < 1.0 { 0.5 * 2.0_f32.powf(10.0 * (t - 1.0)) }
-                else { 0.5 * (2.0 - 2.0_f32.powf(-10.0 * (t - 1.0))) }
+                if t < 1.0 {
+                    0.5 * 2.0_f32.powf(10.0 * (t - 1.0))
+                } else {
+                    0.5 * (2.0 - 2.0_f32.powf(-10.0 * (t - 1.0)))
+                }
             }
             Self::CircIn => 1.0 - (1.0 - t * t).sqrt(),
-            Self::CircOut => { let t = t - 1.0; (1.0 - t * t).sqrt() }
+            Self::CircOut => {
+                let t = t - 1.0;
+                (1.0 - t * t).sqrt()
+            }
             Self::CircInOut => {
                 let t = t * 2.0;
-                if t < 1.0 { -0.5 * ((1.0 - t * t).sqrt() - 1.0) }
-                else { let t = t - 2.0; 0.5 * ((1.0 - t * t).sqrt() + 1.0) }
+                if t < 1.0 {
+                    -0.5 * ((1.0 - t * t).sqrt() - 1.0)
+                } else {
+                    let t = t - 2.0;
+                    0.5 * ((1.0 - t * t).sqrt() + 1.0)
+                }
             }
             Self::BackIn => {
                 let s = 1.70158_f32;
@@ -167,33 +238,47 @@ impl EaseFunc {
             Self::BackInOut => {
                 let s = 1.70158_f32 * 1.525;
                 let t = t * 2.0;
-                if t < 1.0 { 0.5 * (t * t * ((s + 1.0) * t - s)) }
-                else { let t = t - 2.0; 0.5 * (t * t * ((s + 1.0) * t + s) + 2.0) }
+                if t < 1.0 {
+                    0.5 * (t * t * ((s + 1.0) * t - s))
+                } else {
+                    let t = t - 2.0;
+                    0.5 * (t * t * ((s + 1.0) * t + s) + 2.0)
+                }
             }
             Self::BounceOut => bounce_out(t),
             Self::BounceIn => 1.0 - bounce_out(1.0 - t),
             Self::BounceInOut => {
-                if t < 0.5 { (1.0 - bounce_out(1.0 - 2.0 * t)) * 0.5 }
-                else { bounce_out(2.0 * t - 1.0) * 0.5 + 0.5 }
+                if t < 0.5 {
+                    (1.0 - bounce_out(1.0 - 2.0 * t)) * 0.5
+                } else {
+                    bounce_out(2.0 * t - 1.0) * 0.5 + 0.5
+                }
             }
             Self::ElasticIn => {
-                if t == 0.0 || t == 1.0 { return t; }
+                if t == 0.0 || t == 1.0 {
+                    return t;
+                }
                 let t = t - 1.0;
                 -(2.0_f32.powf(10.0 * t) * (t * 10.0 - 10.75).sin() * (2.0 * PI / 3.0))
             }
             Self::ElasticOut => {
-                if t == 0.0 || t == 1.0 { return t; }
+                if t == 0.0 || t == 1.0 {
+                    return t;
+                }
                 2.0_f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * (2.0 * PI / 3.0)).sin() + 1.0
             }
             Self::ElasticInOut => {
-                if t == 0.0 || t == 1.0 { return t; }
+                if t == 0.0 || t == 1.0 {
+                    return t;
+                }
                 let t = t * 2.0;
                 if t < 1.0 {
                     let t = t - 1.0;
                     -0.5 * 2.0_f32.powf(10.0 * t) * ((t * 10.0 - 10.75) * (2.0 * PI / 4.5)).sin()
                 } else {
                     let t = t - 1.0;
-                    2.0_f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * (2.0 * PI / 4.5)).sin() * 0.5 + 1.0
+                    2.0_f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * (2.0 * PI / 4.5)).sin() * 0.5
+                        + 1.0
                 }
             }
             Self::SmoothStepIn => smooth_step_in(t),
@@ -234,7 +319,10 @@ fn smooth_step_out(t: f32) -> f32 {
 fn smooth_step_in_out(t: f32) -> f32 {
     if t < 0.5 {
         let t = t * 2.0;
-        0.5 * (1.0 - { let t2 = 1.0 - t; t2 * t2 * (3.0 - 2.0 * t2) })
+        0.5 * (1.0 - {
+            let t2 = 1.0 - t;
+            t2 * t2 * (3.0 - 2.0 * t2)
+        })
     } else {
         let t = (t - 0.5) * 2.0;
         0.5 * t * t * (3.0 - 2.0 * t) + 0.5
@@ -270,7 +358,9 @@ impl Tween {
 
     /// Advance the tween by dt seconds. Returns true if just finished.
     pub fn advance(&mut self, dt: f32) -> bool {
-        if self.finished { return false; }
+        if self.finished {
+            return false;
+        }
         self.elapsed += dt;
         if self.elapsed >= self.duration {
             self.elapsed = self.duration;
@@ -294,7 +384,9 @@ pub struct LuaTimer {
 
 impl LuaTimer {
     pub fn advance(&mut self, dt: f32) -> Vec<i32> {
-        if self.finished { return Vec::new(); }
+        if self.finished {
+            return Vec::new();
+        }
         let mut completions = Vec::new();
         self.elapsed += dt;
         while self.elapsed >= self.duration && !self.finished {
@@ -375,7 +467,8 @@ impl TweenManager {
         for (tag, tween) in &mut self.tweens {
             if tween.advance(dt) {
                 self.pending_removal.push(tag.clone());
-                self.completed_tweens.push((tag.clone(), tween.target.clone()));
+                self.completed_tweens
+                    .push((tag.clone(), tween.target.clone()));
             }
         }
 
@@ -384,7 +477,8 @@ impl TweenManager {
         for (tag, timer) in &mut self.timers {
             let completions = timer.advance(dt);
             for remaining in completions {
-                self.completed_timers.push((tag.clone(), timer.loops_done, remaining));
+                self.completed_timers
+                    .push((tag.clone(), timer.loops_done, remaining));
             }
             if timer.finished {
                 finished_timer_tags.push(tag.clone());
@@ -397,7 +491,9 @@ impl TweenManager {
 
     /// Get the current value of a tween (if active).
     pub fn get_tween_value(&self, tag: &str) -> Option<(f32, &str, &TweenProperty)> {
-        self.tweens.get(tag).map(|t| (t.current_value(), t.target.as_str(), &t.property))
+        self.tweens
+            .get(tag)
+            .map(|t| (t.current_value(), t.target.as_str(), &t.property))
     }
 
     /// Apply all active tween values to sprite state, strum state, and collect game property tweens.
@@ -419,9 +515,14 @@ impl TweenManager {
             // Check if it's a strum tween (__strum_opponent_N or __strum_player_N)
             if tween.target.starts_with("__strum_") {
                 let idx = if tween.target.starts_with("__strum_opponent_") {
-                    tween.target["__strum_opponent_".len()..].parse::<usize>().ok()
+                    tween.target["__strum_opponent_".len()..]
+                        .parse::<usize>()
+                        .ok()
                 } else if tween.target.starts_with("__strum_player_") {
-                    tween.target["__strum_player_".len()..].parse::<usize>().map(|i| i + 4).ok()
+                    tween.target["__strum_player_".len()..]
+                        .parse::<usize>()
+                        .map(|i| i + 4)
+                        .ok()
                 } else {
                     None
                 };

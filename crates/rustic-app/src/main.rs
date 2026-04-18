@@ -11,13 +11,24 @@ fn main() {
     // init can pick it up on attach.
     #[cfg(feature = "rl")]
     if cli.rl_enabled {
+        let arch_size = cli.rl_arch.as_deref().and_then(rustic_rl::ArchSize::parse);
+        if cli.rl_arch.is_some() && arch_size.is_none() {
+            log::warn!(
+                "rustic-rl: unknown --rl-arch='{}' (valid: tiny|small|large|huge); falling back to default (large)",
+                cli.rl_arch.as_deref().unwrap_or("")
+            );
+        }
         rustic_app::rl_boot::set(rustic_app::rl_boot::RlOpts {
             control_gameplay: cli.rl_control,
             bc_warmup_epochs: cli.rl_bc_epochs,
+            arch_size,
         });
         log::info!(
-            "rustic-rl: enabled (control={}, bc_epochs={}, config={})",
-            cli.rl_control, cli.rl_bc_epochs, cli.rl_config
+            "rustic-rl: enabled (control={}, bc_epochs={}, config={}, arch={})",
+            cli.rl_control,
+            cli.rl_bc_epochs,
+            cli.rl_config,
+            arch_size.map(|a| a.tag()).unwrap_or("default(large)"),
         );
     }
     #[cfg(not(feature = "rl"))]
@@ -34,11 +45,8 @@ fn main() {
         let diff = cli.rl_difficulty.unwrap_or_else(|| "normal".to_string());
         log::info!("rustic-rl: direct-booting into song '{song}' ({diff})");
         Box::new(rustic_app::screens::loading::LoadingScreen::song(
-            song,
-            diff,
-            /* play_as_opponent */ false,
-            /* practice_mode */   false,
-            /* botplay */         false,
+            song, diff, /* play_as_opponent */ false, /* practice_mode */ false,
+            /* botplay */ false,
         ))
     } else {
         Box::new(TitleScreen::new())
@@ -56,6 +64,7 @@ struct Cli {
     rl_song: Option<String>,
     rl_difficulty: Option<String>,
     rl_config: String,
+    rl_arch: Option<String>,
 }
 
 fn parse_cli(args: &[String]) -> Cli {
@@ -65,6 +74,7 @@ fn parse_cli(args: &[String]) -> Cli {
     let mut rl_song = None;
     let mut rl_difficulty = None;
     let mut rl_config = "smol".to_string();
+    let mut rl_arch = None;
 
     for arg in args.iter().skip(1) {
         if let Some(val) = arg.strip_prefix("--rustic-rl=") {
@@ -80,6 +90,8 @@ fn parse_cli(args: &[String]) -> Cli {
             rl_control = !matches!(val.to_ascii_lowercase().as_str(), "record" | "bc" | "demo");
         } else if let Some(val) = arg.strip_prefix("--rl-bc-epochs=") {
             rl_bc_epochs = val.parse().unwrap_or(rl_bc_epochs);
+        } else if let Some(val) = arg.strip_prefix("--rl-arch=") {
+            rl_arch = Some(val.to_string());
         }
     }
 
@@ -90,5 +102,6 @@ fn parse_cli(args: &[String]) -> Cli {
         rl_song,
         rl_difficulty,
         rl_config,
+        rl_arch,
     }
 }

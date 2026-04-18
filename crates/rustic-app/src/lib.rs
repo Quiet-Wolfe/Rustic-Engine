@@ -76,13 +76,14 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::KeyboardInput {
-                event: KeyEvent {
-                    physical_key,
-                    logical_key,
-                    state,
-                    repeat: false,
-                    ..
-                },
+                event:
+                    KeyEvent {
+                        physical_key,
+                        logical_key,
+                        state,
+                        repeat: false,
+                        ..
+                    },
                 ..
             } => {
                 // Android back button → Escape
@@ -90,7 +91,8 @@ impl ApplicationHandler for App {
                     || logical_key == Key::Named(NamedKey::BrowserBack)
                 {
                     if state == ElementState::Pressed {
-                        self.current_screen.handle_key(winit::keyboard::KeyCode::Escape);
+                        self.current_screen
+                            .handle_key(winit::keyboard::KeyCode::Escape);
                     }
                 } else if let PhysicalKey::Code(key) = physical_key {
                     match state {
@@ -106,7 +108,8 @@ impl ApplicationHandler for App {
 
             WindowEvent::Touch(touch) => {
                 if let Some(gpu) = &self.gpu {
-                    if let Some((gx, gy)) = gpu.physical_to_game(touch.location.x, touch.location.y) {
+                    if let Some((gx, gy)) = gpu.physical_to_game(touch.location.x, touch.location.y)
+                    {
                         self.current_screen.handle_touch(
                             touch.id,
                             touch.phase,
@@ -174,8 +177,6 @@ fn android_main(app: AndroidApp) {
         .unwrap();
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-    let mut app = App::new(Box::new(
-        crate::screens::title::TitleScreen::new(),
-    ));
+    let mut app = App::new(Box::new(crate::screens::title::TitleScreen::new()));
     event_loop.run_app(&mut app).unwrap();
 }

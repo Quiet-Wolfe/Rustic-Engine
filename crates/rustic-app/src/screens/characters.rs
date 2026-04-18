@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use rustanimate::FlxAnimate;
 use rustic_core::character::{self, CharacterFile};
 use rustic_render::camera::GameCamera;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
-use rustanimate::FlxAnimate;
 
-use super::play::{GAME_W, GAME_H};
+use super::play::{GAME_H, GAME_W};
 
 /// A loaded character with sprite atlas and animation state.
 pub struct CharacterSprite {
@@ -146,7 +146,10 @@ impl CharacterSprite {
             return;
         }
         // Use the loop flag from character JSON, falling back to name heuristics
-        let looping = self.loop_flags.get(name).copied()
+        let looping = self
+            .loop_flags
+            .get(name)
+            .copied()
             .unwrap_or_else(|| name.contains("-loop") || name == "idle");
         if force {
             self.anim.force_play(name, 24.0, looping);
@@ -155,8 +158,10 @@ impl CharacterSprite {
         }
         // For non-standard animations (custom named), set special_anim
         // regardless of force — these should block dance() until finished.
-        let is_standard = name.starts_with("sing") || name.starts_with("miss")
-            || name == "idle" || name.starts_with("dance");
+        let is_standard = name.starts_with("sing")
+            || name.starts_with("miss")
+            || name == "idle"
+            || name.starts_with("dance");
         if !is_standard {
             self.special_anim = true;
         } else if force {
@@ -197,7 +202,11 @@ impl CharacterSprite {
         }
         if self.has_dance_idle {
             self.dance_left = !self.dance_left;
-            let base = if self.dance_left { "danceLeft" } else { "danceRight" };
+            let base = if self.dance_left {
+                "danceLeft"
+            } else {
+                "danceRight"
+            };
             let resolved = self.resolve_idle_name(base);
             self.play_anim(&resolved, false);
         } else {
@@ -214,11 +223,20 @@ impl CharacterSprite {
     /// Get the character's midpoint (center of sprite in world coords).
     /// Uses the current animation's first frame dimensions.
     pub fn midpoint(&self) -> (f32, f32) {
-        let anim_name = if self.has_dance_idle { "danceLeft" } else { "idle" };
-        let (fw, fh) = self.atlas.get_frame(anim_name, 0)
+        let anim_name = if self.has_dance_idle {
+            "danceLeft"
+        } else {
+            "idle"
+        };
+        let (fw, fh) = self
+            .atlas
+            .get_frame(anim_name, 0)
             .map(|f| (f.frame_w, f.frame_h))
             .unwrap_or((300.0, 400.0));
-        (self.x + fw * self.scale / 2.0, self.y + fh * self.scale / 2.0)
+        (
+            self.x + fw * self.scale / 2.0,
+            self.y + fh * self.scale / 2.0,
+        )
     }
 
     fn current_offset(&self) -> (f32, f32) {
@@ -234,7 +252,10 @@ impl CharacterSprite {
         let world_x = self.x - off_x;
         let world_y = self.y - off_y;
 
-        let frame = match self.atlas.get_frame(&self.anim.current_anim, self.anim.frame_index) {
+        let frame = match self
+            .atlas
+            .get_frame(&self.anim.current_anim, self.anim.frame_index)
+        {
             Some(f) => f,
             None => return,
         };
@@ -260,13 +281,20 @@ impl CharacterSprite {
         let world_x = self.x - off_x;
         let world_y = self.y - off_y;
 
-        let frame = match self.atlas.get_frame(&self.anim.current_anim, self.anim.frame_index) {
+        let frame = match self
+            .atlas
+            .get_frame(&self.anim.current_anim, self.anim.frame_index)
+        {
             Some(f) => f,
             None => return,
         };
 
         // Reflection is placed below the character: y + frame_height + dist_y (in world space)
-        let display_h = if frame.rotated { frame.src.w } else { frame.src.h };
+        let display_h = if frame.rotated {
+            frame.src.w
+        } else {
+            frame.src.h
+        };
         let reflect_world_y = world_y + display_h * self.scale + dist_y - off_y;
 
         let (sx, sy) = cam.world_to_screen(world_x, reflect_world_y, GAME_W, GAME_H);
@@ -274,8 +302,13 @@ impl CharacterSprite {
         let a = alpha * self.alpha;
 
         gpu.draw_sprite_frame_flip_y(
-            frame, self.tex_w, self.tex_h,
-            sx, sy, scale, self.flip_x,
+            frame,
+            self.tex_w,
+            self.tex_h,
+            sx,
+            sy,
+            scale,
+            self.flip_x,
             [a, a, a, a],
         );
     }
@@ -359,9 +392,13 @@ impl AtlasCharacterSprite {
         // Detect if all animations share the same symbol name (e.g., "AtlasExport")
         // with different indices ranges — the Phase4 pattern.
         let all_same_name = {
-            let names: std::collections::HashSet<&str> = char_def.animations.iter()
-                .map(|a| a.name.as_str()).collect();
-            names.len() == 1 && !char_def.animations.is_empty()
+            let names: std::collections::HashSet<&str> = char_def
+                .animations
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect();
+            names.len() == 1
+                && !char_def.animations.is_empty()
                 && !char_def.animations[0].indices.is_empty()
         };
 
@@ -371,8 +408,10 @@ impl AtlasCharacterSprite {
             let main_name = char_def.animations[0].name.clone();
             for anim_def in &char_def.animations {
                 symbol_names.insert(anim_def.anim.clone(), main_name.clone());
-                anim_frame_indices.insert(anim_def.anim.clone(),
-                    anim_def.indices.iter().map(|&i| i as u32).collect());
+                anim_frame_indices.insert(
+                    anim_def.anim.clone(),
+                    anim_def.indices.iter().map(|&i| i as u32).collect(),
+                );
                 offsets.insert(anim_def.anim.clone(), anim_def.offsets);
                 loop_flags.insert(anim_def.anim.clone(), anim_def.loop_anim);
                 anim_fps.insert(anim_def.anim.clone(), anim_def.fps as f32);
@@ -388,8 +427,10 @@ impl AtlasCharacterSprite {
                 }
                 symbol_names.insert(anim_def.anim.clone(), anim_def.name.clone());
                 if !anim_def.indices.is_empty() {
-                    anim_frame_indices.insert(anim_def.anim.clone(),
-                    anim_def.indices.iter().map(|&i| i as u32).collect());
+                    anim_frame_indices.insert(
+                        anim_def.anim.clone(),
+                        anim_def.indices.iter().map(|&i| i as u32).collect(),
+                    );
                 }
                 offsets.insert(anim_def.anim.clone(), anim_def.offsets);
                 loop_flags.insert(anim_def.anim.clone(), anim_def.loop_anim);
@@ -472,7 +513,10 @@ impl AtlasCharacterSprite {
             self.animate.playing_symbol = symbol_name.clone();
             self.animate.time_accumulator = 0.0;
             self.animate.finished = false;
-            let looping = self.loop_flags.get(name).copied()
+            let looping = self
+                .loop_flags
+                .get(name)
+                .copied()
                 .unwrap_or_else(|| name.contains("-loop") || name == "idle");
             self.animate.set_looping(looping);
             if let Some(&idx) = self.anim_indices.get(name) {
@@ -489,7 +533,10 @@ impl AtlasCharacterSprite {
                     self.animate.current_frame = indices[0];
                 }
                 // Use per-animation FPS from character JSON, fallback to animate's framerate
-                self.index_fps = self.anim_fps.get(name).copied()
+                self.index_fps = self
+                    .anim_fps
+                    .get(name)
+                    .copied()
                     .unwrap_or(self.animate.framerate);
             } else {
                 // Standard playback: start at frame 0 of the symbol
@@ -502,8 +549,10 @@ impl AtlasCharacterSprite {
             self.current_anim = name.to_string();
             // For non-standard animations (custom named), set special_anim
             // regardless of force — these should block dance() until finished.
-            let is_standard = name.starts_with("sing") || name.starts_with("miss")
-                || name == "idle" || name.starts_with("dance");
+            let is_standard = name.starts_with("sing")
+                || name.starts_with("miss")
+                || name == "idle"
+                || name.starts_with("dance");
             if !is_standard {
                 self.special_anim = true;
             } else if force {
@@ -545,7 +594,11 @@ impl AtlasCharacterSprite {
         }
         if self.has_dance_idle {
             self.dance_left = !self.dance_left;
-            let base = if self.dance_left { "danceLeft" } else { "danceRight" };
+            let base = if self.dance_left {
+                "danceLeft"
+            } else {
+                "danceRight"
+            };
             let resolved = self.resolve_idle_name(base);
             self.play_anim(&resolved, false);
         } else {
@@ -564,8 +617,13 @@ impl AtlasCharacterSprite {
                 self.current_index_pos += 1;
             }
 
-            let looping = self.loop_flags.get(&self.current_anim).copied()
-                .unwrap_or_else(|| self.current_anim.contains("-loop") || self.current_anim == "idle");
+            let looping = self
+                .loop_flags
+                .get(&self.current_anim)
+                .copied()
+                .unwrap_or_else(|| {
+                    self.current_anim.contains("-loop") || self.current_anim == "idle"
+                });
 
             if self.current_index_pos >= self.current_play_indices.len() {
                 if looping {
@@ -607,13 +665,17 @@ impl AtlasCharacterSprite {
         let scale = self.scale * cam.zoom;
 
         // render_symbol bypasses the main timeline M3D, rendering the symbol at origin
-        let draw_calls = self.animate.render_symbol(&self.animate.playing_symbol, 0.0, 0.0);
+        let draw_calls = self
+            .animate
+            .render_symbol(&self.animate.playing_symbol, 0.0, 0.0);
         let flip_sign = if self.flip_x { -1.0f32 } else { 1.0 };
 
         for dc in &draw_calls {
             let positions: [[f32; 2]; 4] = std::array::from_fn(|i| {
-                [screen_x + dc.vertices[i].position[0] * scale * flip_sign,
-                 screen_y + dc.vertices[i].position[1] * scale]
+                [
+                    screen_x + dc.vertices[i].position[0] * scale * flip_sign,
+                    screen_y + dc.vertices[i].position[1] * scale,
+                ]
             });
             let uvs: [[f32; 2]; 4] = std::array::from_fn(|i| dc.vertices[i].uv);
             let mut color = dc.vertices[0].color;
@@ -631,7 +693,9 @@ impl AtlasCharacterSprite {
         let (screen_x, screen_y) = cam.world_to_screen(world_x, world_y, GAME_W, GAME_H);
         let scale = self.scale * cam.zoom;
 
-        let draw_calls = self.animate.render_symbol(&self.animate.playing_symbol, 0.0, 0.0);
+        let draw_calls = self
+            .animate
+            .render_symbol(&self.animate.playing_symbol, 0.0, 0.0);
         let flip_sign = if self.flip_x { -1.0f32 } else { 1.0 };
 
         // Compute bounding box to find the character's height for reflection placement

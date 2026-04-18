@@ -44,12 +44,8 @@ pub fn parse(name: &str, source: &str) -> HResult<HaxeFile> {
         return Ok(file);
     }
 
-    let wrapped = format!(
-        "class __HScriptMain__ {{\n{}\n}}\n",
-        source
-    );
-    rayzor_parser::parse_haxe_file(name, &wrapped, true)
-        .map_err(HScriptError::Parse)
+    let wrapped = format!("class __HScriptMain__ {{\n{}\n}}\n", source);
+    rayzor_parser::parse_haxe_file(name, &wrapped, true).map_err(HScriptError::Parse)
 }
 
 /// Extract top-level function definitions from a parsed HScript file. Walks
@@ -86,8 +82,7 @@ pub fn collect_top_level_vars(
 
     for mf in &file.module_fields {
         match &mf.kind {
-            ModuleFieldKind::Var { name, expr, .. }
-            | ModuleFieldKind::Final { name, expr, .. } => {
+            ModuleFieldKind::Var { name, expr, .. } | ModuleFieldKind::Final { name, expr, .. } => {
                 out.push((name.clone(), expr.clone()));
             }
             _ => {}

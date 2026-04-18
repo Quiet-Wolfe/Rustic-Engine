@@ -11,11 +11,11 @@ use rustic_core::week;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::health_icon::{HealthIcon, IconState};
 
-use crate::screen::Screen;
+use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
 use super::gameplay_changers::GameplayChangersState;
 use super::loading::LoadingScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
-use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
+use crate::screen::Screen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -28,7 +28,7 @@ pub struct FreeplayScreen {
     songs: Vec<FreeplaySong>,
     filtered: Vec<usize>, // indices into songs matching search
     search: String,
-    cur_selected: usize,  // index into filtered
+    cur_selected: usize,   // index into filtered
     cur_difficulty: usize, // index into DIFFICULTIES
     lerp_selected: f32,
     bg_color: [f32; 3],
@@ -95,8 +95,10 @@ impl Screen for FreeplayScreen {
             }
         }
         all_weeks.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-        for (week_idx, w) in all_weeks.iter().enumerate() {
-            if w.hide_freeplay { continue; }
+        for w in &all_weeks {
+            if w.hide_freeplay {
+                continue;
+            }
             for song in &w.songs {
                 let key = song.name.to_lowercase().replace(' ', "-");
                 seen_songs.insert(key);
@@ -109,21 +111,21 @@ impl Screen for FreeplayScreen {
                         srgb_to_linear(song.color[1] as f32 / 255.0),
                         srgb_to_linear(song.color[2] as f32 / 255.0),
                     ],
-                    week: week_idx,
                     icon: None,
                 });
             }
         }
 
         for song_name in paths.discover_songs() {
-            if seen_songs.contains(&song_name) { continue; }
+            if seen_songs.contains(&song_name) {
+                continue;
+            }
             seen_songs.insert(song_name.clone());
             self.songs.push(FreeplaySong {
                 name: song_name.clone(),
                 song_id: song_name,
                 character: String::new(),
                 color: [146, 113, 253].map(|c| srgb_to_linear(c as f32 / 255.0)),
-                week: 0,
                 icon: None,
             });
         }
@@ -187,14 +189,17 @@ impl Screen for FreeplayScreen {
             }
             return;
         }
-        if self.confirmed { return; }
+        if self.confirmed {
+            return;
+        }
 
         match key {
             KeyCode::Tab => {
                 self.play_as_opponent = !self.play_as_opponent;
             }
             KeyCode::ControlLeft | KeyCode::ControlRight => {
-                self.gameplay_changers = Some(GameplayChangersState::new(self.practice_mode, self.botplay));
+                self.gameplay_changers =
+                    Some(GameplayChangersState::new(self.practice_mode, self.botplay));
             }
             KeyCode::ArrowUp => self.change_selection(-1),
             KeyCode::ArrowDown => self.change_selection(1),
@@ -274,7 +279,9 @@ impl Screen for FreeplayScreen {
     }
 
     fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
-        if phase != TouchPhase::Started || self.confirmed { return; }
+        if phase != TouchPhase::Started || self.confirmed {
+            return;
+        }
         let (x, y) = (x as f32, y as f32);
 
         if x < 30.0 && y > 70.0 && y < GAME_H - 30.0 {
@@ -287,14 +294,20 @@ impl Screen for FreeplayScreen {
         }
 
         if y < 66.0 && x > GAME_W * 0.7 {
-            if x < GAME_W * 0.85 { self.handle_key(KeyCode::ArrowLeft); } else { self.handle_key(KeyCode::ArrowRight); }
+            if x < GAME_W * 0.85 {
+                self.handle_key(KeyCode::ArrowLeft);
+            } else {
+                self.handle_key(KeyCode::ArrowRight);
+            }
             return;
         }
 
         let draw_dist = 6;
         for (i, &_song_idx) in self.filtered.iter().enumerate() {
             let target_y = i as f32 - self.lerp_selected;
-            if target_y.abs() > draw_dist as f32 { continue; }
+            if target_y.abs() > draw_dist as f32 {
+                continue;
+            }
             let item_y = target_y * 1.3 * 120.0 + 320.0;
             if y >= item_y - 15.0 && y < item_y + 35.0 {
                 if i == self.cur_selected {
@@ -312,7 +325,8 @@ impl Screen for FreeplayScreen {
             reset_modal.update(dt);
         }
         let lerp = (-dt * 9.6).exp();
-        self.lerp_selected = self.cur_selected as f32 + (self.lerp_selected - self.cur_selected as f32) * lerp;
+        self.lerp_selected =
+            self.cur_selected as f32 + (self.lerp_selected - self.cur_selected as f32) * lerp;
 
         let color_lerp = 1.0 - (-dt * 3.0).exp();
         for i in 0..3 {
@@ -333,7 +347,9 @@ impl Screen for FreeplayScreen {
     }
 
     fn draw(&mut self, gpu: &mut GpuState) {
-        if !gpu.begin_frame() { return; }
+        if !gpu.begin_frame() {
+            return;
+        }
 
         // Background with color tint
         if let Some(bg) = &self.bg_tex {
@@ -344,11 +360,7 @@ impl Screen for FreeplayScreen {
             let bh = bg.height as f32;
             let x = (GAME_W - bw) / 2.0;
             let y = (GAME_H - bh) / 2.0;
-            gpu.push_texture_region(
-                bw, bh, 0.0, 0.0, bw, bh,
-                x, y, bw, bh,
-                false, color,
-            );
+            gpu.push_texture_region(bw, bh, 0.0, 0.0, bw, bh, x, y, bw, bh, false, color);
             gpu.draw_batch(Some(bg));
         } else {
             let c = &self.bg_color;
@@ -361,11 +373,15 @@ impl Screen for FreeplayScreen {
 
         for (i, &song_idx) in self.filtered.iter().enumerate() {
             let target_y = i as f32 - self.lerp_selected;
-            if target_y.abs() > draw_dist as f32 { continue; }
+            if target_y.abs() > draw_dist as f32 {
+                continue;
+            }
 
             let x = target_y * 20.0 + 90.0;
             let y = target_y * 1.3 * 120.0 + 320.0;
-            if y < -50.0 || y > GAME_H + 50.0 { continue; }
+            if y < -50.0 || y > GAME_H + 50.0 {
+                continue;
+            }
 
             let alpha = if i == self.cur_selected { 1.0 } else { 0.6 };
             let color = [alpha, alpha, alpha, alpha];
@@ -373,7 +389,11 @@ impl Screen for FreeplayScreen {
 
             gpu.draw_text(&self.songs[song_idx].name, x, y, text_size, color);
             if let Some(icon) = &mut self.songs[song_idx].icon {
-                let state = if i == self.cur_selected { IconState::Winning } else { IconState::Neutral };
+                let state = if i == self.cur_selected {
+                    IconState::Winning
+                } else {
+                    IconState::Neutral
+                };
                 icon.set_state(state);
                 icon.draw(gpu, icon_x, y - 30.0, 150.0, color);
             }
@@ -405,11 +425,20 @@ impl Screen for FreeplayScreen {
         }
 
         let count_text = if cfg!(target_os = "android") {
-            format!("{} songs | Tap song to play | Tap difficulty to change | Opponent: {}", self.filtered.len(), if self.play_as_opponent { "ON" } else { "OFF" })
+            format!(
+                "{} songs | Tap song to play | Tap difficulty to change | Opponent: {}",
+                self.filtered.len(),
+                if self.play_as_opponent { "ON" } else { "OFF" }
+            )
         } else if self.search.is_empty() {
             format!("{} songs | SPACE Preview:{} | ENTER Play | LEFT-RIGHT difficulty | TAB Opponent: {}", self.filtered.len(), if self.previewing_song.is_some() { "ON" } else { "OFF" }, if self.play_as_opponent { "ON" } else { "OFF" })
         } else {
-            format!("{}/{} songs | ESC to clear search | ENTER to play | TAB Opponent: {}", self.filtered.len(), self.songs.len(), if self.play_as_opponent { "ON" } else { "OFF" })
+            format!(
+                "{}/{} songs | ESC to clear search | ENTER to play | TAB Opponent: {}",
+                self.filtered.len(),
+                self.songs.len(),
+                if self.play_as_opponent { "ON" } else { "OFF" }
+            )
         };
         gpu.push_colored_quad(0.0, GAME_H - 26.0, GAME_W, 26.0, [0.0, 0.0, 0.0, 0.6]);
         gpu.draw_batch(None);
@@ -427,7 +456,9 @@ impl Screen for FreeplayScreen {
                 let y = strip_top + i as f32 * letter_h;
                 gpu.draw_text(
                     &letter.to_string(),
-                    strip_x + 4.0, y, letter_h.min(18.0),
+                    strip_x + 4.0,
+                    y,
+                    letter_h.min(18.0),
                     [1.0, 1.0, 1.0, 0.7],
                 );
             }

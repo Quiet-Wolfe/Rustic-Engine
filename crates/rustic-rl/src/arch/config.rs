@@ -142,6 +142,82 @@ impl ArchConfig {
             action_classes: 4,
         }
     }
+
+    /// ~75M backbone params. Hidden 768, 10 layers, 12 heads, mlp_mult 4.
+    /// Backbone dominates total param count on the symbolic path (vision /
+    /// audio towers aren't active when feeding OmniPolicy directly).
+    pub fn large() -> Self {
+        let hidden = 768;
+        Self {
+            vision: VisionConfig {
+                image_size: 192,
+                patch_size: 16,
+                layers: 6,
+                hidden: 384,
+                heads: 8,
+                mlp_mult: 4,
+                in_channels: 3,
+            },
+            audio: AudioConfig {
+                mel_bins: 80,
+                layers: 6,
+                hidden: 384,
+                heads: 8,
+                mlp_mult: 4,
+                chunk_size: 12,
+                left_context: 13,
+                right_context: 0,
+                subsample_channels: [192, 96],
+            },
+            backbone: BackboneConfig {
+                layers: 10,
+                hidden,
+                heads: 12,
+                mlp_mult: 4,
+                max_tokens: 1024,
+            },
+            fusion_dim: hidden,
+            action_classes: 4,
+        }
+    }
+
+    /// ~125M backbone params. Hidden 1024, 10 layers, 16 heads. CPU-only
+    /// inference at real-time play rates starts getting tight here; use
+    /// only if you've tried `large` and need more headroom.
+    pub fn huge() -> Self {
+        let hidden = 1024;
+        Self {
+            vision: VisionConfig {
+                image_size: 192,
+                patch_size: 16,
+                layers: 6,
+                hidden: 512,
+                heads: 8,
+                mlp_mult: 4,
+                in_channels: 3,
+            },
+            audio: AudioConfig {
+                mel_bins: 80,
+                layers: 6,
+                hidden: 512,
+                heads: 8,
+                mlp_mult: 4,
+                chunk_size: 12,
+                left_context: 13,
+                right_context: 0,
+                subsample_channels: [256, 128],
+            },
+            backbone: BackboneConfig {
+                layers: 10,
+                hidden,
+                heads: 16,
+                mlp_mult: 4,
+                max_tokens: 1024,
+            },
+            fusion_dim: hidden,
+            action_classes: 4,
+        }
+    }
 }
 
 impl ArchConfig {

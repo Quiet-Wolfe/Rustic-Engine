@@ -7,7 +7,11 @@ GLM.sh
 # Local dev artifacts
 .codex
 last.sh
+modular_gemma4.py
 
 # User-local mod library + selection state (not versioned; 2GB+)
 /mods/
 /modsList.txt
+
+# Local RL checkpoints / exported weights.
+/rustic-rl/

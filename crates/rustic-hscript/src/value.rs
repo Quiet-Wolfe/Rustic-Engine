@@ -50,7 +50,10 @@ pub enum Value {
     /// Opaque handle into the host (e.g. a sprite id). The string tag is a
     /// coarse type marker so the interpreter can distinguish `"sprite"` from
     /// `"tween"` without inspecting the numeric id.
-    Handle { tag: &'static str, id: u64 },
+    Handle {
+        tag: &'static str,
+        id: u64,
+    },
 }
 
 impl Default for Value {
@@ -154,10 +157,9 @@ impl Value {
             (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             (Value::Closure(a), Value::Closure(b)) => Rc::ptr_eq(a, b),
-            (
-                Value::Handle { tag: t1, id: i1 },
-                Value::Handle { tag: t2, id: i2 },
-            ) => t1 == t2 && i1 == i2,
+            (Value::Handle { tag: t1, id: i1 }, Value::Handle { tag: t2, id: i2 }) => {
+                t1 == t2 && i1 == i2
+            }
             _ => false,
         }
     }

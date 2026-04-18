@@ -120,22 +120,29 @@ pub fn parse_chart(json_data: &str) -> Result<ParsedChart, ChartError> {
         serde_json::from_str(json_data).map_err(|e| ChartError::Parse(e.to_string()))?;
 
     // Handle potential double-nesting: { "song": { "song": { ... } } }
-    let song_value = if chart_file.song.get("song").is_some()
-        && chart_file.song.get("notes").is_none()
-    {
-        chart_file.song.get("song").unwrap().clone()
-    } else {
-        chart_file.song
-    };
+    let song_value =
+        if chart_file.song.get("song").is_some() && chart_file.song.get("notes").is_none() {
+            chart_file.song.get("song").unwrap().clone()
+        } else {
+            chart_file.song
+        };
 
     let mut song: SwagSong =
         serde_json::from_value(song_value).map_err(|e| ChartError::Parse(e.to_string()))?;
 
     // Apply defaults for null/empty fields
-    if song.player1.is_empty() { song.player1 = default_player1(); }
-    if song.player2.is_empty() { song.player2 = default_player2(); }
-    if song.gf_version.is_empty() { song.gf_version = default_gf(); }
-    if song.stage.is_empty() { song.stage = default_stage(); }
+    if song.player1.is_empty() {
+        song.player1 = default_player1();
+    }
+    if song.player2.is_empty() {
+        song.player2 = default_player2();
+    }
+    if song.gf_version.is_empty() {
+        song.gf_version = default_gf();
+    }
+    if song.stage.is_empty() {
+        song.stage = default_stage();
+    }
 
     if !song.format.starts_with("psych_v1") {
         convert_to_psych_v1(&mut song);
@@ -193,10 +200,22 @@ pub fn parse_chart(json_data: &str) -> Result<ParsedChart, ChartError> {
 
     parse_events_array(&song.events, &mut events);
 
-    notes.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap_or(std::cmp::Ordering::Equal));
-    events.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap_or(std::cmp::Ordering::Equal));
+    notes.sort_by(|a, b| {
+        a.strum_time
+            .partial_cmp(&b.strum_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    events.sort_by(|a, b| {
+        a.strum_time
+            .partial_cmp(&b.strum_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    Ok(ParsedChart { song, notes, events })
+    Ok(ParsedChart {
+        song,
+        notes,
+        events,
+    })
 }
 
 /// Parse a separate events.json file.
@@ -216,7 +235,11 @@ pub fn parse_events_file(json_data: &str) -> Result<Vec<EventNote>, ChartError> 
         parse_events_array(&values, &mut events);
     }
 
-    events.sort_by(|a, b| a.strum_time.partial_cmp(&b.strum_time).unwrap_or(std::cmp::Ordering::Equal));
+    events.sort_by(|a, b| {
+        a.strum_time
+            .partial_cmp(&b.strum_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(events)
 }
 

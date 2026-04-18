@@ -24,8 +24,8 @@ impl HScriptEngine {
     /// function/var definitions into globals) but does not call `onCreate` —
     /// the embedder does that after all scripts are loaded, same as Lua.
     pub fn load(path: &Path, state: &mut ScriptState) -> Result<Self, String> {
-        let source = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read {path:?}: {e}"))?;
+        let source =
+            std::fs::read_to_string(path).map_err(|e| format!("failed to read {path:?}: {e}"))?;
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -139,7 +139,10 @@ const HOST_OBJECTS: &[&str] = &[
 const HOST_OBJECT_TAG: &str = "game_obj";
 
 fn host_object_id(name: &str) -> Option<u64> {
-    HOST_OBJECTS.iter().position(|n| *n == name).map(|i| i as u64)
+    HOST_OBJECTS
+        .iter()
+        .position(|n| *n == name)
+        .map(|i| i as u64)
 }
 
 fn host_object_name(id: u64) -> Option<&'static str> {
@@ -168,7 +171,10 @@ impl HostBridge for ScriptStateBridge<'_> {
         }
 
         if let Some(id) = host_object_id(name) {
-            return Ok(HValue::Handle { tag: HOST_OBJECT_TAG, id });
+            return Ok(HValue::Handle {
+                tag: HOST_OBJECT_TAG,
+                id,
+            });
         }
 
         if let Some(v) = self.state.custom_vars.get(name) {
@@ -259,9 +265,7 @@ fn lua_value_to_h(v: &LuaValue) -> HValue {
         LuaValue::Int(i) => HValue::Int(*i),
         LuaValue::Float(f) => HValue::Float(*f),
         LuaValue::String(s) => HValue::from_str(s.clone()),
-        LuaValue::Array(items) => {
-            HValue::new_array(items.iter().map(lua_value_to_h).collect())
-        }
+        LuaValue::Array(items) => HValue::new_array(items.iter().map(lua_value_to_h).collect()),
     }
 }
 
@@ -272,9 +276,7 @@ fn h_value_to_lua(v: &HValue) -> LuaValue {
         HValue::Int(i) => LuaValue::Int(*i),
         HValue::Float(f) => LuaValue::Float(*f),
         HValue::String(s) => LuaValue::String(s.as_str().to_string()),
-        HValue::Array(arr) => {
-            LuaValue::Array(arr.borrow().iter().map(h_value_to_lua).collect())
-        }
+        HValue::Array(arr) => LuaValue::Array(arr.borrow().iter().map(h_value_to_lua).collect()),
         // Objects/closures/handles have no Lua equivalent in our bridge — fall
         // back to Nil rather than lose data silently.
         _ => LuaValue::Nil,

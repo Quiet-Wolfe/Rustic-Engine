@@ -6,8 +6,8 @@ use rustic_core::paths::AssetPaths;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
-use crate::screen::Screen;
 use super::main_menu::MainMenuScreen;
+use crate::screen::Screen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -125,14 +125,18 @@ impl TitleScreen {
                     self.intro_texts.push("Shadow Mario".into());
                     self.intro_texts.push("Riveren".into());
                 }
-                5 => { self.intro_texts.clear(); }
+                5 => {
+                    self.intro_texts.clear();
+                }
                 6 => {
                     self.intro_texts = vec!["Not associated".into(), "with".into()];
                 }
                 8 => {
                     self.intro_texts.push("newgrounds".into());
                 }
-                9 => { self.intro_texts.clear(); }
+                9 => {
+                    self.intro_texts.clear();
+                }
                 10 => {
                     // Random wacky message — use a fixed one for now
                     self.intro_texts = vec!["this is a god damn prototype".into()];
@@ -140,7 +144,9 @@ impl TitleScreen {
                 12 => {
                     self.intro_texts.push("we workin on it okay".into());
                 }
-                13 => { self.intro_texts.clear(); }
+                13 => {
+                    self.intro_texts.clear();
+                }
                 14 => {
                     self.intro_texts = vec!["Friday".into()];
                 }
@@ -201,8 +207,10 @@ impl Screen for TitleScreen {
                     };
                     let left_indices = parse_indices(&val["dance_left"]);
                     let right_indices = parse_indices(&val["dance_right"]);
-                    self.gf_atlas.add_by_indices("danceLeft", prefix, &left_indices);
-                    self.gf_atlas.add_by_indices("danceRight", prefix, &right_indices);
+                    self.gf_atlas
+                        .add_by_indices("danceLeft", prefix, &left_indices);
+                    self.gf_atlas
+                        .add_by_indices("danceRight", prefix, &right_indices);
                 }
             }
         }
@@ -322,7 +330,9 @@ impl Screen for TitleScreen {
     }
 
     fn draw(&mut self, gpu: &mut GpuState) {
-        if !gpu.begin_frame() { return; }
+        if !gpu.begin_frame() {
+            return;
+        }
 
         if !self.skipped_intro {
             // Intro: black background with centered text
@@ -344,11 +354,17 @@ impl Screen for TitleScreen {
             // GF sprite
             if let (Some(tex), Some(frame)) = (
                 &self.gf_tex,
-                self.gf_atlas.get_frame(&self.gf_anim.current_anim, self.gf_anim.frame_index),
+                self.gf_atlas
+                    .get_frame(&self.gf_anim.current_anim, self.gf_anim.frame_index),
             ) {
                 gpu.draw_sprite_frame(
-                    frame, tex.width as f32, tex.height as f32,
-                    self.gf_x, self.gf_y, 1.0, false,
+                    frame,
+                    tex.width as f32,
+                    tex.height as f32,
+                    self.gf_x,
+                    self.gf_y,
+                    1.0,
+                    false,
                     [1.0, 1.0, 1.0, 1.0],
                 );
                 gpu.draw_batch(Some(tex));
@@ -357,11 +373,17 @@ impl Screen for TitleScreen {
             // Logo sprite
             if let (Some(tex), Some(frame)) = (
                 &self.logo_tex,
-                self.logo_atlas.get_frame("bump", self.logo_anim.frame_index),
+                self.logo_atlas
+                    .get_frame("bump", self.logo_anim.frame_index),
             ) {
                 gpu.draw_sprite_frame(
-                    frame, tex.width as f32, tex.height as f32,
-                    self.title_x, self.title_y, 1.0, false,
+                    frame,
+                    tex.width as f32,
+                    tex.height as f32,
+                    self.title_x,
+                    self.title_y,
+                    1.0,
+                    false,
                     [1.0, 1.0, 1.0, 1.0],
                 );
                 gpu.draw_batch(Some(tex));
@@ -370,13 +392,16 @@ impl Screen for TitleScreen {
             // "Press Enter" text with color cycling
             if let (Some(tex), Some(frame)) = (
                 &self.enter_tex,
-                self.enter_atlas.get_frame(&self.enter_anim.current_anim, self.enter_anim.frame_index),
+                self.enter_atlas
+                    .get_frame(&self.enter_anim.current_anim, self.enter_anim.frame_index),
             ) {
                 // Psych Engine color cycling:
                 // timer bounces: if >= 1 then timer = (-timer) + 2, so 0→1→0
                 // Then quadInOut ease is applied
                 let mut timer = self.title_timer;
-                if timer >= 1.0 { timer = -timer + 2.0; }
+                if timer >= 1.0 {
+                    timer = -timer + 2.0;
+                }
                 // quadInOut: t < 0.5 → 2t², else → 1 - (-2t+2)²/2
                 let ease = if timer < 0.5 {
                     2.0 * timer * timer
@@ -385,10 +410,10 @@ impl Screen for TitleScreen {
                 };
 
                 // Interpolate: 0xFF33FFFF (cyan) → 0xFF3333CC (dark blue)
-                let r = 0.2 + ease * (0.2 - 0.2);   // 0x33→0x33 = 0.2→0.2
-                let g = 1.0 + ease * (0.2 - 1.0);    // 0xFF→0x33 = 1.0→0.2
-                let b = 1.0 + ease * (0.8 - 1.0);    // 0xFF→0xCC = 1.0→0.8
-                let a = 1.0 + ease * (0.64 - 1.0);   // 1.0→0.64
+                let r = 0.2 + ease * (0.2 - 0.2); // 0x33→0x33 = 0.2→0.2
+                let g = 1.0 + ease * (0.2 - 1.0); // 0xFF→0x33 = 1.0→0.2
+                let b = 1.0 + ease * (0.8 - 1.0); // 0xFF→0xCC = 1.0→0.8
+                let a = 1.0 + ease * (0.64 - 1.0); // 1.0→0.64
 
                 // Premultiply alpha for the shader
                 let color = [r * a, g * a, b * a, a];
@@ -398,8 +423,13 @@ impl Screen for TitleScreen {
                 let enter_y = self.start_y;
 
                 gpu.draw_sprite_frame(
-                    frame, tex.width as f32, tex.height as f32,
-                    enter_x, enter_y, 1.0, false,
+                    frame,
+                    tex.width as f32,
+                    tex.height as f32,
+                    enter_x,
+                    enter_y,
+                    1.0,
+                    false,
                     color,
                 );
                 gpu.draw_batch(Some(tex));

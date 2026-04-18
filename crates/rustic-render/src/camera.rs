@@ -11,8 +11,8 @@ pub struct GameCamera {
     pub camera_speed: f32,
     /// Camera shake state: (intensity, remaining_duration).
     pub shake: Option<(f32, f32)>,
-    /// Camera flash state: (r, g, b, alpha, remaining_duration, total_duration).
-    pub flash: Option<(f32, f32, f32, f32, f32, f32)>,
+    /// Camera flash/fade state: (r, g, b, alpha, remaining, total, fade_in).
+    pub flash: Option<(f32, f32, f32, f32, f32, f32, bool)>,
     /// Current shake offset applied to position.
     pub shake_offset: (f32, f32),
 }
@@ -69,12 +69,29 @@ impl GameCamera {
 
     /// Start a camera flash overlay.
     pub fn start_flash(&mut self, color_hex: &str, duration: f32, alpha: f32) {
-        let hex = color_hex.trim_start_matches('#').trim_start_matches("0x").trim_start_matches("0X");
+        let hex = color_hex
+            .trim_start_matches('#')
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
         let color_val = u32::from_str_radix(hex, 16).unwrap_or(0xFFFFFF);
         let r = ((color_val >> 16) & 0xFF) as f32 / 255.0;
         let g = ((color_val >> 8) & 0xFF) as f32 / 255.0;
         let b = (color_val & 0xFF) as f32 / 255.0;
-        self.flash = Some((r, g, b, alpha, duration, duration));
+        self.flash = Some((r, g, b, alpha, duration, duration, true));
+    }
+
+    /// Start a Psych-style camera fade. fade_in=true fades from color to clear;
+    /// fade_in=false fades from clear to color.
+    pub fn start_fade(&mut self, color_hex: &str, duration: f32, fade_in: bool) {
+        let hex = color_hex
+            .trim_start_matches('#')
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        let color_val = u32::from_str_radix(hex, 16).unwrap_or(0x000000);
+        let r = ((color_val >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((color_val >> 8) & 0xFF) as f32 / 255.0;
+        let b = (color_val & 0xFF) as f32 / 255.0;
+        self.flash = Some((r, g, b, 1.0, duration, duration, fade_in));
     }
 
     /// Update shake and flash effects.
@@ -90,14 +107,15 @@ impl GameCamera {
                 let t = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .subsec_nanos() as f32 / 1_000_000_000.0;
+                    .subsec_nanos() as f32
+                    / 1_000_000_000.0;
                 let scale = *intensity * 100.0; // Psych Engine uses screen-space intensity
                 self.shake_offset.0 = (t * 7919.0).sin() * scale;
                 self.shake_offset.1 = (t * 6271.0).cos() * scale;
             }
         }
         // Flash
-        if let Some((_r, _g, _b, _alpha, remaining, _total)) = &mut self.flash {
+        if let Some((_r, _g, _b, _alpha, remaining, _total, _fade_in)) = &mut self.flash {
             *remaining -= dt;
             if *remaining <= 0.0 {
                 self.flash = None;
@@ -107,14 +125,26 @@ impl GameCamera {
 
     /// Get current flash overlay color and alpha (if active).
     pub fn flash_overlay(&self) -> Option<([f32; 3], f32)> {
-        self.flash.map(|(r, g, b, alpha, remaining, total)| {
-            let t = if total > 0.0 { remaining / total } else { 0.0 };
-            ([r, g, b], alpha * t) // fade out over duration
-        })
+        self.flash
+            .map(|(r, g, b, alpha, remaining, total, fade_in)| {
+                let t = if total > 0.0 { remaining / total } else { 0.0 };
+                let eased_alpha = if fade_in {
+                    alpha * t
+                } else {
+                    alpha * (1.0 - t)
+                };
+                ([r, g, b], eased_alpha)
+            })
     }
 
     /// Convert a world position to screen position given screen dimensions.
-    pub fn world_to_screen(&self, world_x: f32, world_y: f32, screen_w: f32, screen_h: f32) -> (f32, f32) {
+    pub fn world_to_screen(
+        &self,
+        world_x: f32,
+        world_y: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> (f32, f32) {
         let sx = (world_x - self.x) * self.zoom + screen_w / 2.0 + self.shake_offset.0;
         let sy = (world_y - self.y) * self.zoom + screen_h / 2.0 + self.shake_offset.1;
         (sx, sy)

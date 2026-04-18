@@ -2,11 +2,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ffmpeg_next as ffmpeg;
 use ffmpeg::format::input;
 use ffmpeg::media::Type;
 use ffmpeg::software::scaling::{self, Flags};
 use ffmpeg::util::frame::video::Video;
+use ffmpeg_next as ffmpeg;
 
 /// Video playback state: decodes an MP4 file frame-by-frame using ffmpeg
 /// and uploads each frame to a wgpu texture for rendering.
@@ -66,7 +66,9 @@ impl VideoPlayer {
         ffmpeg::init().map_err(|e| format!("ffmpeg init failed: {}", e))?;
 
         let ictx = input(path).map_err(|e| format!("can't open video {:?}: {}", path, e))?;
-        let stream = ictx.streams().best(Type::Video)
+        let stream = ictx
+            .streams()
+            .best(Type::Video)
             .ok_or_else(|| format!("no video stream in {:?}", path))?;
         let stream_index = stream.index();
         let time_base = stream.time_base();
@@ -78,7 +80,9 @@ impl VideoPlayer {
 
         let context_decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
             .map_err(|e| format!("can't create codec context: {}", e))?;
-        let decoder = context_decoder.decoder().video()
+        let decoder = context_decoder
+            .decoder()
+            .video()
             .map_err(|e| format!("can't open decoder: {}", e))?;
 
         let width = decoder.width();
@@ -86,15 +90,25 @@ impl VideoPlayer {
 
         let scaler = scaling::Context::get(
             decoder.format(),
-            width, height,
+            width,
+            height,
             ffmpeg::util::format::pixel::Pixel::RGBA,
-            width, height,
+            width,
+            height,
             Flags::BILINEAR,
-        ).map_err(|e| format!("can't create scaler: {}", e))?;
+        )
+        .map_err(|e| format!("can't create scaler: {}", e))?;
 
-        let (texture, bind_group) = Self::create_texture(device, texture_layout, sampler, width, height);
+        let (texture, bind_group) =
+            Self::create_texture(device, texture_layout, sampler, width, height);
 
-        log::info!("Video loaded: {:?} ({}x{}, {:.1}s)", path, width, height, duration_secs);
+        log::info!(
+            "Video loaded: {:?} ({}x{}, {:.1}s)",
+            path,
+            width,
+            height,
+            duration_secs
+        );
 
         let audio_path = extract_audio_track(path);
 
@@ -130,7 +144,11 @@ impl VideoPlayer {
     ) -> (wgpu::Texture, wgpu::BindGroup) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("video frame"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -143,8 +161,14 @@ impl VideoPlayer {
             label: Some("video bind group"),
             layout: texture_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
             ],
         });
         (texture, bind_group)
@@ -153,7 +177,9 @@ impl VideoPlayer {
     /// Feed packets to the decoder incrementally until it can produce a frame.
     /// Returns true if at least one packet was sent, false if EOF reached.
     fn feed_decoder(&mut self) -> bool {
-        if self.eof_sent { return false; }
+        if self.eof_sent {
+            return false;
+        }
 
         loop {
             // Try to read the next packet from the container
@@ -189,7 +215,9 @@ impl VideoPlayer {
     /// to the latest PTS that should be visible at that clock position.
     /// Call this from update(). Does NOT touch the GPU — call `upload()` in draw().
     pub fn tick(&mut self, wall_clock_ms: f64) {
-        if !self.playing || self.finished { return; }
+        if !self.playing || self.finished {
+            return;
+        }
 
         loop {
             if let Some(pending) = self.pending_frame.take() {
@@ -216,35 +244,13 @@ impl VideoPlayer {
         }
     }
 
-    /// Copy a decoded RGBA frame into our buffer, handling stride.
-    fn copy_frame_to_buf(&mut self, rgb_frame: &Video) {
-        let data = rgb_frame.data(0);
-        let stride = rgb_frame.stride(0);
-        let w = self.width as usize;
-        let h = self.height as usize;
-
-        if stride == w * 4 {
-            let len = (w * h * 4).min(data.len()).min(self.frame_buf.len());
-            self.frame_buf[..len].copy_from_slice(&data[..len]);
-        } else {
-            for row in 0..h {
-                let src_off = row * stride;
-                let dst_off = row * w * 4;
-                let copy_len = w * 4;
-                if src_off + copy_len <= data.len() && dst_off + copy_len <= self.frame_buf.len() {
-                    self.frame_buf[dst_off..dst_off + copy_len]
-                        .copy_from_slice(&data[src_off..src_off + copy_len]);
-                }
-            }
-        }
-    }
-
     fn decode_frame(&mut self) -> Option<DecodedFrame> {
         loop {
             let mut frame = Video::empty();
             match self.decoder.receive_frame(&mut frame) {
                 Ok(()) => {
-                    let pts_ms = frame.pts().unwrap_or(0) as f64 * f64::from(self.time_base) * 1000.0;
+                    let pts_ms =
+                        frame.pts().unwrap_or(0) as f64 * f64::from(self.time_base) * 1000.0;
                     let mut rgb_frame = Video::empty();
                     if self.scaler.run(&frame, &mut rgb_frame).is_err() {
                         continue;
@@ -306,7 +312,9 @@ impl VideoPlayer {
     /// Upload the decoded frame buffer to the GPU texture.
     /// Call this from draw() where the queue is available.
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if !self.dirty { return; }
+        if !self.dirty {
+            return;
+        }
         self.dirty = false;
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -321,7 +329,11 @@ impl VideoPlayer {
                 bytes_per_row: Some(self.width * 4),
                 rows_per_image: Some(self.height),
             },
-            wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
         );
     }
 
@@ -335,9 +347,16 @@ impl VideoPlayer {
         (self.width, self.height)
     }
 
-    pub fn is_finished(&self) -> bool { self.finished }
-    pub fn is_playing(&self) -> bool { self.playing }
-    pub fn stop(&mut self) { self.playing = false; self.finished = true; }
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+    pub fn stop(&mut self) {
+        self.playing = false;
+        self.finished = true;
+    }
 
     pub fn set_on_finish(&mut self, callback: String) {
         self.on_finish = Some(callback);

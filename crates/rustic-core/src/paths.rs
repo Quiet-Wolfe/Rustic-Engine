@@ -87,19 +87,6 @@ impl AssetPaths {
         None
     }
 
-    /// Find ALL matches for a relative path across all search roots.
-    /// Used for collecting scripts from multiple sources.
-    fn find_all(&self, relative: &str) -> Vec<PathBuf> {
-        let mut results = Vec::new();
-        for root in &self.search_roots {
-            let p = root.join(relative);
-            if p.exists() {
-                results.push(p);
-            }
-        }
-        results
-    }
-
     // === Character assets ===
 
     /// Find a character JSON file.
@@ -277,16 +264,12 @@ impl AssetPaths {
 
     /// Find a sound effect.
     pub fn sound(&self, name: &str) -> Option<PathBuf> {
-        self.find_any(&[
-            format!("sounds/{name}.ogg"),
-        ])
+        self.find_any(&[format!("sounds/{name}.ogg")])
     }
 
     /// Find a music file.
     pub fn music(&self, name: &str) -> Option<PathBuf> {
-        self.find_any(&[
-            format!("music/{name}.ogg"),
-        ])
+        self.find_any(&[format!("music/{name}.ogg")])
     }
 
     // === Week / freeplay assets ===
@@ -330,13 +313,19 @@ impl AssetPaths {
         let mut songs = Vec::new();
         for root in &self.search_roots {
             let data_dir = root.join("data");
-            if !data_dir.is_dir() { continue; }
+            if !data_dir.is_dir() {
+                continue;
+            }
             if let Ok(entries) = std::fs::read_dir(&data_dir) {
                 for entry in entries.flatten() {
-                    if !entry.path().is_dir() { continue; }
+                    if !entry.path().is_dir() {
+                        continue;
+                    }
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy().to_string();
-                    if seen.contains(&name_str) { continue; }
+                    if seen.contains(&name_str) {
+                        continue;
+                    }
                     // Check for a chart JSON matching the folder name
                     let chart = entry.path().join(format!("{}.json", name_str));
                     if chart.exists() {

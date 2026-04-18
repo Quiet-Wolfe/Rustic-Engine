@@ -135,6 +135,8 @@ pub struct ScriptState {
     pub camera_shake_requests: Vec<(String, f32, f32)>,
     /// Camera flash requests: (camera_name, color_hex, duration, alpha).
     pub camera_flash_requests: Vec<(String, String, f32, f32)>,
+    /// Camera fade requests: (camera_name, color_hex, duration, fade_in).
+    pub camera_fade_requests: Vec<(String, String, f32, bool)>,
     /// Subtitle display requests: (text, font, color, size, duration, border_color).
     pub subtitle_requests: Vec<(String, String, String, f32, f32, String)>,
 
@@ -192,9 +194,9 @@ pub struct ScriptState {
     /// When blocks_gameplay is false, the song continues and the video renders as an overlay.
     /// Consumed by the game engine each frame.
     pub video_requests: Vec<(String, Option<String>, bool)>,
-    
+
     pub script_load_requests: Vec<String>,
-    
+
     /// Pending audio control requests from Lua.
     pub audio_requests: Vec<AudioRequest>,
 
@@ -301,7 +303,11 @@ pub enum LuaSpriteKind {
     /// Image sprite: image path relative to images/ dir.
     Image(String),
     /// Solid color graphic: (width, height, color_hex).
-    Graphic { width: i32, height: i32, color: String },
+    Graphic {
+        width: i32,
+        height: i32,
+        color: String,
+    },
     /// Animated sprite: image path for atlas.
     Animated(String),
 }
@@ -363,7 +369,9 @@ impl LuaText {
         Self {
             tag: tag.to_string(),
             text: text.to_string(),
-            x, y, width,
+            x,
+            y,
+            width,
             alpha: 1.0,
             visible: true,
             angle: 0.0,
@@ -401,7 +409,16 @@ impl ScriptState {
             property_writes: Vec::new(),
             property_values: HashMap::new(),
             tweens: TweenManager::new(),
-            strum_props: [StrumProps { x: 0.0, y: 0.0, alpha: 1.0, angle: 0.0, scale_x: 0.7, scale_y: 0.7, down_scroll: None, custom: false }; 8],
+            strum_props: [StrumProps {
+                x: 0.0,
+                y: 0.0,
+                alpha: 1.0,
+                angle: 0.0,
+                scale_x: 0.7,
+                scale_y: 0.7,
+                down_scroll: None,
+                custom: false,
+            }; 8],
             sprites_to_remove: Vec::new(),
             song_position: 0.0,
             camera_zoom: 1.0,
@@ -419,6 +436,7 @@ impl ScriptState {
             texts_to_add: Vec::new(),
             camera_shake_requests: Vec::new(),
             camera_flash_requests: Vec::new(),
+            camera_fade_requests: Vec::new(),
             subtitle_requests: Vec::new(),
             camera_forced_pos: false,
             opponent_camera_offset: (0.0, 0.0),

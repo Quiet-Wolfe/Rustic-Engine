@@ -1,6 +1,6 @@
 use glyphon::{
-    Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache,
-    TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
+    Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
+    TextAtlas, TextBounds, TextRenderer, Viewport,
 };
 
 /// Queued text draw call (game-space coordinates).
@@ -21,16 +21,13 @@ pub struct TextSystem {
 }
 
 impl TextSystem {
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let font_system = Self::create_font_system();
         let swash_cache = SwashCache::new();
         let cache = Cache::new(device);
         let mut atlas = TextAtlas::new(device, queue, &cache, format);
-        let renderer = TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+        let renderer =
+            TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
         let viewport = Viewport::new(device, &cache);
 
         Self {
@@ -44,14 +41,7 @@ impl TextSystem {
     }
 
     /// Queue text to be drawn this frame. Coordinates are in game-space pixels.
-    pub fn draw_text(
-        &mut self,
-        text: &str,
-        x: f32,
-        y: f32,
-        size: f32,
-        color: [f32; 4],
-    ) {
+    pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: [f32; 4]) {
         let metrics = Metrics::new(size, size * 1.2);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
 

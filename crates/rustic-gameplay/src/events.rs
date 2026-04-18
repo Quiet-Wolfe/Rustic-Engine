@@ -31,27 +31,15 @@ pub enum GameEvent {
         hit_causes_miss: bool,
     },
     /// Strum confirm should be shown (player or opponent).
-    StrumConfirm {
-        lane: usize,
-        player: bool,
-    },
+    StrumConfirm { lane: usize, player: bool },
     /// Step hit (for Lua onStepHit).
-    StepHit {
-        step: i32,
-    },
+    StepHit { step: i32 },
     /// Beat hit (for idle dance, icon bop).
-    BeatHit {
-        beat: i32,
-    },
+    BeatHit { beat: i32 },
     /// Section changed (for camera targeting, camera bop).
-    SectionChange {
-        index: usize,
-        must_hit: bool,
-    },
+    SectionChange { index: usize, must_hit: bool },
     /// Countdown beat during pre-song.
-    CountdownBeat {
-        swag: i32,
-    },
+    CountdownBeat { swag: i32 },
     /// Song audio should start playing.
     SongStart,
     /// Song finished.

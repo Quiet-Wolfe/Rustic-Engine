@@ -40,7 +40,8 @@ impl SpriteTestScreen {
     fn play_current_anim(&mut self) {
         let Some(bf_char) = &self.bf_char else { return };
         let anim = &bf_char.animations[self.current_anim_idx];
-        self.anim_ctrl.play(&anim.anim, anim.fps as f32, anim.loop_anim);
+        self.anim_ctrl
+            .play(&anim.anim, anim.fps as f32, anim.loop_anim);
     }
 }
 
@@ -48,15 +49,14 @@ impl Screen for SpriteTestScreen {
     fn init(&mut self, gpu: &GpuState) {
         let assets = AssetPaths::platform_default();
 
-        let char_path = assets.character_json("bf")
-            .expect("bf.json not found");
+        let char_path = assets.character_json("bf").expect("bf.json not found");
         let char_json = std::fs::read_to_string(&char_path)
             .unwrap_or_else(|e| panic!("Failed to read character file {:?}: {}", char_path, e));
         let bf_char = CharacterFile::from_json(&char_json).expect("Failed to parse bf.json");
 
-        let img_path = assets.image(&bf_char.image)
-            .expect("BF image not found");
-        let xml_path = assets.image_xml(&bf_char.image)
+        let img_path = assets.image(&bf_char.image).expect("BF image not found");
+        let xml_path = assets
+            .image_xml(&bf_char.image)
             .expect("BF atlas XML not found");
 
         let gpu_texture = gpu.load_texture_from_path(&img_path);
@@ -95,7 +95,8 @@ impl Screen for SpriteTestScreen {
             KeyCode::ArrowRight => {
                 self.current_anim_idx = (self.current_anim_idx + 1) % num_anims;
                 let anim = &bf_char.animations[self.current_anim_idx];
-                self.anim_ctrl.play(&anim.anim, anim.fps as f32, anim.loop_anim);
+                self.anim_ctrl
+                    .play(&anim.anim, anim.fps as f32, anim.loop_anim);
             }
             KeyCode::ArrowLeft => {
                 self.current_anim_idx = if self.current_anim_idx == 0 {
@@ -104,12 +105,14 @@ impl Screen for SpriteTestScreen {
                     self.current_anim_idx - 1
                 };
                 let anim = &bf_char.animations[self.current_anim_idx];
-                self.anim_ctrl.play(&anim.anim, anim.fps as f32, anim.loop_anim);
+                self.anim_ctrl
+                    .play(&anim.anim, anim.fps as f32, anim.loop_anim);
             }
             KeyCode::Space => {
                 self.anim_ctrl.play("", 0.0, false);
                 let anim = &bf_char.animations[self.current_anim_idx];
-                self.anim_ctrl.play(&anim.anim, anim.fps as f32, anim.loop_anim);
+                self.anim_ctrl
+                    .play(&anim.anim, anim.fps as f32, anim.loop_anim);
             }
             _ => {}
         }
@@ -134,7 +137,9 @@ impl Screen for SpriteTestScreen {
     fn draw(&mut self, gpu: &mut GpuState) {
         let Some(bf_char) = &self.bf_char else { return };
         let Some(atlas) = &self.atlas else { return };
-        let Some(gpu_texture) = &self.gpu_texture else { return };
+        let Some(gpu_texture) = &self.gpu_texture else {
+            return;
+        };
 
         let anim_name = &self.anim_names[self.current_anim_idx];
         let char_x = GAME_W / 2.0 - 100.0;

@@ -6,6 +6,11 @@ use rustic_core::scoring::{self, ScoreState};
 use crate::events::GameEvent;
 
 const KILL_OFFSET_MS: f64 = 350.0;
+const HYBRID_HOLD_BONUS_HEALTH_PER_SECOND: f32 = 0.12;
+const HYBRID_HOLD_BONUS_SCORE_PER_SECOND: f64 = 250.0;
+const HYBRID_HOLD_DROP_PENALTY_SCORE_PER_SECOND: f64 = -125.0;
+const HYBRID_HOLD_DROP_PENALTY_THRESHOLD_MS: f64 = 160.0;
+const HYBRID_HOLD_HEAD_MISS_DAMAGE: f32 = 0.08;
 
 /// Section info for camera targeting.
 pub struct SectionInfo {
@@ -22,6 +27,7 @@ pub struct PlayState {
     pub keys_held: [bool; 4],
     pub play_as_opponent: bool,
     pub botplay: bool,
+    pub hybrid_note_handling: bool,
     pub song_speed: f64,
     pub base_song_speed: f64,
     pub song_started: bool,
@@ -44,6 +50,7 @@ pub struct PlayState {
 
     // Event buffer
     events: Vec<GameEvent>,
+    hybrid_hold_score_remainder: f64,
 }
 
 impl PlayState {
@@ -56,6 +63,7 @@ impl PlayState {
             keys_held: [false; 4],
             play_as_opponent: false,
             botplay: false,
+            hybrid_note_handling: false,
             song_speed: 1.0,
             base_song_speed: 1.0,
             song_started: false,
@@ -70,7 +78,14 @@ impl PlayState {
             last_beat: -999,
             last_step: -999,
             events: Vec::new(),
+            hybrid_hold_score_remainder: 0.0,
         }
+    }
+
+    /// Enable Base Funkin-style sustain handling on top of Psych tap timing.
+    pub fn set_stock_hold_mechanics_enabled(&mut self, enabled: bool) {
+        self.hybrid_note_handling = enabled;
+        self.hybrid_hold_score_remainder = 0.0;
     }
 
     /// Take all pending events (clears the buffer).
@@ -80,15 +95,21 @@ impl PlayState {
 
     /// Handle a key press. Returns the lane if it was a gameplay lane.
     pub fn key_press(&mut self, lane: usize) {
-        if self.dead { return; }
-        if self.keys_held[lane] { return; }
+        if self.dead {
+            return;
+        }
+        if self.keys_held[lane] {
+            return;
+        }
         self.keys_held[lane] = true;
         self.try_hit_note(lane);
     }
 
     /// Handle a key release.
     pub fn key_release(&mut self, lane: usize) {
-        if self.botplay { return; }
+        if self.botplay {
+            return;
+        }
         self.keys_held[lane] = false;
     }
 
@@ -98,7 +119,11 @@ impl PlayState {
         let max_window = 166.0;
 
         for (i, nd) in self.notes.iter().enumerate() {
-            let note_is_playable = if self.play_as_opponent { !nd.must_press } else { nd.must_press };
+            let note_is_playable = if self.play_as_opponent {
+                !nd.must_press
+            } else {
+                nd.must_press
+            };
             if !note_is_playable || nd.lane != lane || nd.was_good_hit || nd.too_late {
                 continue;
             }
@@ -120,6 +145,10 @@ impl PlayState {
     fn apply_note_hit(&mut self, idx: usize, judgment: rating::Judgment) {
         let lane = self.notes[idx].lane;
         self.notes[idx].was_good_hit = true;
+        if self.notes[idx].sustain_length > 0.0 {
+            self.notes[idx].hold_released = false;
+            self.notes[idx].hold_progress = self.notes[idx].strum_time;
+        }
         let kind = &self.notes[idx].kind;
         let type_str = kind.as_type_str().to_string();
         let hit_causes_miss = kind.is_harmful();
@@ -186,7 +215,9 @@ impl PlayState {
 
     /// Main update tick. Call with dt in seconds and optional audio position for sync.
     pub fn update(&mut self, dt: f32, audio_position_ms: Option<f64>, audio_finished: bool) {
-        if self.dead { return; }
+        if self.dead {
+            return;
+        }
 
         let dt_ms = dt as f64 * 1000.0;
 
@@ -244,9 +275,17 @@ impl PlayState {
                 continue;
             }
 
-            let note_is_playable = if self.play_as_opponent { !self.notes[i].must_press } else { self.notes[i].must_press };
+            let note_is_playable = if self.play_as_opponent {
+                !self.notes[i].must_press
+            } else {
+                self.notes[i].must_press
+            };
 
-            if note_is_playable && self.botplay && !self.notes[i].kind.is_harmful() && self.conductor.song_position >= self.notes[i].strum_time {
+            if note_is_playable
+                && self.botplay
+                && !self.notes[i].kind.is_harmful()
+                && self.conductor.song_position >= self.notes[i].strum_time
+            {
                 if let Some(judgment) = rating::judge_note(&self.ratings, 0.0) {
                     self.apply_note_hit(i, judgment);
                 }
@@ -278,11 +317,22 @@ impl PlayState {
                 && self.conductor.song_position - self.notes[i].strum_time > KILL_OFFSET_MS
             {
                 self.notes[i].too_late = true;
+                if self.hybrid_note_handling && self.notes[i].sustain_length > 0.0 {
+                    self.notes[i].hold_released = true;
+                    self.notes[i].hold_progress =
+                        self.notes[i].strum_time + self.notes[i].sustain_length;
+                }
                 let type_str = self.notes[i].kind.as_type_str().to_string();
                 let ignored = self.notes[i].kind.should_ignore_miss();
 
                 if !ignored {
-                    self.score.note_miss(scoring::HEALTH_MISS);
+                    let health_loss =
+                        if self.hybrid_note_handling && self.notes[i].sustain_length > 0.0 {
+                            HYBRID_HOLD_HEAD_MISS_DAMAGE
+                        } else {
+                            scoring::HEALTH_MISS
+                        };
+                    self.score.note_miss(health_loss);
                     self.events.push(GameEvent::MuteVocals);
                     self.events.push(GameEvent::PlayMissSound);
                 }
@@ -300,43 +350,66 @@ impl PlayState {
         let step_ms = self.conductor.crochet / 4.0;
         let confirm_cycle_ms = 4.0 * (1000.0 / 24.0);
         for i in 0..self.notes.len() {
-            if self.notes[i].sustain_length <= 0.0 { continue; }
+            if self.notes[i].sustain_length <= 0.0 {
+                continue;
+            }
+            if self.hybrid_note_handling {
+                self.update_hybrid_hold_note(i, confirm_cycle_ms);
+                continue;
+            }
             let end_time = self.notes[i].strum_time + self.notes[i].sustain_length;
-            if self.conductor.song_position > end_time { continue; }
+            if self.conductor.song_position > end_time {
+                continue;
+            }
 
-            let note_is_playable = if self.play_as_opponent { !self.notes[i].must_press } else { self.notes[i].must_press };
+            let note_is_playable = if self.play_as_opponent {
+                !self.notes[i].must_press
+            } else {
+                self.notes[i].must_press
+            };
 
             if self.notes[i].was_good_hit {
                 let lane = self.notes[i].lane;
                 if note_is_playable && (self.keys_held[lane] || self.botplay) {
                     let ticks = dt_ms / step_ms;
-                    self.score.change_health(scoring::HEALTH_HOLD_TICK * ticks as f32);
+                    self.score
+                        .change_health(scoring::HEALTH_HOLD_TICK * ticks as f32);
                     if self.play_as_opponent {
-                        if self.opponent_confirm[lane] <= 0.0 || self.opponent_confirm[lane] >= confirm_cycle_ms {
+                        if self.opponent_confirm[lane] <= 0.0
+                            || self.opponent_confirm[lane] >= confirm_cycle_ms
+                        {
                             self.opponent_confirm[lane] = f64::MIN_POSITIVE;
                         }
                     } else {
-                        if self.player_confirm[lane] <= 0.0 || self.player_confirm[lane] >= confirm_cycle_ms {
+                        if self.player_confirm[lane] <= 0.0
+                            || self.player_confirm[lane] >= confirm_cycle_ms
+                        {
                             self.player_confirm[lane] = f64::MIN_POSITIVE;
                         }
                     }
                 } else if note_is_playable && !self.keys_held[lane] && !self.botplay {
                     let ticks = dt_ms / step_ms;
-                    self.score.change_health(-scoring::HEALTH_MISS * ticks as f32);
+                    self.score
+                        .change_health(-scoring::HEALTH_MISS * ticks as f32);
                 } else if !note_is_playable {
                     if self.play_as_opponent {
-                        if self.player_confirm[lane] <= 0.0 || self.player_confirm[lane] >= confirm_cycle_ms {
+                        if self.player_confirm[lane] <= 0.0
+                            || self.player_confirm[lane] >= confirm_cycle_ms
+                        {
                             self.player_confirm[lane] = f64::MIN_POSITIVE;
                         }
                     } else {
-                        if self.opponent_confirm[lane] <= 0.0 || self.opponent_confirm[lane] >= confirm_cycle_ms {
+                        if self.opponent_confirm[lane] <= 0.0
+                            || self.opponent_confirm[lane] >= confirm_cycle_ms
+                        {
                             self.opponent_confirm[lane] = f64::MIN_POSITIVE;
                         }
                     }
                 }
             } else if self.notes[i].too_late && note_is_playable {
                 let ticks = dt_ms / step_ms;
-                self.score.change_health(-scoring::HEALTH_MISS * ticks as f32);
+                self.score
+                    .change_health(-scoring::HEALTH_MISS * ticks as f32);
             }
         }
 
@@ -388,6 +461,164 @@ impl PlayState {
     /// `downscroll`: if true, notes scroll upward toward a bottom strum line.
     pub fn note_y(&self, strum_time: f64, strum_y: f32, downscroll: bool) -> f32 {
         let dist = (0.45 * (self.conductor.song_position - strum_time) * self.song_speed) as f32;
-        if downscroll { strum_y + dist } else { strum_y - dist }
+        if downscroll {
+            strum_y + dist
+        } else {
+            strum_y - dist
+        }
+    }
+
+    fn update_hybrid_hold_note(&mut self, idx: usize, confirm_cycle_ms: f64) {
+        if !self.notes[idx].was_good_hit {
+            return;
+        }
+
+        let strum_time = self.notes[idx].strum_time;
+        let end_time = strum_time + self.notes[idx].sustain_length;
+        let song_position = self.conductor.song_position.min(end_time);
+        let note_is_playable = if self.play_as_opponent {
+            !self.notes[idx].must_press
+        } else {
+            self.notes[idx].must_press
+        };
+        let lane = self.notes[idx].lane;
+        let must_press = self.notes[idx].must_press;
+
+        if note_is_playable {
+            let held = self.botplay || self.keys_held[lane];
+
+            if held && !self.notes[idx].hold_released {
+                let last_progress = if self.notes[idx].hold_progress > 0.0 {
+                    self.notes[idx].hold_progress
+                } else {
+                    strum_time
+                };
+                let delta_ms = (song_position - last_progress).max(0.0);
+                self.notes[idx].hold_progress = song_position;
+
+                if delta_ms > 0.0 {
+                    let delta_seconds = delta_ms / 1000.0;
+                    self.score
+                        .change_health(HYBRID_HOLD_BONUS_HEALTH_PER_SECOND * delta_seconds as f32);
+                    self.add_hybrid_hold_score(HYBRID_HOLD_BONUS_SCORE_PER_SECOND * delta_seconds);
+                }
+                self.pulse_confirm(must_press, lane, confirm_cycle_ms);
+            } else if !held && !self.notes[idx].hold_released && song_position < end_time {
+                let remaining_ms = (end_time - song_position).max(0.0);
+                self.notes[idx].hold_released = true;
+                self.notes[idx].hold_progress = song_position;
+                self.notes[idx].too_late = true;
+                self.apply_hybrid_hold_drop_penalty(remaining_ms);
+
+                let note_type = self.notes[idx].kind.as_type_str().to_string();
+                self.events.push(GameEvent::NoteMiss {
+                    lane,
+                    note_type,
+                    members_index: idx,
+                    ignored: true,
+                });
+            }
+        } else {
+            self.pulse_confirm(must_press, lane, confirm_cycle_ms);
+        }
+    }
+
+    fn add_hybrid_hold_score(&mut self, delta: f64) {
+        self.hybrid_hold_score_remainder += delta;
+        let whole = if self.hybrid_hold_score_remainder >= 0.0 {
+            self.hybrid_hold_score_remainder.floor()
+        } else {
+            self.hybrid_hold_score_remainder.ceil()
+        };
+
+        if whole != 0.0 {
+            self.score.score += whole as i32;
+            self.hybrid_hold_score_remainder -= whole;
+        }
+    }
+
+    fn apply_hybrid_hold_drop_penalty(&mut self, remaining_length_ms: f64) {
+        if remaining_length_ms > HYBRID_HOLD_DROP_PENALTY_THRESHOLD_MS {
+            let remaining_seconds = remaining_length_ms / 1000.0;
+            self.score.score +=
+                (HYBRID_HOLD_DROP_PENALTY_SCORE_PER_SECOND * remaining_seconds).round() as i32;
+        }
+        self.score.combo = 0;
+    }
+
+    fn pulse_confirm(&mut self, must_press: bool, lane: usize, confirm_cycle_ms: f64) {
+        let confirm = if must_press {
+            &mut self.player_confirm
+        } else {
+            &mut self.opponent_confirm
+        };
+        if confirm[lane] <= 0.0 || confirm[lane] >= confirm_cycle_ms {
+            confirm[lane] = f64::MIN_POSITIVE;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustic_core::note::{NoteData, NoteKind};
+
+    use super::PlayState;
+
+    fn hold_note(strum_time: f64, sustain_length: f64) -> NoteData {
+        NoteData::new(strum_time, 0, sustain_length, true, NoteKind::Normal)
+    }
+
+    fn hybrid_state_with(note: NoteData) -> PlayState {
+        let mut state = PlayState::new(120.0);
+        state.set_stock_hold_mechanics_enabled(true);
+        state.song_started = true;
+        state.notes.push(note);
+        state
+    }
+
+    #[test]
+    fn hybrid_hold_bonus_uses_elapsed_sustain_time() {
+        let mut state = hybrid_state_with(hold_note(1000.0, 1000.0));
+        state.conductor.song_position = 1000.0;
+
+        state.key_press(0);
+        state.conductor.song_position = 1125.0;
+        state.update(0.0, None, false);
+
+        assert_eq!(state.score.score, 381);
+        assert!((state.score.health - 1.038).abs() < 0.0001);
+    }
+
+    #[test]
+    fn hybrid_hold_release_kills_tail_without_miss_health() {
+        let mut state = hybrid_state_with(hold_note(1000.0, 1000.0));
+        state.conductor.song_position = 1000.0;
+
+        state.key_press(0);
+        state.conductor.song_position = 1200.0;
+        state.key_release(0);
+        state.update(0.0, None, false);
+
+        assert_eq!(state.score.score, 250);
+        assert_eq!(state.score.combo, 0);
+        assert_eq!(state.score.misses, 0);
+        assert!((state.score.health - 1.023).abs() < 0.0001);
+        assert!(state.notes[0].too_late);
+        assert!(state.notes[0].hold_released);
+    }
+
+    #[test]
+    fn hybrid_hold_head_miss_penalizes_once() {
+        let mut state = hybrid_state_with(hold_note(1000.0, 1000.0));
+        state.conductor.song_position = 1400.0;
+
+        state.update(0.0, None, false);
+        let health_after_miss = state.score.health;
+        state.conductor.song_position = 1800.0;
+        state.update(0.0, None, false);
+
+        assert!((health_after_miss - 0.92).abs() < 0.0001);
+        assert!((state.score.health - health_after_miss).abs() < f32::EPSILON);
+        assert_eq!(state.score.misses, 1);
     }
 }

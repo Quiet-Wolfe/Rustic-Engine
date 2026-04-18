@@ -1,6 +1,6 @@
+use bytemuck::{Pod, Zeroable};
 use std::path::Path;
 use std::sync::Arc;
-use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -43,7 +43,7 @@ pub struct GpuState {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    proj_buffer: wgpu::Buffer,
+    _proj_buffer: wgpu::Buffer,
     proj_bind_group: wgpu::BindGroup,
     pub texture_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
@@ -73,7 +73,7 @@ pub struct GpuState {
 }
 
 impl GpuState {
-    pub async fn new(window: Arc<Window>, mut game_w: f32, game_h: f32) -> Self {
+    pub async fn new(window: Arc<Window>, game_w: f32, game_h: f32) -> Self {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
@@ -124,7 +124,9 @@ impl GpuState {
 
         let size = window.inner_size();
         let surface_caps = surface.get_capabilities(&adapter);
-        let format = surface_caps.formats.iter()
+        let format = surface_caps
+            .formats
+            .iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
@@ -141,14 +143,22 @@ impl GpuState {
         };
         surface.configure(&device, &config);
 
-        // On Android, expand game width to fill the screen's aspect ratio (no letterboxing).
-        // Content designed for 1280x720 stays centered; extra width is usable space.
         #[cfg(target_os = "android")]
-        {
+        let game_w = {
+            // Expand game width to fill the screen's aspect ratio (no letterboxing).
+            // Content designed for 1280x720 stays centered; extra width is usable space.
             let aspect = config.width as f32 / config.height as f32;
-            game_w = (game_h * aspect).max(game_w);
-            log::info!("Android: game_w adjusted to {:.0} for {:.2} aspect ratio", game_w, aspect);
-        }
+            let adjusted = (game_h * aspect).max(game_w);
+            log::info!(
+                "Android: game_w adjusted to {:.0} for {:.2} aspect ratio",
+                adjusted,
+                aspect
+            );
+            adjusted
+        };
+
+        #[cfg(not(target_os = "android"))]
+        let game_w = game_w;
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -239,9 +249,21 @@ impl GpuState {
                     array_stride: std::mem::size_of::<SpriteVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[
-                        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
-                        wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x2 },
-                        wgpu::VertexAttribute { offset: 16, shader_location: 2, format: wgpu::VertexFormat::Float32x4 },
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 8,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 16,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -286,7 +308,11 @@ impl GpuState {
             &queue,
             &wgpu::TextureDescriptor {
                 label: Some("White 1x1"),
-                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -302,11 +328,21 @@ impl GpuState {
             label: Some("White Texture Bind Group"),
             layout: &texture_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&white_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&white_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         });
-        let white_texture = GpuTexture { bind_group: white_bind_group, width: 1, height: 1 };
+        let white_texture = GpuTexture {
+            bind_group: white_bind_group,
+            width: 1,
+            height: 1,
+        };
 
         let text_system = TextSystem::new(&device, &queue, format);
 
@@ -320,7 +356,7 @@ impl GpuState {
             pipeline,
             vertex_buffer,
             index_buffer,
-            proj_buffer,
+            _proj_buffer: proj_buffer,
             proj_bind_group,
             texture_layout,
             sampler,
@@ -355,11 +391,23 @@ impl GpuState {
         let max_dim = self.device.limits().max_texture_dimension_2d;
         let (w, h) = img.dimensions();
         if w > max_dim || h > max_dim {
-            let scale = if w > h { max_dim as f32 / w as f32 } else { max_dim as f32 / h as f32 };
+            let scale = if w > h {
+                max_dim as f32 / w as f32
+            } else {
+                max_dim as f32 / h as f32
+            };
             let new_w = (w as f32 * scale) as u32;
             let new_h = (h as f32 * scale) as u32;
-            log::warn!("Image {}x{} exceeds GPU max texture dimension {}, resizing to {}x{}", w, h, max_dim, new_w, new_h);
-            *img = image::imageops::resize(img, new_w, new_h, image::imageops::FilterType::Triangle);
+            log::warn!(
+                "Image {}x{} exceeds GPU max texture dimension {}, resizing to {}x{}",
+                w,
+                h,
+                max_dim,
+                new_w,
+                new_h
+            );
+            *img =
+                image::imageops::resize(img, new_w, new_h, image::imageops::FilterType::Triangle);
         }
     }
 
@@ -381,7 +429,11 @@ impl GpuState {
             &self.queue,
             &wgpu::TextureDescriptor {
                 label: Some(path.to_str().unwrap_or("texture")),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -398,12 +450,22 @@ impl GpuState {
             label: Some("Texture Bind Group"),
             layout: &self.texture_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
 
-        GpuTexture { bind_group, width, height }
+        GpuTexture {
+            bind_group,
+            width,
+            height,
+        }
     }
 
     /// Load a texture with nearest-neighbor (point) filtering — for pixel art.
@@ -424,7 +486,11 @@ impl GpuState {
             &self.queue,
             &wgpu::TextureDescriptor {
                 label: Some(path.to_str().unwrap_or("texture")),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -441,12 +507,22 @@ impl GpuState {
             label: Some("Texture Bind Group (nearest)"),
             layout: &self.texture_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.nearest_sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.nearest_sampler),
+                },
             ],
         });
 
-        GpuTexture { bind_group, width, height }
+        GpuTexture {
+            bind_group,
+            width,
+            height,
+        }
     }
 
     /// Create a solid-color texture. `color_hex` is "RRGGBB" or "AARRGGBB".
@@ -469,16 +545,30 @@ impl GpuState {
         };
         // Premultiply
         let af = a as f32 / 255.0;
-        let pixel = [(r as f32 * af + 0.5) as u8, (g as f32 * af + 0.5) as u8, (b as f32 * af + 0.5) as u8, a];
+        let pixel = [
+            (r as f32 * af + 0.5) as u8,
+            (g as f32 * af + 0.5) as u8,
+            (b as f32 * af + 0.5) as u8,
+            a,
+        ];
         let w = width.max(1);
         let h = height.max(1);
-        let data: Vec<u8> = pixel.iter().copied().cycle().take((w * h * 4) as usize).collect();
+        let data: Vec<u8> = pixel
+            .iter()
+            .copied()
+            .cycle()
+            .take((w * h * 4) as usize)
+            .collect();
 
         let texture = self.device.create_texture_with_data(
             &self.queue,
             &wgpu::TextureDescriptor {
                 label: Some("solid_color"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -494,11 +584,21 @@ impl GpuState {
             label: Some("Solid Texture Bind Group"),
             layout: &self.texture_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
-        GpuTexture { bind_group, width: w, height: h }
+        GpuTexture {
+            bind_group,
+            width: w,
+            height: h,
+        }
     }
 
     /// Add a sprite frame to the current batch.
@@ -540,9 +640,8 @@ impl GpuState {
             };
 
             self.push_quad(
-                draw_x, draw_y, display_w, display_h,
-                tl_u, tl_v, tr_u, tr_v, br_u, br_v, bl_u, bl_v,
-                color,
+                draw_x, draw_y, display_w, display_h, tl_u, tl_v, tr_u, tr_v, br_u, br_v, bl_u,
+                bl_v, color,
             );
         } else {
             let w = frame.src.w * scale;
@@ -563,9 +662,7 @@ impl GpuState {
             let (u_left, u_right) = if flip_x { (u1, u0) } else { (u0, u1) };
 
             self.push_quad(
-                draw_x, draw_y, w, h,
-                u_left, v0, u_right, v0, u_right, v1, u_left, v1,
-                color,
+                draw_x, draw_y, w, h, u_left, v0, u_right, v0, u_right, v1, u_left, v1, color,
             );
         }
     }
@@ -603,9 +700,8 @@ impl GpuState {
                 (u1, v1, u1, v0, u0, v0, u0, v1)
             };
             self.push_quad(
-                draw_x, draw_y, display_w, display_h,
-                tl_u, tl_v, tr_u, tr_v, br_u, br_v, bl_u, bl_v,
-                color,
+                draw_x, draw_y, display_w, display_h, tl_u, tl_v, tr_u, tr_v, br_u, br_v, bl_u,
+                bl_v, color,
             );
         } else {
             let w = frame.src.w * scale;
@@ -623,9 +719,7 @@ impl GpuState {
             // flip_y: swap v0 and v1
             let (u_left, u_right) = if flip_x { (u1, u0) } else { (u0, u1) };
             self.push_quad(
-                draw_x, draw_y, w, h,
-                u_left, v1, u_right, v1, u_right, v0, u_left, v0,
-                color,
+                draw_x, draw_y, w, h, u_left, v1, u_right, v1, u_right, v0, u_left, v0, color,
             );
         }
     }
@@ -686,28 +780,47 @@ impl GpuState {
 
     pub fn push_quad(
         &mut self,
-        x: f32, y: f32, w: f32, h: f32,
-        tl_u: f32, tl_v: f32,
-        tr_u: f32, tr_v: f32,
-        br_u: f32, br_v: f32,
-        bl_u: f32, bl_v: f32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        tl_u: f32,
+        tl_v: f32,
+        tr_u: f32,
+        tr_v: f32,
+        br_u: f32,
+        br_v: f32,
+        bl_u: f32,
+        bl_v: f32,
         color: [f32; 4],
     ) {
         let base = self.vertices.len() as u32;
-        self.vertices.push(SpriteVertex { position: [x, y], uv: [tl_u, tl_v], color });
-        self.vertices.push(SpriteVertex { position: [x + w, y], uv: [tr_u, tr_v], color });
-        self.vertices.push(SpriteVertex { position: [x + w, y + h], uv: [br_u, br_v], color });
-        self.vertices.push(SpriteVertex { position: [x, y + h], uv: [bl_u, bl_v], color });
-        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        self.vertices.push(SpriteVertex {
+            position: [x, y],
+            uv: [tl_u, tl_v],
+            color,
+        });
+        self.vertices.push(SpriteVertex {
+            position: [x + w, y],
+            uv: [tr_u, tr_v],
+            color,
+        });
+        self.vertices.push(SpriteVertex {
+            position: [x + w, y + h],
+            uv: [br_u, br_v],
+            color,
+        });
+        self.vertices.push(SpriteVertex {
+            position: [x, y + h],
+            uv: [bl_u, bl_v],
+            color,
+        });
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// Push a quad with 4 arbitrary vertex positions (for matrix-transformed sprites like Adobe Animate atlas).
-    pub fn push_raw_quad(
-        &mut self,
-        positions: [[f32; 2]; 4],
-        uvs: [[f32; 2]; 4],
-        color: [f32; 4],
-    ) {
+    pub fn push_raw_quad(&mut self, positions: [[f32; 2]; 4], uvs: [[f32; 2]; 4], color: [f32; 4]) {
         let base = self.vertices.len() as u32;
         for i in 0..4 {
             self.vertices.push(SpriteVertex {
@@ -716,14 +829,21 @@ impl GpuState {
                 color,
             });
         }
-        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// Push a quad rotated by `angle` radians around its center. Coordinates in game-space pixels.
     pub fn push_quad_rotated(
         &mut self,
-        cx: f32, cy: f32, w: f32, h: f32,
-        u0: f32, v0: f32, u1: f32, v1: f32,
+        cx: f32,
+        cy: f32,
+        w: f32,
+        h: f32,
+        u0: f32,
+        v0: f32,
+        u1: f32,
+        v1: f32,
         angle: f32,
         flip_x: bool,
         color: [f32; 4],
@@ -739,20 +859,33 @@ impl GpuState {
         }
         let (ul, ur) = if flip_x { (u1, u0) } else { (u0, u1) };
         let base = self.vertices.len() as u32;
-        self.vertices.push(SpriteVertex { position: verts[0], uv: [ul, v0], color });
-        self.vertices.push(SpriteVertex { position: verts[1], uv: [ur, v0], color });
-        self.vertices.push(SpriteVertex { position: verts[2], uv: [ur, v1], color });
-        self.vertices.push(SpriteVertex { position: verts[3], uv: [ul, v1], color });
-        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        self.vertices.push(SpriteVertex {
+            position: verts[0],
+            uv: [ul, v0],
+            color,
+        });
+        self.vertices.push(SpriteVertex {
+            position: verts[1],
+            uv: [ur, v0],
+            color,
+        });
+        self.vertices.push(SpriteVertex {
+            position: verts[2],
+            uv: [ur, v1],
+            color,
+        });
+        self.vertices.push(SpriteVertex {
+            position: verts[3],
+            uv: [ul, v1],
+            color,
+        });
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// Draw a solid-colored quad (no texture). Coordinates in game-space pixels.
     pub fn push_colored_quad(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
-        self.push_quad(
-            x, y, w, h,
-            0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0,
-            color,
-        );
+        self.push_quad(x, y, w, h, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, color);
     }
 
     /// Present using the built-in white texture (for screens that only use colored quads + text).
@@ -795,8 +928,10 @@ impl GpuState {
 
         // Upload vertex/index data
         if !self.vertices.is_empty() {
-            self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
-            self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+            self.queue
+                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+            self.queue
+                .write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
         }
 
         {
@@ -943,8 +1078,10 @@ impl GpuState {
             wgpu::LoadOp::Clear(wgpu::Color::BLACK)
         };
 
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
-        self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+        self.queue
+            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+        self.queue
+            .write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
 
         let (vp_x, vp_y, vp_w, vp_h) = if self.pp_active {
             (0.0, 0.0, self.game_w, self.game_h)
@@ -959,7 +1096,10 @@ impl GpuState {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: load_op,
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 ..Default::default()
@@ -991,8 +1131,10 @@ impl GpuState {
             wgpu::LoadOp::Clear(wgpu::Color::BLACK)
         };
 
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
-        self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+        self.queue
+            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+        self.queue
+            .write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
 
         let (vp_x, vp_y, vp_w, vp_h) = if self.pp_active {
             (0.0, 0.0, self.game_w, self.game_h)
@@ -1007,7 +1149,10 @@ impl GpuState {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: load_op,
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 ..Default::default()
@@ -1038,8 +1183,10 @@ impl GpuState {
 
         // Upload remaining colored quads before creating render pass
         if !self.vertices.is_empty() {
-            self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
-            self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
+            self.queue
+                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.vertices));
+            self.queue
+                .write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&self.indices));
         }
 
         let (vp_x, vp_y, vp_w, vp_h) = if self.pp_active {
@@ -1056,7 +1203,10 @@ impl GpuState {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: load_op,
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 ..Default::default()
@@ -1075,8 +1225,13 @@ impl GpuState {
             }
 
             self.text_system.render(
-                &self.device, &self.queue, &mut pass,
-                self.game_w, self.game_h, vp_w, vp_h,
+                &self.device,
+                &self.queue,
+                &mut pass,
+                self.game_w,
+                self.game_h,
+                vp_w,
+                vp_h,
             );
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -1086,7 +1241,8 @@ impl GpuState {
             if let Some(surface_view) = self.surface_view_for_pp.take() {
                 let viewport = self.viewport_rect();
                 self.postprocess.update_uniforms(&self.queue);
-                self.postprocess.apply(&self.device, &self.queue, &surface_view, viewport);
+                self.postprocess
+                    .apply(&self.device, &self.queue, &surface_view, viewport);
                 if let Some(output) = self.surface_output_for_pp.take() {
                     output.present();
                 }
@@ -1100,9 +1256,17 @@ impl GpuState {
 
     /// Draw a sub-region of a texture as a quad. UV coords are in pixels, converted internally.
     pub fn push_texture_region(
-        &mut self, tex_w: f32, tex_h: f32,
-        src_x: f32, src_y: f32, src_w: f32, src_h: f32,
-        dst_x: f32, dst_y: f32, dst_w: f32, dst_h: f32,
+        &mut self,
+        tex_w: f32,
+        tex_h: f32,
+        src_x: f32,
+        src_y: f32,
+        src_w: f32,
+        src_h: f32,
+        dst_x: f32,
+        dst_y: f32,
+        dst_w: f32,
+        dst_h: f32,
         flip_x: bool,
         color: [f32; 4],
     ) {
@@ -1112,9 +1276,7 @@ impl GpuState {
         let v1 = (src_y + src_h) / tex_h;
         let (ul, ur) = if flip_x { (u1, u0) } else { (u0, u1) };
         self.push_quad(
-            dst_x, dst_y, dst_w, dst_h,
-            ul, v0, ur, v0, ur, v1, ul, v1,
-            color,
+            dst_x, dst_y, dst_w, dst_h, ul, v0, ur, v0, ur, v1, ul, v1, color,
         );
     }
 }
@@ -1130,4 +1292,3 @@ fn ortho_projection(w: f32, h: f32) -> Projection {
         ],
     }
 }
-

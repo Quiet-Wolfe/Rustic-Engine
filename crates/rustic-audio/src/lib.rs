@@ -195,7 +195,9 @@ impl AudioEngine {
     /// Play a looping music track and seek to a start position in milliseconds.
     pub fn play_loop_music_from(&mut self, path: &Path, volume: f64, start_ms: f64) {
         self.stop_loop_music();
-        if !path.exists() { return; }
+        if !path.exists() {
+            return;
+        }
         if let Ok(data) = StaticSoundData::from_file(path) {
             let data = data.loop_region(..);
             if let Ok(mut handle) = self.manager.play(data) {

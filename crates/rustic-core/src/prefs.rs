@@ -75,10 +75,18 @@ impl Preferences {
         self.master_volume = self.master_volume.clamp(0.0, 1.0);
         self.music_volume = self.music_volume.clamp(0.0, 1.0);
         self.sfx_volume = self.sfx_volume.clamp(0.0, 1.0);
-        if self.note_left.is_empty() { self.note_left = default_note_left(); }
-        if self.note_down.is_empty() { self.note_down = default_note_down(); }
-        if self.note_up.is_empty() { self.note_up = default_note_up(); }
-        if self.note_right.is_empty() { self.note_right = default_note_right(); }
+        if self.note_left.is_empty() {
+            self.note_left = default_note_left();
+        }
+        if self.note_down.is_empty() {
+            self.note_down = default_note_down();
+        }
+        if self.note_up.is_empty() {
+            self.note_up = default_note_up();
+        }
+        if self.note_right.is_empty() {
+            self.note_right = default_note_right();
+        }
     }
 }
 

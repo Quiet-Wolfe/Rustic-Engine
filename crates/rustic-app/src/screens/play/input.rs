@@ -1,6 +1,6 @@
 use winit::keyboard::KeyCode;
 
-use super::{PlayScreen, DeathPhase};
+use super::{DeathPhase, PlayScreen};
 use crate::screens::options;
 
 impl PlayScreen {
@@ -19,9 +19,16 @@ impl PlayScreen {
             return;
         }
 
-        if let Some(super::CutsceneState::Video { skippable, blocks_gameplay, .. }) = &self.cutscene {
+        if let Some(super::CutsceneState::Video {
+            skippable,
+            blocks_gameplay,
+            ..
+        }) = &self.cutscene
+        {
             if *blocks_gameplay {
-                if *skippable && (key == KeyCode::Enter || key == KeyCode::Escape || key == KeyCode::Space) {
+                if *skippable
+                    && (key == KeyCode::Enter || key == KeyCode::Escape || key == KeyCode::Space)
+                {
                     self.skip_cutscene();
                 }
                 return;
@@ -69,6 +76,12 @@ impl PlayScreen {
 
         // Forward gameplay input to PlayState
         if let Some(lane) = self.key_to_lane(key) {
+            #[cfg(feature = "rl")]
+            if let Some(harness) = &self.rl_harness {
+                if harness.control_gameplay() {
+                    return; // Ignore human input when agent is driving
+                }
+            }
             self.game.key_press(lane);
         }
     }
@@ -96,7 +109,10 @@ impl PlayScreen {
 
         // Mark notes in the past as too_late (skip misses so we don't die)
         for note in &mut self.game.notes {
-            if note.strum_time + note.sustain_length < target && !note.was_good_hit && !note.too_late {
+            if note.strum_time + note.sustain_length < target
+                && !note.was_good_hit
+                && !note.too_late
+            {
                 note.too_late = true;
             }
         }

@@ -50,6 +50,21 @@ impl Module for Mlp {
     }
 }
 
+impl crate::PolicyModel for Mlp {
+    fn build_input_batch(
+        &self,
+        observations: &[crate::Observation],
+        device: &Device,
+    ) -> Result<Tensor> {
+        let b = observations.len();
+        let mut flat_inputs = Vec::with_capacity(b * OBS_DIM);
+        for obs in observations {
+            flat_inputs.extend(flatten_observation(obs));
+        }
+        Tensor::from_vec(flat_inputs, (b, OBS_DIM), device)
+    }
+}
+
 /// One timestep in the trajectory buffer. Stored on-device so we can
 /// differentiate through the stored log-probs at update time.
 struct Step {
@@ -57,6 +72,8 @@ struct Step {
     log_probs: Tensor, // [4]
     /// Immediate reward granted for this action.
     reward: f32,
+    /// Per-lane entropy of the policy at this step.
+    entropy: Tensor, // [4]
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,9 +90,8 @@ pub struct Trainer {
     optimizer: nn::SGD,
     device: Device,
     trajectory: Vec<Step>,
-    /// Sampled action from most recent `decide()` that hasn't received a
-    /// reward yet. Populated by `decide`, consumed by `observe_reward`.
-    pending_log_probs: Option<Tensor>,
+    /// Sampled action log-probs and policy entropy from most recent `decide()`.
+    pending_log_probs: Option<(Tensor, Tensor)>,
     /// REINFORCE batches — we run an update every `batch_size` steps.
     batch_size: usize,
     learning_rate: f64,
@@ -87,7 +103,7 @@ pub struct Trainer {
 
 impl Trainer {
     pub fn new(hidden: usize, batch_size: usize, learning_rate: f64) -> Result<Self> {
-        let device = Device::Cpu;
+        let device = crate::best_device();
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
         let model = Mlp::new(hidden, vb)?;
@@ -131,7 +147,10 @@ impl Trainer {
         // = sum(-softplus(-l) if a else -softplus(l))
         // We build this as a differentiable tensor expression.
         let mask = Tensor::from_vec(
-            press.iter().map(|b| if *b { 1f32 } else { 0f32 }).collect::<Vec<_>>(),
+            press
+                .iter()
+                .map(|b| if *b { 1f32 } else { 0f32 })
+                .collect::<Vec<_>>(),
             (4,),
             &self.device,
         )?;
@@ -140,15 +159,24 @@ impl Trainer {
         let log_1mp = log_sigmoid(&logits.neg()?)?;
         let lp = (mask.mul(&log_p)? + (one - &mask)?.mul(&log_1mp)?)?;
 
-        self.pending_log_probs = Some(lp);
+        // Entropy H = -[p*log(p) + (1-p)*log(1-p)]
+        let p = candle_nn::ops::sigmoid(&logits)?;
+        let one_p = candle_nn::ops::sigmoid(&logits.neg()?)?;
+        let entropy = (p.mul(&log_p)? + one_p.mul(&log_1mp)?)?.neg()?;
+
+        self.pending_log_probs = Some((lp, entropy));
         Ok(Action { press })
     }
 
     /// Attach the reward for the action returned by the most recent
     /// `decide`. Ignored if `decide` was not called since the last reward.
     pub fn observe_reward(&mut self, reward: f32) {
-        if let Some(lp) = self.pending_log_probs.take() {
-            self.trajectory.push(Step { log_probs: lp, reward });
+        if let Some((lp, entropy)) = self.pending_log_probs.take() {
+            self.trajectory.push(Step {
+                log_probs: lp,
+                reward,
+                entropy,
+            });
         }
     }
 
@@ -163,18 +191,24 @@ impl Trainer {
         let mean_reward = total_reward / self.trajectory.len() as f32;
 
         // Update running baseline and compute advantages.
-        self.reward_baseline =
-            self.baseline_momentum * self.reward_baseline
-                + (1.0 - self.baseline_momentum) * mean_reward;
+        self.reward_baseline = self.baseline_momentum * self.reward_baseline
+            + (1.0 - self.baseline_momentum) * mean_reward;
         let baseline = self.reward_baseline;
 
-        // Sum of per-step losses: loss_t = -advantage_t * sum(log_probs_t)
+        // Sum of per-step losses: loss_t = -advantage_t * sum(log_probs_t) - beta * sum(entropy_t)
         let mut loss = Tensor::zeros((), DType::F32, &self.device)?;
+        let entropy_beta = 0.01f64;
+
         for step in &self.trajectory {
             let advantage = step.reward - baseline;
             let step_lp_sum = step.log_probs.sum_all()?;
-            let scaled = (step_lp_sum * (-advantage as f64))?;
-            loss = (loss + scaled)?;
+            let step_entropy_sum = step.entropy.sum_all()?;
+
+            let scaled_lp = (step_lp_sum * (-advantage as f64))?;
+            let scaled_entropy = (step_entropy_sum * (-entropy_beta))?;
+
+            loss = (loss + scaled_lp)?;
+            loss = (loss + scaled_entropy)?;
         }
         let loss = (loss / self.trajectory.len() as f64)?;
 
@@ -226,6 +260,40 @@ impl Trainer {
     pub(crate) fn device_ref(&self) -> &Device {
         &self.device
     }
+
+    /// Save all model weights to a safetensors file. Creates parent dirs.
+    pub fn save(&self, path: &std::path::Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let data = self.varmap.data().lock().unwrap();
+        let tensors: Vec<(&str, &Tensor)> = data
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_tensor()))
+            .collect();
+        let save_map: std::collections::HashMap<String, Tensor> = tensors
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).clone()))
+            .collect();
+        candle_core::safetensors::save(&save_map, path)
+    }
+
+    /// Load model weights from a safetensors file. Silently no-op if the
+    /// file doesn't exist (first run). Returns false when skipped.
+    pub fn load(&mut self, path: &std::path::Path) -> Result<bool> {
+        if !path.exists() {
+            return Ok(false);
+        }
+        let tensors = candle_core::safetensors::load(path, &self.device)?;
+        let mut data = self.varmap.data().lock().unwrap();
+        for (name, tensor) in tensors {
+            if let Some(var) = data.get_mut(&name) {
+                var.set(&tensor)?;
+            }
+        }
+        log::info!("rustic-rl: loaded MLP weights from {:?}", path);
+        Ok(true)
+    }
 }
 
 /// Numerically-stable log(sigmoid(x)) = -softplus(-x).
@@ -250,7 +318,11 @@ pub fn flatten_observation(obs: &Observation) -> Vec<f32> {
             let (t, sus) = obs.upcoming[lane][slot];
             // Large/infinite times → clamp to a sane upper bound in seconds
             // so the net sees a bounded input.
-            let t_sec = if t.is_finite() { (t / 1000.0).clamp(-2.0, 4.0) } else { 4.0 };
+            let t_sec = if t.is_finite() {
+                (t / 1000.0).clamp(-2.0, 4.0)
+            } else {
+                4.0
+            };
             let sus_sec = (sus / 1000.0).clamp(0.0, 4.0);
             v.push(t_sec);
             v.push(sus_sec);

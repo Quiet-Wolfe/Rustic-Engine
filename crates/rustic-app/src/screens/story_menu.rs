@@ -104,7 +104,9 @@ impl StoryMenuScreen {
         };
 
         self.available_difficulties = available_difficulties(&self.paths, &week);
-        self.selected_difficulty = self.selected_difficulty.min(self.available_difficulties.len().saturating_sub(1));
+        self.selected_difficulty = self
+            .selected_difficulty
+            .min(self.available_difficulties.len().saturating_sub(1));
         let diff = self.available_difficulties[self.selected_difficulty].clone();
         self.target_score = self.highscores.get_week_score(&week.file_name, &diff);
         self.difficulty_alpha = 0.0;
@@ -121,7 +123,10 @@ impl StoryMenuScreen {
             None
         } else {
             self.paths
-                .find(&format!("images/menubackgrounds/menu_{}.png", week.week_background))
+                .find(&format!(
+                    "images/menubackgrounds/menu_{}.png",
+                    week.week_background
+                ))
                 .map(|path| gpu.load_texture_from_path(&path))
         };
 
@@ -129,7 +134,8 @@ impl StoryMenuScreen {
             StoryMenuCharacter::load(gpu, &self.paths, slot, &week.week_characters[slot])
         });
 
-        self.current_difficulty_texture = self.paths
+        self.current_difficulty_texture = self
+            .paths
             .find(&format!(
                 "images/menudifficulties/{}.png",
                 self.available_difficulties[self.selected_difficulty]
@@ -158,7 +164,8 @@ impl StoryMenuScreen {
             return;
         }
         let len = self.available_difficulties.len() as i32;
-        self.selected_difficulty = ((self.selected_difficulty as i32 + delta).rem_euclid(len)) as usize;
+        self.selected_difficulty =
+            ((self.selected_difficulty as i32 + delta).rem_euclid(len)) as usize;
         self.refresh_selection_metadata();
         if let Some(audio) = &mut self.audio {
             if let Some(sfx) = self.paths.sound("scrollMenu") {
@@ -326,7 +333,8 @@ impl Screen for StoryMenuScreen {
                 self.change_difficulty(1);
             }
             KeyCode::ControlLeft | KeyCode::ControlRight => {
-                self.gameplay_changers = Some(GameplayChangersState::new(self.practice_mode, self.botplay));
+                self.gameplay_changers =
+                    Some(GameplayChangersState::new(self.practice_mode, self.botplay));
             }
             KeyCode::KeyR => self.open_reset_modal(),
             KeyCode::Enter | KeyCode::Space => self.confirm_week(),

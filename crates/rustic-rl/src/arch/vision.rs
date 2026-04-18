@@ -33,10 +33,7 @@ impl VisionTower {
         )?;
 
         // Learned positional embedding — one vector per patch.
-        let pos_embed = vb.get(
-            (1, num_patches, cfg.hidden),
-            "pos_embed",
-        )?;
+        let pos_embed = vb.get((1, num_patches, cfg.hidden), "pos_embed")?;
 
         let mut blocks = Vec::with_capacity(cfg.layers);
         for i in 0..cfg.layers {

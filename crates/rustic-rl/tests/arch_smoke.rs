@@ -15,8 +15,7 @@ fn tiny_config_produces_four_logits() {
     let cfg = ArchConfig::tiny();
     cfg.validate().expect("tiny config should validate");
 
-    let (model, _varmap) =
-        OmniModel::fresh(cfg.clone(), &device).expect("build model");
+    let (model, _varmap) = OmniModel::fresh(cfg.clone(), &device).expect("build model");
 
     let batch = 2;
     let image = Tensor::rand(
@@ -35,13 +34,7 @@ fn tiny_config_produces_four_logits() {
     // Use a realistic frame count: ~1 second of 10ms-hop mel frames, then
     // divisible by 4 (two stride-2 subsample layers).
     let mel_frames = 96;
-    let mel = Tensor::rand(
-        0f32,
-        1.0,
-        (batch, cfg.audio.mel_bins, mel_frames),
-        &device,
-    )
-    .unwrap();
+    let mel = Tensor::rand(0f32, 1.0, (batch, cfg.audio.mel_bins, mel_frames), &device).unwrap();
 
     let logits = model.forward(&image, &mel).expect("forward pass");
     assert_eq!(
@@ -50,11 +43,7 @@ fn tiny_config_produces_four_logits() {
         "expected [B, 4] logits"
     );
 
-    let logits_vec: Vec<f32> = logits
-        .flatten_all()
-        .unwrap()
-        .to_vec1()
-        .expect("to_vec1");
+    let logits_vec: Vec<f32> = logits.flatten_all().unwrap().to_vec1().expect("to_vec1");
     assert_eq!(logits_vec.len(), batch * cfg.action_classes);
     for (i, v) in logits_vec.iter().enumerate() {
         assert!(

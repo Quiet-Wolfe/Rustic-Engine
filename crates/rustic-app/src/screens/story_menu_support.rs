@@ -54,7 +54,10 @@ impl StoryMenuCharacter {
 
         let base_x = 170.0 + slot as f32 * 320.0;
         let base_y = 126.0;
-        let (character_name, tint) = if paths.find(&format!("images/menucharacters/{name}.json")).is_some() {
+        let (character_name, tint) = if paths
+            .find(&format!("images/menucharacters/{name}.json"))
+            .is_some()
+        {
             (name.to_string(), [1.0, 1.0, 1.0, 1.0])
         } else {
             ("bf".to_string(), [0.0, 0.0, 0.0, 0.6])
@@ -117,7 +120,10 @@ impl StoryMenuCharacter {
     }
 
     pub fn draw(&self, gpu: &mut GpuState) {
-        let Some(frame) = self.atlas.get_frame(&self.anim.current_anim, self.anim.frame_index) else {
+        let Some(frame) = self
+            .atlas
+            .get_frame(&self.anim.current_anim, self.anim.frame_index)
+        else {
             return;
         };
         gpu.draw_sprite_frame(

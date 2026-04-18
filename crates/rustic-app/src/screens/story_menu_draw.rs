@@ -20,9 +20,18 @@ impl StoryMenuScreen {
             let draw_h = bh * scale;
             let x = (1280.0 - draw_w) * 0.5;
             gpu.push_texture_region(
-                bw, bh, 0.0, 0.0, bw, bh,
-                x, 56.0, draw_w, draw_h,
-                false, [1.0, 1.0, 1.0, 1.0],
+                bw,
+                bh,
+                0.0,
+                0.0,
+                bw,
+                bh,
+                x,
+                56.0,
+                draw_w,
+                draw_h,
+                false,
+                [1.0, 1.0, 1.0, 1.0],
             );
             gpu.draw_batch(Some(bg));
         }
@@ -34,7 +43,13 @@ impl StoryMenuScreen {
         gpu.draw_text(&score_text, 10.0, 10.0, 32.0, [1.0, 1.0, 1.0, 1.0]);
 
         if let Some(week) = self.current_week() {
-            gpu.draw_text(&week.week.week_name.to_uppercase(), 1040.0, 10.0, 32.0, [1.0, 1.0, 1.0, 0.7]);
+            gpu.draw_text(
+                &week.week.week_name.to_uppercase(),
+                1040.0,
+                10.0,
+                32.0,
+                [1.0, 1.0, 1.0, 0.7],
+            );
         }
 
         for character in self.current_characters.iter().flatten() {
@@ -46,7 +61,11 @@ impl StoryMenuScreen {
             if !(360.0..=720.0).contains(&y) {
                 continue;
             }
-            let alpha = if idx == self.selected_week && !week.locked { 1.0 } else { 0.6 };
+            let alpha = if idx == self.selected_week && !week.locked {
+                1.0
+            } else {
+                0.6
+            };
             let flashing = self.confirming
                 && idx == self.selected_week
                 && ((self.confirm_timer * 60.0 * 6.0) as i32 % 2 == 0);
@@ -73,7 +92,13 @@ impl StoryMenuScreen {
                 );
                 gpu.draw_batch(Some(texture));
             } else {
-                gpu.draw_text(&week.week.file_name.to_uppercase(), 480.0, y + 20.0, 38.0, color);
+                gpu.draw_text(
+                    &week.week.file_name.to_uppercase(),
+                    480.0,
+                    y + 20.0,
+                    38.0,
+                    color,
+                );
             }
 
             if week.locked {
@@ -96,12 +121,36 @@ impl StoryMenuScreen {
         }
 
         if let Some(ui) = &self.ui {
-            if let Some(frame) = ui.atlas.get_frame(&ui.left_arrow.current_anim, ui.left_arrow.frame_index) {
-                gpu.draw_sprite_frame(frame, ui.tex_w, ui.tex_h, 850.0, 510.0, 1.0, false, [1.0, 1.0, 1.0, 1.0]);
+            if let Some(frame) = ui
+                .atlas
+                .get_frame(&ui.left_arrow.current_anim, ui.left_arrow.frame_index)
+            {
+                gpu.draw_sprite_frame(
+                    frame,
+                    ui.tex_w,
+                    ui.tex_h,
+                    850.0,
+                    510.0,
+                    1.0,
+                    false,
+                    [1.0, 1.0, 1.0, 1.0],
+                );
                 gpu.draw_batch(Some(&ui.texture));
             }
-            if let Some(frame) = ui.atlas.get_frame(&ui.right_arrow.current_anim, ui.right_arrow.frame_index) {
-                gpu.draw_sprite_frame(frame, ui.tex_w, ui.tex_h, 1226.0, 510.0, 1.0, false, [1.0, 1.0, 1.0, 1.0]);
+            if let Some(frame) = ui
+                .atlas
+                .get_frame(&ui.right_arrow.current_anim, ui.right_arrow.frame_index)
+            {
+                gpu.draw_sprite_frame(
+                    frame,
+                    ui.tex_w,
+                    ui.tex_h,
+                    1226.0,
+                    510.0,
+                    1.0,
+                    false,
+                    [1.0, 1.0, 1.0, 1.0],
+                );
                 gpu.draw_batch(Some(&ui.texture));
             }
         }
@@ -163,7 +212,13 @@ impl StoryMenuScreen {
                 .collect::<Vec<_>>()
                 .join("\n");
             gpu.draw_text(&track_list, 100.0, 560.0, 24.0, [0.9, 0.34, 0.47, 1.0]);
-            gpu.draw_text(&week.week.story_name.to_uppercase(), 920.0, 60.0, 30.0, [1.0, 1.0, 1.0, 0.85]);
+            gpu.draw_text(
+                &week.week.story_name.to_uppercase(),
+                920.0,
+                60.0,
+                30.0,
+                [1.0, 1.0, 1.0, 0.85],
+            );
         }
 
         if let Some(reset_modal) = &mut self.reset_modal {

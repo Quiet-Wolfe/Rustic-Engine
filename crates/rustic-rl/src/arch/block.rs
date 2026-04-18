@@ -17,12 +17,7 @@ pub struct TransformerBlock {
 }
 
 impl TransformerBlock {
-    pub fn new(
-        hidden: usize,
-        heads: usize,
-        mlp_mult: usize,
-        vb: VarBuilder,
-    ) -> Result<Self> {
+    pub fn new(hidden: usize, heads: usize, mlp_mult: usize, vb: VarBuilder) -> Result<Self> {
         let norm1 = nn::layer_norm(hidden, 1e-6, vb.pp("norm1"))?;
         let attn = Attention::new(hidden, heads, vb.pp("attn"))?;
         let norm2 = nn::layer_norm(hidden, 1e-6, vb.pp("norm2"))?;
@@ -44,6 +39,17 @@ impl TransformerBlock {
         let h = self.norm2.forward(&x)?;
         let h = self.mlp.forward(&h)?;
         x + h
+    }
+
+    /// Like `forward` but also returns the attention weight matrix from this
+    /// block's self-attention layer. Shape: `[B, H, T, T]`.
+    pub fn forward_with_attn(&self, x: &Tensor, mask: Option<&Tensor>) -> Result<(Tensor, Tensor)> {
+        let h = self.norm1.forward(x)?;
+        let (h, attn_weights) = self.attn.forward_with_weights(&h, mask)?;
+        let x = (x + h)?;
+        let h = self.norm2.forward(&x)?;
+        let h = self.mlp.forward(&h)?;
+        Ok(((x + h)?, attn_weights))
     }
 }
 
@@ -94,6 +100,33 @@ impl Attention {
         let out = attn.matmul(&v)?; // [B, H, T, D]
         let out = out.transpose(1, 2)?.contiguous()?.reshape((b, t, ()))?;
         self.out.forward(&out)
+    }
+
+    /// Like `forward` but also returns the attention weight matrix `[B, H, T, T]`.
+    pub fn forward_with_weights(
+        &self,
+        x: &Tensor,
+        mask: Option<&Tensor>,
+    ) -> Result<(Tensor, Tensor)> {
+        let (b, t, _c) = x.dims3()?;
+        let qkv = self.qkv.forward(x)?;
+        let qkv = qkv.reshape((b, t, 3, self.heads, self.head_dim))?;
+        let qkv = qkv.permute((2, 0, 3, 1, 4))?.contiguous()?;
+        let q = qkv.get(0)?;
+        let k = qkv.get(1)?;
+        let v = qkv.get(2)?;
+
+        let attn = q.matmul(&k.transpose(D::Minus2, D::Minus1)?)?;
+        let attn = (attn * self.scale)?;
+        let attn = match mask {
+            Some(m) => attn.broadcast_add(m)?,
+            None => attn,
+        };
+        let attn_weights = candle_nn::ops::softmax_last_dim(&attn)?;
+
+        let out = attn_weights.matmul(&v)?;
+        let out = out.transpose(1, 2)?.contiguous()?.reshape((b, t, ()))?;
+        Ok((self.out.forward(&out)?, attn_weights))
     }
 }
 

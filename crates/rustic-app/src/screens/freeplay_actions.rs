@@ -1,7 +1,7 @@
 use rustic_core::paths::AssetPaths;
 
-use super::{FreeplayScreen, DIFFICULTIES};
 use super::super::freeplay_support::{highscore_targets, personal_best_text};
+use super::{FreeplayScreen, DIFFICULTIES};
 
 impl FreeplayScreen {
     pub(super) fn change_selection(&mut self, delta: i32) {
@@ -48,7 +48,11 @@ impl FreeplayScreen {
     pub(super) fn jump_to_letter(&mut self, letter: char) {
         let letter_lower = letter.to_lowercase().next().unwrap_or('a');
         for (i, &song_idx) in self.filtered.iter().enumerate() {
-            if self.songs[song_idx].name.to_lowercase().starts_with(letter_lower) {
+            if self.songs[song_idx]
+                .name
+                .to_lowercase()
+                .starts_with(letter_lower)
+            {
                 let delta = i as i32 - self.cur_selected as i32;
                 if delta != 0 {
                     self.change_selection(delta);

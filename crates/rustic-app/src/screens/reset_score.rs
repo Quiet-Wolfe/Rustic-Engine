@@ -38,7 +38,9 @@ pub struct ResetScoreModal {
 impl ResetScoreModal {
     pub fn song(song_id: String, label: String, difficulty: String, character: String) -> Self {
         let paths = AssetPaths::platform_default();
-        let icon_path = paths.health_icon(&character).or_else(|| paths.health_icon("face"));
+        let icon_path = paths
+            .health_icon(&character)
+            .or_else(|| paths.health_icon("face"));
         Self {
             target: ResetScoreTarget::Song {
                 song_id,
@@ -121,17 +123,39 @@ impl ResetScoreModal {
 
         gpu.draw_text("Reset the score of", 420.0, 190.0, 34.0, white);
         gpu.draw_text(&self.target_label(), 380.0, 280.0, 34.0, white);
-        gpu.draw_text("If you do, your score and accuracy will be deleted.", 250.0, 350.0, 24.0, gray);
+        gpu.draw_text(
+            "If you do, your score and accuracy will be deleted.",
+            250.0,
+            350.0,
+            24.0,
+            gray,
+        );
 
         if let Some(icon) = &mut self.icon {
-            icon.set_state(if self.on_yes { IconState::Losing } else { IconState::Neutral });
+            icon.set_state(if self.on_yes {
+                IconState::Losing
+            } else {
+                IconState::Neutral
+            });
             icon.draw(gpu, 250.0, 240.0, 120.0, [1.0, 1.0, 1.0, 1.0]);
         }
 
         let yes_color = if self.on_yes { red } else { gray };
         let no_color = if self.on_yes { gray } else { white };
-        gpu.draw_text("YES", 430.0, 470.0, if self.on_yes { 42.0 } else { 32.0 }, yes_color);
-        gpu.draw_text("NO", 770.0, 470.0, if self.on_yes { 32.0 } else { 42.0 }, no_color);
+        gpu.draw_text(
+            "YES",
+            430.0,
+            470.0,
+            if self.on_yes { 42.0 } else { 32.0 },
+            yes_color,
+        );
+        gpu.draw_text(
+            "NO",
+            770.0,
+            470.0,
+            if self.on_yes { 32.0 } else { 42.0 },
+            no_color,
+        );
     }
 
     fn target_label(&self) -> String {
@@ -145,4 +169,3 @@ impl ResetScoreModal {
         }
     }
 }
-

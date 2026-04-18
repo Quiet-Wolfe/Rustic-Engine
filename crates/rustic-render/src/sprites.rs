@@ -138,7 +138,9 @@ impl SpriteAtlas {
     /// as `prefix + zero_padded(index)` and looks them up by name.
     pub fn add_by_indices(&mut self, anim_name: &str, prefix: &str, indices: &[i32]) {
         // Build a lookup map from raw frame names
-        let name_map: HashMap<String, SpriteFrame> = self.raw_frames.iter()
+        let name_map: HashMap<String, SpriteFrame> = self
+            .raw_frames
+            .iter()
             .map(|r| (r.name.clone(), r.frame.clone()))
             .collect();
 

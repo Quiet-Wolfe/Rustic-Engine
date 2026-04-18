@@ -1,7 +1,7 @@
-pub mod chart;
 pub mod character;
-pub mod config;
+pub mod chart;
 pub mod conductor;
+pub mod config;
 pub mod highscore;
 pub mod mods;
 pub mod note;

@@ -46,7 +46,8 @@ pub fn build_observation<I: Iterator<Item = UpcomingNote>>(
     // the nearest note first regardless of input order.
     for lane in 0..4 {
         let end = filled[lane];
-        upcoming[lane][..end].sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        upcoming[lane][..end]
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     }
 
     Observation {
@@ -65,9 +66,21 @@ mod tests {
     #[test]
     fn fills_slots_in_order_and_sorts_by_time() {
         let notes = vec![
-            UpcomingNote { lane: 0, time_until_hit_ms: 500.0, sustain_ms: 0.0 },
-            UpcomingNote { lane: 0, time_until_hit_ms: 100.0, sustain_ms: 0.0 },
-            UpcomingNote { lane: 2, time_until_hit_ms: 300.0, sustain_ms: 250.0 },
+            UpcomingNote {
+                lane: 0,
+                time_until_hit_ms: 500.0,
+                sustain_ms: 0.0,
+            },
+            UpcomingNote {
+                lane: 0,
+                time_until_hit_ms: 100.0,
+                sustain_ms: 0.0,
+            },
+            UpcomingNote {
+                lane: 2,
+                time_until_hit_ms: 300.0,
+                sustain_ms: 250.0,
+            },
         ];
         let obs = build_observation(0.0, 120.0, 1.0, [false; 4], notes.into_iter());
 
@@ -87,7 +100,10 @@ mod tests {
         });
         let obs = build_observation(0.0, 120.0, 1.0, [false; 4], many);
         for slot in 0..LOOKAHEAD_NOTES {
-            assert!(obs.upcoming[1][slot].0 < NO_NOTE_TIME, "slot {slot} should be filled");
+            assert!(
+                obs.upcoming[1][slot].0 < NO_NOTE_TIME,
+                "slot {slot} should be filled"
+            );
         }
     }
 }

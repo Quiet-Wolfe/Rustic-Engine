@@ -1,14 +1,17 @@
 use rustic_gameplay::events::GameEvent;
 
 use super::{
-    PlayScreen, RatingPopup, DeathState, DeathPhase, NoteSplash,
-    RATING_ACCEL, RATING_VEL_Y, RATING_FADE_SECS,
-    SPLASH_FPS, SPLASH_FRAMES, GAME_W,
+    DeathPhase, DeathState, NoteSplash, PlayScreen, RatingPopup, GAME_W, RATING_ACCEL,
+    RATING_FADE_SECS, RATING_VEL_Y, SPLASH_FPS, SPLASH_FRAMES,
 };
 
 /// Convert an sRGB component (0..1) to linear space.
 fn srgb_to_linear(s: f32) -> f32 {
-    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 /// Convert an sRGB [R,G,B,A] color to linear space (alpha unchanged).
@@ -18,8 +21,15 @@ fn srgb_color(r: f32, g: f32, b: f32) -> [f32; 4] {
 
 /// Parse a hex color string (e.g., "CCCCCC", "FB002D") to [R,G,B,A] floats in linear space.
 fn parse_hex_color(hex: &str) -> [f32; 4] {
-    let hex = hex.trim_start_matches('#').trim_start_matches("0x").trim_start_matches("0X");
-    let hex = if hex.len() > 6 { &hex[hex.len()-6..] } else { hex };
+    let hex = hex
+        .trim_start_matches('#')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    let hex = if hex.len() > 6 {
+        &hex[hex.len() - 6..]
+    } else {
+        hex
+    };
     if hex.len() == 6 {
         if let (Ok(r), Ok(g), Ok(b)) = (
             u8::from_str_radix(&hex[0..2], 16),
@@ -37,7 +47,13 @@ impl PlayScreen {
         self.last_dt = dt;
         let dt_ms = dt as f64 * 1000.0;
         let mut blocking_cutscene = false;
-        if let Some(super::CutsceneState::Video { player, wall_clock_ms, blocks_gameplay, .. }) = &mut self.cutscene {
+        if let Some(super::CutsceneState::Video {
+            player,
+            wall_clock_ms,
+            blocks_gameplay,
+            ..
+        }) = &mut self.cutscene
+        {
             *wall_clock_ms += dt_ms;
             if player.is_playing() {
                 player.tick(*wall_clock_ms);
@@ -128,7 +144,8 @@ impl PlayScreen {
         self.scripts.state.camera_speed = self.camera.camera_speed;
         self.scripts.state.health = self.game.score.health;
         if let Some(audio) = &self.audio {
-            self.scripts.set_on_all("__music_time", audio.loop_music_position_ms());
+            self.scripts
+                .set_on_all("__music_time", audio.loop_music_position_ms());
         }
 
         // Push game object properties that scripts commonly read
@@ -138,18 +155,45 @@ impl PlayScreen {
         let hbw = 601.0;
         let divider_x = hbx + hbw * (1.0 - health_pct as f32);
         // iconP1 = player icon (BF), iconP2 = opponent icon
-        self.scripts.state.custom_vars.insert("iconP1.x".into(), SLV::Float((divider_x - 15.0) as f64));
-        self.scripts.state.custom_vars.insert("iconP2.x".into(), SLV::Float((divider_x - 150.0 * 0.75 + 15.0) as f64));
-        self.scripts.state.custom_vars.insert("iconP1.alpha".into(), SLV::Float(1.0));
-        self.scripts.state.custom_vars.insert("iconP2.alpha".into(), SLV::Float(1.0));
+        self.scripts
+            .state
+            .custom_vars
+            .insert("iconP1.x".into(), SLV::Float((divider_x - 15.0) as f64));
+        self.scripts.state.custom_vars.insert(
+            "iconP2.x".into(),
+            SLV::Float((divider_x - 150.0 * 0.75 + 15.0) as f64),
+        );
+        self.scripts
+            .state
+            .custom_vars
+            .insert("iconP1.alpha".into(), SLV::Float(1.0));
+        self.scripts
+            .state
+            .custom_vars
+            .insert("iconP2.alpha".into(), SLV::Float(1.0));
         // Camera follow position
-        self.scripts.state.custom_vars.insert("camFollow.x".into(), SLV::Float(self.camera.x as f64));
-        self.scripts.state.custom_vars.insert("camFollow.y".into(), SLV::Float(self.camera.y as f64));
+        self.scripts
+            .state
+            .custom_vars
+            .insert("camFollow.x".into(), SLV::Float(self.camera.x as f64));
+        self.scripts
+            .state
+            .custom_vars
+            .insert("camFollow.y".into(), SLV::Float(self.camera.y as f64));
         // Unspawn notes length (approximate — total notes remaining)
-        self.scripts.state.custom_vars.insert("unspawnNotes.length".into(), SLV::Int(self.game.notes.len() as i64));
+        self.scripts.state.custom_vars.insert(
+            "unspawnNotes.length".into(),
+            SLV::Int(self.game.notes.len() as i64),
+        );
         // Conductor timing
-        self.scripts.state.custom_vars.insert("crochet".into(), SLV::Float(self.game.conductor.crochet));
-        self.scripts.state.custom_vars.insert("stepCrochet".into(), SLV::Float(self.game.conductor.step_crochet));
+        self.scripts
+            .state
+            .custom_vars
+            .insert("crochet".into(), SLV::Float(self.game.conductor.crochet));
+        self.scripts.state.custom_vars.insert(
+            "stepCrochet".into(),
+            SLV::Float(self.game.conductor.step_crochet),
+        );
 
         // Character midpoints for getMidpointX/Y('dad'), getMidpointX/Y('boyfriend')
         if let Some(dad) = &self.char_dad {
@@ -333,7 +377,10 @@ impl PlayScreen {
                     // then this queues the video for playback in the draw phase.
                     // Non-blocking: the song keeps playing and gameplay continues.
                     if !v1.is_empty() {
-                        self.scripts.state.video_requests.push((v1.clone(), None, false));
+                        self.scripts
+                            .state
+                            .video_requests
+                            .push((v1.clone(), None, false));
                     }
                 }
                 "Checkpoint" => {
@@ -349,20 +396,35 @@ impl PlayScreen {
         let events = self.game.drain_events();
         for event in events {
             match event {
-                GameEvent::NoteHit { lane, rating, combo, note_type, is_sustain, members_index, hit_causes_miss, .. } => {
+                GameEvent::NoteHit {
+                    lane,
+                    rating,
+                    combo,
+                    note_type,
+                    is_sustain,
+                    members_index,
+                    hit_causes_miss,
+                    ..
+                } => {
                     if hit_causes_miss {
                         // Harmful note: play miss animation, show miss popup
                         self.rating_popups.push(RatingPopup {
-                            rating_name: "miss".into(), combo: 0,
-                            y: 0.0, vel_y: RATING_VEL_Y,
+                            rating_name: "miss".into(),
+                            combo: 0,
+                            y: 0.0,
+                            vel_y: RATING_VEL_Y,
                             age_ms: 0.0,
                             fade_delay: self.game.conductor.crochet,
                             alpha: 1.0,
                         });
                         if self.game.play_as_opponent {
-                            if let Some(dad) = &mut self.char_dad { dad.play_miss(lane); }
+                            if let Some(dad) = &mut self.char_dad {
+                                dad.play_miss(lane);
+                            }
                         } else {
-                            if let Some(bf) = &mut self.char_bf { bf.play_miss(lane); }
+                            if let Some(bf) = &mut self.char_bf {
+                                bf.play_miss(lane);
+                            }
                         }
                     } else {
                         // Normal hit: show rating popup
@@ -378,55 +440,109 @@ impl PlayScreen {
                         // Visual: note splash on sick hits
                         if rating == "sick" {
                             self.splashes.push(NoteSplash {
-                                lane, player: !self.game.play_as_opponent, frame: 0, timer: 0.0,
+                                lane,
+                                player: !self.game.play_as_opponent,
+                                frame: 0,
+                                timer: 0.0,
                             });
                         }
                         // Character: sing
                         if self.game.play_as_opponent {
-                            if let Some(dad) = &mut self.char_dad { dad.play_sing(lane); }
+                            if let Some(dad) = &mut self.char_dad {
+                                dad.play_sing(lane);
+                            }
                         } else {
-                            if let Some(bf) = &mut self.char_bf { bf.play_sing(lane); }
+                            if let Some(bf) = &mut self.char_bf {
+                                bf.play_sing(lane);
+                            }
                         }
                     }
                     // Lua: goodNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        let lua_event = if self.game.play_as_opponent { "opponentNoteHit" } else { "goodNoteHit" };
-                        self.scripts.call_note_hit(lua_event, members_index, lane, &note_type, is_sustain);
+                        let lua_event = if self.game.play_as_opponent {
+                            "opponentNoteHit"
+                        } else {
+                            "goodNoteHit"
+                        };
+                        self.scripts.call_note_hit(
+                            lua_event,
+                            members_index,
+                            lane,
+                            &note_type,
+                            is_sustain,
+                        );
                     }
                 }
-                GameEvent::NoteMiss { lane, note_type, members_index, ignored } => {
+                GameEvent::NoteMiss {
+                    lane,
+                    note_type,
+                    members_index,
+                    ignored,
+                } => {
                     if !ignored {
                         self.rating_popups.push(RatingPopup {
-                            rating_name: "miss".into(), combo: 0,
-                            y: 0.0, vel_y: RATING_VEL_Y,
+                            rating_name: "miss".into(),
+                            combo: 0,
+                            y: 0.0,
+                            vel_y: RATING_VEL_Y,
                             age_ms: 0.0,
                             fade_delay: self.game.conductor.crochet,
                             alpha: 1.0,
                         });
                         if self.game.play_as_opponent {
-                            if let Some(dad) = &mut self.char_dad { dad.play_miss(lane); }
+                            if let Some(dad) = &mut self.char_dad {
+                                dad.play_miss(lane);
+                            }
                         } else {
-                            if let Some(bf) = &mut self.char_bf { bf.play_miss(lane); }
+                            if let Some(bf) = &mut self.char_bf {
+                                bf.play_miss(lane);
+                            }
                         }
                     }
                     // Lua: noteMiss(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        self.scripts.call_note_hit("noteMiss", members_index, lane, &note_type, false);
+                        self.scripts.call_note_hit(
+                            "noteMiss",
+                            members_index,
+                            lane,
+                            &note_type,
+                            false,
+                        );
                     }
                 }
-                GameEvent::OpponentNoteHit { lane, note_type, is_sustain, members_index, hit_causes_miss: _ } => {
+                GameEvent::OpponentNoteHit {
+                    lane,
+                    note_type,
+                    is_sustain,
+                    members_index,
+                    hit_causes_miss: _,
+                } => {
                     if !self.disable_zooming {
                         self.cam_zooming = true;
                     }
                     if self.game.play_as_opponent {
-                        if let Some(bf) = &mut self.char_bf { bf.play_sing(lane); }
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.play_sing(lane);
+                        }
                     } else {
-                        if let Some(dad) = &mut self.char_dad { dad.play_sing(lane); }
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.play_sing(lane);
+                        }
                     }
                     // Lua: opponentNoteHit(membersIndex, noteData, noteType, isSustainNote)
                     if self.scripts.has_scripts() {
-                        let lua_event = if self.game.play_as_opponent { "goodNoteHit" } else { "opponentNoteHit" };
-                        self.scripts.call_note_hit(lua_event, members_index, lane, &note_type, is_sustain);
+                        let lua_event = if self.game.play_as_opponent {
+                            "goodNoteHit"
+                        } else {
+                            "opponentNoteHit"
+                        };
+                        self.scripts.call_note_hit(
+                            lua_event,
+                            members_index,
+                            lane,
+                            &note_type,
+                            is_sustain,
+                        );
                     }
                 }
                 GameEvent::CountdownBeat { swag } => {
@@ -444,9 +560,18 @@ impl PlayScreen {
                             }
                         }
                         match swag {
-                            1 => { self.countdown_swag = 1; self.countdown_alpha = 1.0; }
-                            2 => { self.countdown_swag = 2; self.countdown_alpha = 1.0; }
-                            3 => { self.countdown_swag = 3; self.countdown_alpha = 1.0; }
+                            1 => {
+                                self.countdown_swag = 1;
+                                self.countdown_alpha = 1.0;
+                            }
+                            2 => {
+                                self.countdown_swag = 2;
+                                self.countdown_alpha = 1.0;
+                            }
+                            3 => {
+                                self.countdown_swag = 3;
+                                self.countdown_alpha = 1.0;
+                            }
                             _ => {}
                         }
                     }
@@ -489,7 +614,11 @@ impl PlayScreen {
                         let freq = if self.gf_dance_freq > 0 {
                             self.gf_dance_freq
                         } else {
-                            if gf.has_dance_idle() { 1 } else { 2 }
+                            if gf.has_dance_idle() {
+                                1
+                            } else {
+                                2
+                            }
                         };
                         if beat % freq == 0 {
                             gf.dance();
@@ -548,7 +677,11 @@ impl PlayScreen {
                         audio.play_miss_sound();
                     }
                 }
-                GameEvent::HarmfulNoteHit { sfx_path, drain_pct, death_safe } => {
+                GameEvent::HarmfulNoteHit {
+                    sfx_path,
+                    drain_pct,
+                    death_safe,
+                } => {
                     // Play custom SFX
                     if !sfx_path.is_empty() {
                         if let Some(audio) = &mut self.audio {
@@ -576,7 +709,6 @@ impl PlayScreen {
                             target,
                             elapsed: 0.0,
                             duration: 0.5,
-                            death_safe,
                         });
                     }
                 }
@@ -655,8 +787,8 @@ impl PlayScreen {
         self.camera.update(dt);
         if self.cam_zooming {
             let zoom_lerp = (-dt * 3.125).exp();
-            self.camera.zoom = self.default_cam_zoom
-                + (zoom_before - self.default_cam_zoom) * zoom_lerp;
+            self.camera.zoom =
+                self.default_cam_zoom + (zoom_before - self.default_cam_zoom) * zoom_lerp;
         }
 
         // HUD zoom decay
@@ -678,7 +810,12 @@ impl PlayScreen {
         self.update_stage_overlay(dt);
 
         // Process moveCameraSection requests from scripts (runHaxeCode / moveCameraSection)
-        let cam_sections: Vec<i32> = self.scripts.state.camera_section_requests.drain(..).collect();
+        let cam_sections: Vec<i32> = self
+            .scripts
+            .state
+            .camera_section_requests
+            .drain(..)
+            .collect();
         for section_idx in cam_sections {
             let idx = section_idx as usize;
             if idx < self.game.sections.len() {
@@ -690,7 +827,12 @@ impl PlayScreen {
         }
 
         // Process camera target requests from Lua (cameraSetTarget)
-        let cam_targets: Vec<String> = self.scripts.state.camera_target_requests.drain(..).collect();
+        let cam_targets: Vec<String> = self
+            .scripts
+            .state
+            .camera_target_requests
+            .drain(..)
+            .collect();
         for target in cam_targets {
             match target.trim().to_lowercase().as_str() {
                 "dad" | "opponent" => {
@@ -713,7 +855,8 @@ impl PlayScreen {
         }
 
         // Process triggered events from Lua (triggerEvent)
-        let events: Vec<(String, String, String)> = self.scripts.state.triggered_events.drain(..).collect();
+        let events: Vec<(String, String, String)> =
+            self.scripts.state.triggered_events.drain(..).collect();
         for (name, v1, v2) in events {
             match name.as_str() {
                 "Add Camera Zoom" => {
@@ -732,7 +875,12 @@ impl PlayScreen {
 
         // Process camera shake requests
         for (camera, intensity, duration) in self.scripts.state.camera_shake_requests.drain(..) {
-            log::debug!("Camera shake: {} intensity={} duration={}", camera, intensity, duration);
+            log::debug!(
+                "Camera shake: {} intensity={} duration={}",
+                camera,
+                intensity,
+                duration
+            );
             if camera == "camGame" {
                 self.camera.start_shake(intensity, duration);
             }
@@ -741,14 +889,36 @@ impl PlayScreen {
 
         // Process camera flash requests
         for (camera, color, duration, alpha) in self.scripts.state.camera_flash_requests.drain(..) {
-            log::debug!("Camera flash: {} color={} duration={} alpha={}", camera, color, duration, alpha);
+            log::debug!(
+                "Camera flash: {} color={} duration={} alpha={}",
+                camera,
+                color,
+                duration,
+                alpha
+            );
             if camera == "camGame" {
                 self.camera.start_flash(&color, duration, alpha);
             }
         }
 
+        for (camera, color, duration, fade_in) in self.scripts.state.camera_fade_requests.drain(..)
+        {
+            log::debug!(
+                "Camera fade: {} color={} duration={} fade_in={}",
+                camera,
+                color,
+                duration,
+                fade_in
+            );
+            if camera == "camGame" {
+                self.camera.start_fade(&color, duration, fade_in);
+            }
+        }
+
         // Process subtitle requests (display as log for now; rendering handled by text system)
-        for (text, _font, _color, _size, _duration, _border) in self.scripts.state.subtitle_requests.drain(..) {
+        for (text, _font, _color, _size, _duration, _border) in
+            self.scripts.state.subtitle_requests.drain(..)
+        {
             if !text.trim().is_empty() {
                 log::info!("[Subtitle] {}", text);
             }
@@ -756,12 +926,20 @@ impl PlayScreen {
 
         // Visual: Lua sprite animation advancement
         for (tag, sprite) in self.scripts.state.lua_sprites.iter_mut() {
-            if sprite.current_anim.is_empty() || sprite.anim_finished { continue; }
-            if sprite.anim_fps <= 0.0 { continue; }
-            let frame_count = self.lua_atlases.get(tag.as_str())
+            if sprite.current_anim.is_empty() || sprite.anim_finished {
+                continue;
+            }
+            if sprite.anim_fps <= 0.0 {
+                continue;
+            }
+            let frame_count = self
+                .lua_atlases
+                .get(tag.as_str())
                 .map(|a| a.frame_count(&sprite.current_anim))
                 .unwrap_or(0);
-            if frame_count == 0 { continue; }
+            if frame_count == 0 {
+                continue;
+            }
 
             sprite.anim_timer += dt;
             let frame_dur = 1.0 / sprite.anim_fps;

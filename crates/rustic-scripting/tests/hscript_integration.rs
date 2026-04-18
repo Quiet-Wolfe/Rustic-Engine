@@ -56,11 +56,9 @@ fn hscript_can_write_property_paths() {
     mgr.load_script(&path);
     mgr.call("onCreate");
 
-    let found = mgr
-        .state
-        .property_writes
-        .iter()
-        .any(|(k, v)| k == "boyfriend.x" && matches!(v, LuaValue::Float(f) if (*f - 42.5).abs() < 1e-6));
+    let found = mgr.state.property_writes.iter().any(|(k, v)| {
+        k == "boyfriend.x" && matches!(v, LuaValue::Float(f) if (*f - 42.5).abs() < 1e-6)
+    });
     assert!(
         found,
         "expected boyfriend.x=42.5 in property_writes, got {:?}",

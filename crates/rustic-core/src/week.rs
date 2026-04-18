@@ -53,21 +53,29 @@ impl WeekData {
         let raw: RawWeek = serde_json::from_str(json_str)
             .map_err(|e| format!("Failed to parse week JSON: {}", e))?;
 
-        let songs: Vec<WeekSong> = raw.songs.iter().filter_map(|entry| {
-            let arr = entry.as_array()?;
-            let name = arr.first()?.as_str()?.to_string();
-            let character = arr.get(1)?.as_str().unwrap_or("bf").to_string();
-            let color = if let Some(c) = arr.get(2).and_then(|v| v.as_array()) {
-                [
-                    c.first().and_then(|v| v.as_u64()).unwrap_or(146) as u8,
-                    c.get(1).and_then(|v| v.as_u64()).unwrap_or(113) as u8,
-                    c.get(2).and_then(|v| v.as_u64()).unwrap_or(253) as u8,
-                ]
-            } else {
-                [146, 113, 253]
-            };
-            Some(WeekSong { name, character, color })
-        }).collect();
+        let songs: Vec<WeekSong> = raw
+            .songs
+            .iter()
+            .filter_map(|entry| {
+                let arr = entry.as_array()?;
+                let name = arr.first()?.as_str()?.to_string();
+                let character = arr.get(1)?.as_str().unwrap_or("bf").to_string();
+                let color = if let Some(c) = arr.get(2).and_then(|v| v.as_array()) {
+                    [
+                        c.first().and_then(|v| v.as_u64()).unwrap_or(146) as u8,
+                        c.get(1).and_then(|v| v.as_u64()).unwrap_or(113) as u8,
+                        c.get(2).and_then(|v| v.as_u64()).unwrap_or(253) as u8,
+                    ]
+                } else {
+                    [146, 113, 253]
+                };
+                Some(WeekSong {
+                    name,
+                    character,
+                    color,
+                })
+            })
+            .collect();
 
         let wc = raw.week_characters;
         let week_characters = [
@@ -104,7 +112,8 @@ pub fn load_weeks(weeks_dir: &std::path::Path) -> Vec<WeekData> {
 
         for entry in paths {
             let path = entry.path();
-            let file_name = path.file_stem()
+            let file_name = path
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();

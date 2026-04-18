@@ -1,5 +1,5 @@
-use rustic_core::chart::parse_chart;
 use rustic_core::character::CharacterFile;
+use rustic_core::chart::parse_chart;
 use rustic_core::stage::StageFile;
 
 #[test]

@@ -6,11 +6,11 @@ use rustic_core::paths::AssetPaths;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
-use crate::screen::Screen;
 use super::freeplay::FreeplayScreen;
 use super::mods::ModsScreen;
 use super::options::OptionsScreen;
 use super::story_menu::StoryMenuScreen;
+use crate::screen::Screen;
 
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
@@ -56,7 +56,9 @@ impl MainMenuScreen {
 
     fn change_selection(&mut self, delta: i32) {
         let len = self.items.len() as i32;
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         self.cur_selected = ((self.cur_selected as i32 + delta).rem_euclid(len)) as usize;
         self.update_item_anims();
         self.update_cam_target();
@@ -108,7 +110,9 @@ impl Screen for MainMenuScreen {
         for (i, &name) in MENU_ITEMS.iter().enumerate() {
             let xml_path = paths.find(&format!("images/mainmenu/menu_{}.xml", name));
             let png_path = paths.find(&format!("images/mainmenu/menu_{}.png", name));
-            let (Some(xml_path), Some(png_path)) = (xml_path, png_path) else { continue };
+            let (Some(xml_path), Some(png_path)) = (xml_path, png_path) else {
+                continue;
+            };
 
             let xml = std::fs::read_to_string(&xml_path).unwrap_or_default();
             let mut atlas = SpriteAtlas::from_xml(&xml);
@@ -124,7 +128,13 @@ impl Screen for MainMenuScreen {
             // Psych Engine positioning: y = (num * 140) + 90, then offset by (4 - count) * 70
             let y = (i as f32 * 140.0) + 90.0 + (4.0 - item_count as f32) * 70.0;
 
-            self.items.push(MenuItem { atlas, tex, anim, y, alpha: 1.0 });
+            self.items.push(MenuItem {
+                atlas,
+                tex,
+                anim,
+                y,
+                alpha: 1.0,
+            });
         }
 
         // Set initial selected item
@@ -143,7 +153,9 @@ impl Screen for MainMenuScreen {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
-        if self.confirmed { return; }
+        if self.confirmed {
+            return;
+        }
 
         match key {
             KeyCode::ArrowUp | KeyCode::KeyW => self.change_selection(-1),
@@ -171,7 +183,9 @@ impl Screen for MainMenuScreen {
     }
 
     fn handle_touch(&mut self, _id: u64, phase: TouchPhase, _x: f64, y: f64) {
-        if phase != TouchPhase::Started || self.confirmed { return; }
+        if phase != TouchPhase::Started || self.confirmed {
+            return;
+        }
         let y = y as f32;
 
         // Detect which menu item was tapped by Y position
@@ -247,7 +261,9 @@ impl Screen for MainMenuScreen {
     }
 
     fn draw(&mut self, gpu: &mut GpuState) {
-        if !gpu.begin_frame() { return; }
+        if !gpu.begin_frame() {
+            return;
+        }
 
         // Background — scaled 1.175x, scrollFactor(0, 0.18) parallax on Y
         if let Some(bg) = &self.bg_tex {
@@ -258,10 +274,18 @@ impl Screen for MainMenuScreen {
             // Psych: bg at y=-80, scrollFactor(0, 0.18) means BG moves at 18% of camera
             let y = -80.0 - self.cam_y * 0.18;
             gpu.push_texture_region(
-                bg.width as f32, bg.height as f32,
-                0.0, 0.0, bg.width as f32, bg.height as f32,
-                x, y, w, h,
-                false, [1.0, 1.0, 1.0, 1.0],
+                bg.width as f32,
+                bg.height as f32,
+                0.0,
+                0.0,
+                bg.width as f32,
+                bg.height as f32,
+                x,
+                y,
+                w,
+                h,
+                false,
+                [1.0, 1.0, 1.0, 1.0],
             );
             gpu.draw_batch(Some(bg));
         }
@@ -287,8 +311,14 @@ impl Screen for MainMenuScreen {
                 if visible {
                     let color = [a, a, a, a]; // premultiplied white * alpha
                     gpu.draw_sprite_frame(
-                        frame, item.tex.width as f32, item.tex.height as f32,
-                        x, y, 1.0, false, color,
+                        frame,
+                        item.tex.width as f32,
+                        item.tex.height as f32,
+                        x,
+                        y,
+                        1.0,
+                        false,
+                        color,
                     );
                     gpu.draw_batch(Some(&item.tex));
                 }
