@@ -51,8 +51,16 @@ impl OptionsMenuState {
     }
 
     pub fn save(&self) {
-        let _ = self.prefs.save();
+        let mut prefs = self.prefs.clone();
+        prefs.normalize();
+        let _ = prefs.save();
+        crate::settings::apply_preferences(&prefs);
+    }
+
+    fn save_change(&mut self) {
+        self.prefs.normalize();
         crate::settings::apply_preferences(&self.prefs);
+        let _ = self.prefs.save();
     }
 
     pub fn item_count(&self) -> usize {
@@ -112,8 +120,7 @@ impl OptionsMenuState {
             },
             OptionsCategory::Controls => {}
         }
-        self.prefs.normalize();
-        crate::settings::apply_preferences(&self.prefs);
+        self.save_change();
     }
 
     pub fn draw(&self, gpu: &mut GpuState) {
@@ -125,7 +132,11 @@ impl OptionsMenuState {
 
         let mut tab_x = 180.0;
         for category in OptionsCategory::all() {
-            let color = if category == self.category { yellow } else { gray };
+            let color = if category == self.category {
+                yellow
+            } else {
+                gray
+            };
             gpu.draw_text(category.label(), tab_x, 130.0, 28.0, color);
             tab_x += 210.0;
         }
@@ -182,27 +193,63 @@ impl OptionsMenuState {
         match self.category {
             OptionsCategory::Gameplay => vec![
                 format!("Downscroll           [ {} ]", on_off(self.prefs.downscroll)),
-                format!("Ghost Tapping        [ {} ]", on_off(self.prefs.ghost_tapping)),
+                format!(
+                    "Ghost Tapping        [ {} ]",
+                    on_off(self.prefs.ghost_tapping)
+                ),
                 format!("Note Offset          < {}ms >", self.prefs.note_offset),
                 format!("Safe Frames          < {} >", self.prefs.safe_frames),
             ],
             OptionsCategory::Visuals => vec![
-                format!("Antialiasing         [ {} ]", on_off(self.prefs.antialiasing)),
-                format!("Flashing Lights      [ {} ]", on_off(self.prefs.flashing_lights)),
-                format!("FPS Counter          [ {} ]", on_off(self.prefs.fps_counter)),
-                format!("FPS Cap              < {} >", fps_cap_label(self.prefs.fps_cap)),
+                format!(
+                    "Antialiasing         [ {} ]",
+                    on_off(self.prefs.antialiasing)
+                ),
+                format!(
+                    "Flashing Lights      [ {} ]",
+                    on_off(self.prefs.flashing_lights)
+                ),
+                format!(
+                    "FPS Counter          [ {} ]",
+                    on_off(self.prefs.fps_counter)
+                ),
+                format!(
+                    "FPS Cap              < {} >",
+                    fps_cap_label(self.prefs.fps_cap)
+                ),
             ],
             OptionsCategory::Audio => vec![
-                format!("Master Volume        < {}% >", percent(self.prefs.master_volume)),
-                format!("Music Volume         < {}% >", percent(self.prefs.music_volume)),
-                format!("SFX Volume           < {}% >", percent(self.prefs.sfx_volume)),
+                format!(
+                    "Master Volume        < {}% >",
+                    percent(self.prefs.master_volume)
+                ),
+                format!(
+                    "Music Volume         < {}% >",
+                    percent(self.prefs.music_volume)
+                ),
+                format!(
+                    "SFX Volume           < {}% >",
+                    percent(self.prefs.sfx_volume)
+                ),
                 "Note Offset Calibration  < OPEN >".to_string(),
             ],
             OptionsCategory::Controls => vec![
-                format!("Left Lane            [ {} ]", key_display(&self.prefs.note_left)),
-                format!("Down Lane            [ {} ]", key_display(&self.prefs.note_down)),
-                format!("Up Lane              [ {} ]", key_display(&self.prefs.note_up)),
-                format!("Right Lane           [ {} ]", key_display(&self.prefs.note_right)),
+                format!(
+                    "Left Lane            [ {} ]",
+                    key_display(&self.prefs.note_left)
+                ),
+                format!(
+                    "Down Lane            [ {} ]",
+                    key_display(&self.prefs.note_down)
+                ),
+                format!(
+                    "Up Lane              [ {} ]",
+                    key_display(&self.prefs.note_up)
+                ),
+                format!(
+                    "Right Lane           [ {} ]",
+                    key_display(&self.prefs.note_right)
+                ),
             ],
         }
     }
@@ -218,7 +265,11 @@ impl OptionsMenuState {
 }
 
 fn on_off(value: bool) -> &'static str {
-    if value { "ON" } else { "OFF" }
+    if value {
+        "ON"
+    } else {
+        "OFF"
+    }
 }
 
 fn toggle_if_nonzero(value: &mut bool, delta: i32) {
@@ -260,10 +311,16 @@ pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
                 let beat_window = 0.5f32;
                 let phase = menu.calibration_timer % beat_window;
                 let offset_ms = ((phase / beat_window) * 500.0).round() as i32;
-                let signed = if offset_ms > 250 { offset_ms - 500 } else { offset_ms };
+                let signed = if offset_ms > 250 {
+                    offset_ms - 500
+                } else {
+                    offset_ms
+                };
                 menu.calibration_samples.push(signed);
                 let sum: i32 = menu.calibration_samples.iter().sum();
-                menu.prefs.note_offset = (sum / menu.calibration_samples.len() as i32).clamp(-500, 500);
+                menu.prefs.note_offset =
+                    (sum / menu.calibration_samples.len() as i32).clamp(-500, 500);
+                menu.save_change();
             }
             _ => {}
         }
@@ -283,6 +340,7 @@ pub fn handle_input(menu: &mut OptionsMenuState, key: KeyCode) -> bool {
                     _ => menu.prefs.note_right = name,
                 }
                 menu.waiting_for_rebind = None;
+                menu.save_change();
             }
         }
         return true;
