@@ -233,3 +233,54 @@ fn mod_asset_roots(mod_path: &Path) -> Vec<PathBuf> {
     }
     roots
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_direct_compiled_mod_folder() {
+        let root = unique_temp_dir("direct_compiled_mod");
+        let base = root.join("base");
+        let compiled = root.join("Vs-Retrospecter-Part-2-COMPILED");
+        fs::create_dir_all(compiled.join("assets/data")).unwrap();
+        fs::write(compiled.join("icon.ico"), []).unwrap();
+
+        let loader = ModLoader::discover(base, compiled.clone());
+        assert_eq!(loader.active_mods().len(), 1);
+        let info = &loader.active_mods()[0];
+        assert_eq!(info.name, "Vs-Retrospecter-Part-2-COMPILED");
+        assert_eq!(
+            info.icon_path.as_deref(),
+            Some(compiled.join("icon.ico").as_path())
+        );
+        assert!(loader.asset_roots().contains(&compiled.join("assets")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn respects_mods_list_order_and_enabled_state() {
+        let root = unique_temp_dir("mods_list_order");
+        let base = root.join("base");
+        let mods_dir = root.join("mods");
+        fs::create_dir_all(mods_dir.join("low/assets")).unwrap();
+        fs::create_dir_all(mods_dir.join("high/assets")).unwrap();
+        fs::write(root.join("modsList.txt"), "high|1\nlow|0").unwrap();
+
+        let loader = ModLoader::discover(base, mods_dir.clone());
+        assert_eq!(loader.active_mods().len(), 1);
+        assert_eq!(loader.active_mods()[0].name, "high");
+        assert_eq!(loader.asset_roots(), vec![mods_dir.join("high/assets")]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rustic_{name}_{nanos}"))
+    }
+}
