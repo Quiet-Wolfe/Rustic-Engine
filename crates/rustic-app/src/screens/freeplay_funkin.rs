@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use rustic_audio::AudioEngine;
 use rustic_core::paths::AssetPaths;
 use rustic_render::gpu::{GpuState, GpuTexture};
+use rustic_render::sprites::SpriteAtlas;
 use serde_json::Value;
 
 use self::freeplay_funkin_assets::{
@@ -17,7 +18,8 @@ use self::freeplay_funkin_assets::{
 use super::{FreeplayScreen, GAME_W};
 
 pub(super) const CUTOUT_W: f32 = GAME_W / 1.5;
-pub(super) const DJ_X: f32 = CUTOUT_W * 0.44;
+pub(super) const DJ_X: f32 = 560.0;
+pub(super) const DJ_Y: f32 = 135.0;
 
 pub(super) struct FunkinFreeplayUi {
     background: Option<GpuTexture>,
@@ -29,6 +31,8 @@ pub(super) struct FunkinFreeplayUi {
     clear_box: Option<GpuTexture>,
     albums: HashMap<String, AlbumAsset>,
     song_albums: HashMap<String, String>,
+    current_album: Option<String>,
+    album_switch_timer: Option<f32>,
     capsule: Option<CapsuleAsset>,
     difficulty_textures: Vec<(String, GpuTexture)>,
     dj: Option<FreeplayDj>,
@@ -50,6 +54,8 @@ impl FunkinFreeplayUi {
             clear_box: None,
             albums: HashMap::new(),
             song_albums: HashMap::new(),
+            current_album: None,
+            album_switch_timer: None,
             capsule: None,
             difficulty_textures: Vec::new(),
             dj: None,
@@ -115,6 +121,12 @@ impl FunkinFreeplayUi {
         if let Some(timer) = &mut self.confirm_timer {
             *timer += dt;
         }
+        if let Some(timer) = &mut self.album_switch_timer {
+            *timer += dt;
+            if *timer >= 0.45 {
+                self.album_switch_timer = None;
+            }
+        }
 
         self.capsule_timer += dt;
         while self.capsule_timer >= 1.0 / 24.0 {
@@ -132,6 +144,15 @@ impl FunkinFreeplayUi {
         if let Some(dj) = &mut self.dj {
             dj.play_confirm();
         }
+    }
+
+    pub(super) fn set_selected_song(&mut self, song_id: &str) {
+        let album_id = self.album_id_for_song(song_id).to_string();
+        if self.current_album.as_deref() == Some(album_id.as_str()) {
+            return;
+        }
+        self.current_album = Some(album_id);
+        self.album_switch_timer = Some(0.0);
     }
 
     fn difficulty_texture(&self, difficulty: &str) -> Option<&GpuTexture> {
@@ -156,21 +177,29 @@ impl FunkinFreeplayUi {
     }
 
     fn album_for_song(&self, song_id: &str) -> Option<&AlbumAsset> {
-        let album_id = self
-            .song_albums
-            .get(song_id)
-            .map(String::as_str)
-            .unwrap_or("volume1");
+        let album_id = self.album_id_for_song(song_id);
         self.albums
             .get(album_id)
             .or_else(|| self.albums.get("volume1"))
+    }
+
+    fn album_id_for_song<'a>(&'a self, song_id: &'a str) -> &'a str {
+        self.song_albums
+            .get(song_id)
+            .map(String::as_str)
+            .unwrap_or("volume1")
     }
 }
 
 pub(super) struct AlbumAsset {
     art: GpuTexture,
-    title: Option<GpuTexture>,
+    title: Option<AlbumTitleAsset>,
     title_offset: [f32; 2],
+}
+
+pub(super) struct AlbumTitleAsset {
+    texture: GpuTexture,
+    atlas: SpriteAtlas,
 }
 
 impl FreeplayScreen {
@@ -244,8 +273,7 @@ fn load_album_assets(gpu: &GpuState, paths: &AssetPaths, albums: &mut HashMap<St
         let title = json
             .get("albumTitleAsset")
             .and_then(Value::as_str)
-            .and_then(|key| find_funkin_asset(paths, &format!("{key}.png")))
-            .map(|path| gpu.load_texture_from_path(&path));
+            .and_then(|key| load_album_title(gpu, paths, key));
         let title_offset = json
             .get("albumTitleOffsets")
             .and_then(Value::as_array)
@@ -265,6 +293,19 @@ fn load_album_assets(gpu: &GpuState, paths: &AssetPaths, albums: &mut HashMap<St
             },
         );
     }
+}
+
+fn load_album_title(gpu: &GpuState, paths: &AssetPaths, key: &str) -> Option<AlbumTitleAsset> {
+    let png = find_funkin_asset(paths, &format!("{key}.png"))?;
+    let xml = find_funkin_asset(paths, &format!("{key}.xml"))?;
+    let xml_data = std::fs::read_to_string(xml).ok()?;
+    let mut atlas = SpriteAtlas::from_xml(&xml_data);
+    atlas.add_by_prefix("idle", "idle0");
+    atlas.add_by_prefix("switch", "switch0");
+    Some(AlbumTitleAsset {
+        texture: gpu.load_texture_from_path(&png),
+        atlas,
+    })
 }
 
 fn load_song_album_map(paths: &AssetPaths) -> HashMap<String, String> {

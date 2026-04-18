@@ -13,6 +13,8 @@ impl FreeplayScreen {
         self.cur_selected = ((self.cur_selected as i32 + delta).rem_euclid(len)) as usize;
         let song_idx = self.filtered[self.cur_selected];
         self.bg_color_target = self.songs[song_idx].color;
+        self.funkin_ui
+            .set_selected_song(&self.songs[song_idx].song_id);
         self.refresh_score_target();
 
         if let Some(audio) = &mut self.audio {
@@ -40,6 +42,8 @@ impl FreeplayScreen {
             self.cur_selected = self.cur_selected.min(self.filtered.len() - 1);
             let song_idx = self.filtered[self.cur_selected];
             self.bg_color_target = self.songs[song_idx].color;
+            self.funkin_ui
+                .set_selected_song(&self.songs[song_idx].song_id);
         }
         self.lerp_selected = self.cur_selected as f32;
         self.refresh_score_target();

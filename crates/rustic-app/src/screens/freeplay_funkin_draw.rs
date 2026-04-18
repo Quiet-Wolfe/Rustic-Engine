@@ -3,7 +3,7 @@ use rustic_render::health_icon::IconState;
 
 use super::super::{FreeplayScreen, DIFFICULTIES, GAME_H, GAME_W};
 use super::freeplay_funkin_assets::{CAPSULE_SELECTED, CAPSULE_UNSELECTED};
-use super::{CUTOUT_W, DJ_X};
+use super::{CUTOUT_W, DJ_X, DJ_Y};
 
 impl FreeplayScreen {
     pub(in crate::screens::freeplay) fn draw_funkin(&mut self, gpu: &mut GpuState) {
@@ -132,7 +132,7 @@ impl FreeplayScreen {
 
     fn draw_funkin_dj(&self, gpu: &mut GpuState) {
         if let Some(dj) = &self.funkin_ui.dj {
-            dj.draw(gpu, DJ_X, 0.0, 1.0, self.funkin_ui.intro_amount());
+            dj.draw(gpu, DJ_X, DJ_Y, 1.0, self.funkin_ui.intro_amount());
         } else {
             gpu.draw_text("BF", 140.0, 235.0, 120.0, [1.0, 1.0, 1.0, 0.8]);
             gpu.draw_text("DJ", 170.0, 340.0, 120.0, [1.0, 1.0, 1.0, 0.8]);
@@ -174,24 +174,33 @@ impl FreeplayScreen {
         gpu.draw_batch(Some(&album.art));
 
         if let Some(title) = &album.title {
-            let title_scale = (300.0 / title.width as f32).min(1.0);
-            let w = title.width as f32 * title_scale;
-            let h = title.height as f32 * title_scale;
-            gpu.push_texture_region(
-                title.width as f32,
-                title.height as f32,
-                0.0,
-                0.0,
-                title.width as f32,
-                title.height as f32,
-                x - 18.0 + album.title_offset[0] * title_scale,
-                y + 288.0 + album.title_offset[1] * title_scale,
-                w,
-                h,
-                false,
-                [1.0, 1.0, 1.0, hud],
-            );
-            gpu.draw_batch(Some(title));
+            let scale = (300.0 / title.texture.width as f32).min(1.0);
+            let switching = self.funkin_ui.album_switch_timer.is_some();
+            let anim = if switching && title.atlas.has_anim("switch") {
+                "switch"
+            } else {
+                "idle"
+            };
+            let frame_idx = self
+                .funkin_ui
+                .album_switch_timer
+                .map(|timer| (timer * 24.0) as usize)
+                .unwrap_or(self.funkin_ui.capsule_frame)
+                % title.atlas.frame_count(anim).max(1);
+            if let Some(frame) = title.atlas.get_frame(anim, frame_idx) {
+                let bob = (self.funkin_ui.capsule_frame as f32 * 0.18).sin() * 2.0;
+                gpu.draw_sprite_frame(
+                    frame,
+                    title.texture.width as f32,
+                    title.texture.height as f32,
+                    x - 18.0 + album.title_offset[0] * scale,
+                    y + 288.0 + album.title_offset[1] * scale + bob,
+                    scale,
+                    false,
+                    [1.0, 1.0, 1.0, hud],
+                );
+                gpu.draw_batch(Some(&title.texture));
+            }
         }
     }
 

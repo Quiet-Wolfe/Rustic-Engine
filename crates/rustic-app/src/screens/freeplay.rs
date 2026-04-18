@@ -151,6 +151,8 @@ impl Screen for FreeplayScreen {
             let song_idx = self.filtered[0];
             self.bg_color_target = self.songs[song_idx].color;
             self.bg_color = self.songs[song_idx].color;
+            self.funkin_ui
+                .set_selected_song(&self.songs[song_idx].song_id);
         }
         self.lerp_selected = self.cur_selected as f32;
         self.refresh_score_target();
