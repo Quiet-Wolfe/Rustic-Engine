@@ -232,7 +232,7 @@ impl PlayScreen {
         // Skip HUD during death
         if self.death.is_some() {
             self.draw_death_overlay(gpu);
-            gpu.end_frame();
+            crate::debug_overlay::finish_frame(gpu);
             return;
         }
 
@@ -684,7 +684,7 @@ impl PlayScreen {
         #[cfg(feature = "rl")]
         self.draw_rl_hud(gpu);
 
-        gpu.end_frame();
+        crate::debug_overlay::finish_frame(gpu);
     }
 
     /// Draw FNF-style semi-transparent arrow touch pads at the bottom of the screen.

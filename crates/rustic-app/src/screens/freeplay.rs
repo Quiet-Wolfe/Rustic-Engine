@@ -440,7 +440,7 @@ impl Screen for FreeplayScreen {
             reset_modal.draw(gpu);
         }
 
-        gpu.end_frame();
+        crate::debug_overlay::finish_frame(gpu);
     }
 
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {

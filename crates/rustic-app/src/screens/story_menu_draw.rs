@@ -173,6 +173,6 @@ impl StoryMenuScreen {
             gameplay_changers.draw(gpu);
         }
 
-        gpu.end_frame();
+        crate::debug_overlay::finish_frame(gpu);
     }
 }

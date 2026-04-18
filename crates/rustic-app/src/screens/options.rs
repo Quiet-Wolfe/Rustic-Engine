@@ -52,6 +52,7 @@ impl OptionsMenuState {
 
     pub fn save(&self) {
         let _ = self.prefs.save();
+        crate::settings::apply_preferences(&self.prefs);
     }
 
     pub fn item_count(&self) -> usize {
@@ -112,6 +113,7 @@ impl OptionsMenuState {
             OptionsCategory::Controls => {}
         }
         self.prefs.normalize();
+        crate::settings::apply_preferences(&self.prefs);
     }
 
     pub fn draw(&self, gpu: &mut GpuState) {

@@ -177,7 +177,7 @@ impl Screen for LoadingScreen {
         gpu.draw_text("TIP", 220.0, 500.0, 22.0, [1.0, 0.85, 0.4, 1.0]);
         gpu.draw_text(TIPS[self.tip_index], 220.0, 540.0, 24.0, [0.9, 0.9, 0.9, 1.0]);
 
-        gpu.end_frame();
+        crate::debug_overlay::finish_frame(gpu);
     }
 
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {

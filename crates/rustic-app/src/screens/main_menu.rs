@@ -294,7 +294,7 @@ impl Screen for MainMenuScreen {
         // Version text
         gpu.draw_text("RusticV2", 12.0, GAME_H - 24.0, 16.0, [1.0, 1.0, 1.0, 1.0]);
 
-        gpu.end_frame();
+        crate::debug_overlay::finish_frame(gpu);
     }
 
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {

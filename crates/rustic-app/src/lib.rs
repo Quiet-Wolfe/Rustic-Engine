@@ -1,5 +1,7 @@
+pub mod debug_overlay;
 pub mod screen;
 pub mod screens;
+pub mod settings;
 
 #[cfg(feature = "rl")]
 pub mod rl_boot;
@@ -9,7 +11,7 @@ use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
@@ -46,6 +48,7 @@ impl ApplicationHandler for App {
         }
 
         let prefs = Preferences::load();
+        crate::settings::apply_preferences(&prefs);
         let mut attrs = Window::default_attributes()
             .with_title("RusticV2")
             .with_inner_size(winit::dpi::LogicalSize::new(GAME_W, GAME_H));
@@ -115,6 +118,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
+                crate::settings::sleep_until_next_frame(self.last_frame);
                 let now = Instant::now();
                 let dt = (now - self.last_frame).as_secs_f64().min(0.05) as f32; // f64 precision, clamp to 50ms max
                 self.last_frame = now;
@@ -164,7 +168,7 @@ fn android_main(app: AndroidApp) {
     log::info!("RusticV2 android_main starting");
 
     use winit::platform::android::EventLoopBuilderExtAndroid;
-    let event_loop = EventLoop::builder()
+    let event_loop = winit::event_loop::EventLoop::builder()
         .with_android_app(app)
         .build()
         .unwrap();

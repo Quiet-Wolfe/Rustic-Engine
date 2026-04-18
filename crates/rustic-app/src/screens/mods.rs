@@ -306,7 +306,7 @@ impl Screen for ModsScreen {
             );
         }
 
-        gpu.end_frame();
+        crate::debug_overlay::finish_frame(gpu);
     }
 
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {
