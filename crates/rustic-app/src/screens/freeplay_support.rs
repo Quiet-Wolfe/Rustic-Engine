@@ -62,10 +62,6 @@ pub(super) fn key_to_char(key: KeyCode) -> Option<char> {
     }
 }
 
-pub(super) fn approx_text_width(text: &str, size: f32) -> f32 {
-    text.chars().count() as f32 * size * 0.58
-}
-
 pub(super) fn personal_best_text(displayed_score: f32, displayed_accuracy: f32) -> String {
     format!(
         "PERSONAL BEST: {} ({:.2}%)",

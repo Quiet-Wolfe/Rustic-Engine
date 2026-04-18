@@ -1,5 +1,7 @@
 #[path = "freeplay_actions.rs"]
 mod freeplay_actions;
+#[path = "freeplay_funkin.rs"]
+mod freeplay_funkin;
 
 use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
@@ -11,7 +13,7 @@ use rustic_core::week;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::health_icon::{HealthIcon, IconState};
 
-use super::freeplay_support::{approx_text_width, key_to_char, srgb_to_linear, FreeplaySong};
+use super::freeplay_support::{key_to_char, srgb_to_linear, FreeplaySong};
 use super::gameplay_changers::GameplayChangersState;
 use super::loading::LoadingScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
@@ -46,6 +48,7 @@ pub struct FreeplayScreen {
     practice_mode: bool,
     botplay: bool,
     gameplay_changers: Option<GameplayChangersState>,
+    funkin_ui: freeplay_funkin::FunkinFreeplayUi,
 }
 
 impl FreeplayScreen {
@@ -74,6 +77,7 @@ impl FreeplayScreen {
             practice_mode: false,
             botplay: false,
             gameplay_changers: None,
+            funkin_ui: freeplay_funkin::FunkinFreeplayUi::new(),
         }
     }
 }
@@ -81,6 +85,7 @@ impl FreeplayScreen {
 impl Screen for FreeplayScreen {
     fn init(&mut self, gpu: &GpuState) {
         let paths = AssetPaths::platform_default();
+        self.funkin_ui.load(gpu, &paths);
 
         if let Some(bg_path) = paths.image("menuDesat") {
             self.bg_tex = Some(gpu.load_texture_from_path(&bg_path));
@@ -221,6 +226,7 @@ impl Screen for FreeplayScreen {
                 if !self.filtered.is_empty() {
                     self.stop_preview();
                     self.confirmed = true;
+                    self.funkin_ui.play_confirm();
                     if let Some(audio) = &mut self.audio {
                         let paths = AssetPaths::platform_default();
                         if let Some(sfx) = paths.sound("confirmMenu") {
@@ -321,6 +327,7 @@ impl Screen for FreeplayScreen {
     }
 
     fn update(&mut self, dt: f32) {
+        self.funkin_ui.update(dt);
         if let Some(reset_modal) = &mut self.reset_modal {
             reset_modal.update(dt);
         }
@@ -347,131 +354,7 @@ impl Screen for FreeplayScreen {
     }
 
     fn draw(&mut self, gpu: &mut GpuState) {
-        if !gpu.begin_frame() {
-            return;
-        }
-
-        // Background with color tint
-        if let Some(bg) = &self.bg_tex {
-            let c = &self.bg_color;
-            let color = [c[0], c[1], c[2], 1.0];
-            // screenCenter
-            let bw = bg.width as f32;
-            let bh = bg.height as f32;
-            let x = (GAME_W - bw) / 2.0;
-            let y = (GAME_H - bh) / 2.0;
-            gpu.push_texture_region(bw, bh, 0.0, 0.0, bw, bh, x, y, bw, bh, false, color);
-            gpu.draw_batch(Some(bg));
-        } else {
-            let c = &self.bg_color;
-            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [c[0], c[1], c[2], 1.0]);
-            gpu.draw_batch(None);
-        }
-
-        let text_size = 28.0;
-        let draw_dist = 6;
-
-        for (i, &song_idx) in self.filtered.iter().enumerate() {
-            let target_y = i as f32 - self.lerp_selected;
-            if target_y.abs() > draw_dist as f32 {
-                continue;
-            }
-
-            let x = target_y * 20.0 + 90.0;
-            let y = target_y * 1.3 * 120.0 + 320.0;
-            if y < -50.0 || y > GAME_H + 50.0 {
-                continue;
-            }
-
-            let alpha = if i == self.cur_selected { 1.0 } else { 0.6 };
-            let color = [alpha, alpha, alpha, alpha];
-            let icon_x = x + approx_text_width(&self.songs[song_idx].name, text_size) + 12.0;
-
-            gpu.draw_text(&self.songs[song_idx].name, x, y, text_size, color);
-            if let Some(icon) = &mut self.songs[song_idx].icon {
-                let state = if i == self.cur_selected {
-                    IconState::Winning
-                } else {
-                    IconState::Neutral
-                };
-                icon.set_state(state);
-                icon.draw(gpu, icon_x, y - 30.0, 150.0, color);
-            }
-        }
-
-        let score_x = GAME_W * 0.7;
-        let score_bg_w = GAME_W - score_x + 6.0;
-        gpu.push_colored_quad(score_x - 6.0, 0.0, score_bg_w, 66.0, [0.0, 0.0, 0.0, 0.6]);
-        gpu.draw_batch(None);
-
-        let diff_name = DIFFICULTIES[self.cur_difficulty].to_uppercase();
-        if DIFFICULTIES.len() > 1 {
-            gpu.draw_text("<", score_x, 41.0, 24.0, [1.0, 1.0, 0.4, 0.9]);
-            gpu.draw_text(&diff_name, score_x + 20.0, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
-            let arrow_x = GAME_W - 20.0;
-            gpu.draw_text(">", arrow_x, 41.0, 24.0, [1.0, 1.0, 0.4, 0.9]);
-        } else {
-            gpu.draw_text(&diff_name, score_x, 41.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
-        }
-
-        let score_text = self.current_score_text();
-        gpu.draw_text(&score_text, score_x, 5.0, 24.0, [1.0, 1.0, 1.0, 1.0]);
-
-        if !self.search.is_empty() {
-            gpu.push_colored_quad(0.0, 0.0, 400.0, 36.0, [0.0, 0.0, 0.0, 0.7]);
-            gpu.draw_batch(None);
-            let search_display = format!("Search: {}_", self.search);
-            gpu.draw_text(&search_display, 10.0, 8.0, 20.0, [1.0, 1.0, 0.4, 1.0]);
-        }
-
-        let count_text = if cfg!(target_os = "android") {
-            format!(
-                "{} songs | Tap song to play | Tap difficulty to change | Opponent: {}",
-                self.filtered.len(),
-                if self.play_as_opponent { "ON" } else { "OFF" }
-            )
-        } else if self.search.is_empty() {
-            format!("{} songs | SPACE Preview:{} | ENTER Play | LEFT-RIGHT difficulty | TAB Opponent: {}", self.filtered.len(), if self.previewing_song.is_some() { "ON" } else { "OFF" }, if self.play_as_opponent { "ON" } else { "OFF" })
-        } else {
-            format!(
-                "{}/{} songs | ESC to clear search | ENTER to play | TAB Opponent: {}",
-                self.filtered.len(),
-                self.songs.len(),
-                if self.play_as_opponent { "ON" } else { "OFF" }
-            )
-        };
-        gpu.push_colored_quad(0.0, GAME_H - 26.0, GAME_W, 26.0, [0.0, 0.0, 0.0, 0.6]);
-        gpu.draw_batch(None);
-        gpu.draw_text(&count_text, 10.0, GAME_H - 22.0, 16.0, [1.0, 1.0, 1.0, 1.0]);
-
-        if cfg!(target_os = "android") {
-            let strip_x = 2.0;
-            let strip_top = 70.0;
-            let strip_h = GAME_H - 100.0;
-            let letter_h = strip_h / 26.0;
-            gpu.push_colored_quad(0.0, strip_top, 28.0, strip_h, [0.0, 0.0, 0.0, 0.3]);
-            gpu.draw_batch(None);
-            for i in 0..26u8 {
-                let letter = (b'A' + i) as char;
-                let y = strip_top + i as f32 * letter_h;
-                gpu.draw_text(
-                    &letter.to_string(),
-                    strip_x + 4.0,
-                    y,
-                    letter_h.min(18.0),
-                    [1.0, 1.0, 1.0, 0.7],
-                );
-            }
-        }
-
-        if let Some(gameplay_changers) = &self.gameplay_changers {
-            gameplay_changers.draw(gpu);
-        }
-        if let Some(reset_modal) = &mut self.reset_modal {
-            reset_modal.draw(gpu);
-        }
-
-        crate::debug_overlay::finish_frame(gpu);
+        self.draw_funkin(gpu);
     }
 
     fn next_screen(&mut self) -> Option<Box<dyn Screen>> {
