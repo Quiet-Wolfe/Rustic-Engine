@@ -13,6 +13,7 @@ impl FreeplayScreen {
 
         self.draw_funkin_background(gpu);
         self.draw_funkin_dj(gpu);
+        self.draw_funkin_album(gpu);
         self.draw_funkin_capsules(gpu);
         self.draw_funkin_hud(gpu);
         self.draw_funkin_overlays(gpu);
@@ -135,6 +136,62 @@ impl FreeplayScreen {
         } else {
             gpu.draw_text("BF", 140.0, 235.0, 120.0, [1.0, 1.0, 1.0, 0.8]);
             gpu.draw_text("DJ", 170.0, 340.0, 120.0, [1.0, 1.0, 1.0, 0.8]);
+        }
+    }
+
+    fn draw_funkin_album(&self, gpu: &mut GpuState) {
+        let Some(&song_idx) = self.filtered.get(self.cur_selected) else {
+            return;
+        };
+        let Some(album) = self.funkin_ui.album_for_song(&self.songs[song_idx].song_id) else {
+            return;
+        };
+        let hud = self.funkin_ui.hud_amount();
+        let x = 910.0 + 330.0 * (1.0 - hud);
+        let y = 205.0;
+        gpu.push_colored_quad(
+            x + 12.0,
+            y + 16.0,
+            262.0,
+            262.0,
+            [0.0, 0.0, 0.0, 0.38 * hud],
+        );
+        gpu.draw_batch(None);
+        gpu.push_texture_region(
+            album.art.width as f32,
+            album.art.height as f32,
+            0.0,
+            0.0,
+            album.art.width as f32,
+            album.art.height as f32,
+            x,
+            y,
+            262.0,
+            262.0,
+            false,
+            [1.0, 1.0, 1.0, hud],
+        );
+        gpu.draw_batch(Some(&album.art));
+
+        if let Some(title) = &album.title {
+            let title_scale = (300.0 / title.width as f32).min(1.0);
+            let w = title.width as f32 * title_scale;
+            let h = title.height as f32 * title_scale;
+            gpu.push_texture_region(
+                title.width as f32,
+                title.height as f32,
+                0.0,
+                0.0,
+                title.width as f32,
+                title.height as f32,
+                x - 18.0 + album.title_offset[0] * title_scale,
+                y + 288.0 + album.title_offset[1] * title_scale,
+                w,
+                h,
+                false,
+                [1.0, 1.0, 1.0, hud],
+            );
+            gpu.draw_batch(Some(title));
         }
     }
 

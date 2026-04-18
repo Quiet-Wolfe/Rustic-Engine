@@ -3,9 +3,13 @@ mod freeplay_funkin_assets;
 #[path = "freeplay_funkin_draw.rs"]
 mod freeplay_funkin_draw;
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use rustic_audio::AudioEngine;
 use rustic_core::paths::AssetPaths;
 use rustic_render::gpu::{GpuState, GpuTexture};
+use serde_json::Value;
 
 use self::freeplay_funkin_assets::{
     find_funkin_asset, find_funkin_music, CapsuleAsset, FreeplayDj,
@@ -23,6 +27,8 @@ pub(super) struct FunkinFreeplayUi {
     glowing_text: Option<GpuTexture>,
     highscore: Option<GpuTexture>,
     clear_box: Option<GpuTexture>,
+    albums: HashMap<String, AlbumAsset>,
+    song_albums: HashMap<String, String>,
     capsule: Option<CapsuleAsset>,
     difficulty_textures: Vec<(String, GpuTexture)>,
     dj: Option<FreeplayDj>,
@@ -42,6 +48,8 @@ impl FunkinFreeplayUi {
             glowing_text: None,
             highscore: None,
             clear_box: None,
+            albums: HashMap::new(),
+            song_albums: HashMap::new(),
             capsule: None,
             difficulty_textures: Vec::new(),
             dj: None,
@@ -74,6 +82,10 @@ impl FunkinFreeplayUi {
         );
         load_optional_texture(gpu, paths, &mut self.highscore, "freeplay/highscore.png");
         load_optional_texture(gpu, paths, &mut self.clear_box, "freeplay/clearBox.png");
+        if self.albums.is_empty() {
+            load_album_assets(gpu, paths, &mut self.albums);
+            self.song_albums = load_song_album_map(paths);
+        }
 
         if self.capsule.is_none() {
             self.capsule = CapsuleAsset::load(gpu, paths);
@@ -142,6 +154,23 @@ impl FunkinFreeplayUi {
             .map(|timer| ease_out_quart((timer / 0.45).clamp(0.0, 1.0)))
             .unwrap_or(0.0)
     }
+
+    fn album_for_song(&self, song_id: &str) -> Option<&AlbumAsset> {
+        let album_id = self
+            .song_albums
+            .get(song_id)
+            .map(String::as_str)
+            .unwrap_or("volume1");
+        self.albums
+            .get(album_id)
+            .or_else(|| self.albums.get("volume1"))
+    }
+}
+
+pub(super) struct AlbumAsset {
+    art: GpuTexture,
+    title: Option<GpuTexture>,
+    title_offset: [f32; 2],
 }
 
 impl FreeplayScreen {
@@ -189,4 +218,123 @@ fn load_optional_texture(
 
 fn ease_out_quart(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(4)
+}
+
+fn load_album_assets(gpu: &GpuState, paths: &AssetPaths, albums: &mut HashMap<String, AlbumAsset>) {
+    for data_path in album_data_paths(paths) {
+        let Some(album_id) = data_path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if albums.contains_key(album_id) {
+            continue;
+        }
+        let Ok(data) = std::fs::read_to_string(&data_path) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        let art_key = json
+            .get("albumArtAsset")
+            .and_then(Value::as_str)
+            .unwrap_or("freeplay/albumRoll/volume1");
+        let Some(art_path) = find_funkin_asset(paths, &format!("{art_key}.png")) else {
+            continue;
+        };
+        let title = json
+            .get("albumTitleAsset")
+            .and_then(Value::as_str)
+            .and_then(|key| find_funkin_asset(paths, &format!("{key}.png")))
+            .map(|path| gpu.load_texture_from_path(&path));
+        let title_offset = json
+            .get("albumTitleOffsets")
+            .and_then(Value::as_array)
+            .map(|values| {
+                [
+                    values.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+                    values.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+                ]
+            })
+            .unwrap_or([0.0, 0.0]);
+        albums.insert(
+            album_id.to_string(),
+            AlbumAsset {
+                art: gpu.load_texture_from_path(&art_path),
+                title,
+                title_offset,
+            },
+        );
+    }
+}
+
+fn load_song_album_map(paths: &AssetPaths) -> HashMap<String, String> {
+    let mut albums = HashMap::new();
+    for root in data_roots(paths) {
+        let songs_dir = root.join("songs");
+        let Ok(song_dirs) = std::fs::read_dir(songs_dir) else {
+            continue;
+        };
+        for song_dir in song_dirs.flatten() {
+            if !song_dir.path().is_dir() {
+                continue;
+            }
+            let song_id = song_dir.file_name().to_string_lossy().to_string();
+            let metadata = song_dir.path().join(format!("{song_id}-metadata.json"));
+            let Ok(data) = std::fs::read_to_string(metadata) else {
+                continue;
+            };
+            let Ok(json) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
+            let album = json
+                .get("playData")
+                .and_then(|play_data| play_data.get("album"))
+                .and_then(Value::as_str);
+            if let Some(album) = album {
+                albums.entry(song_id).or_insert_with(|| album.to_string());
+            }
+        }
+    }
+    albums
+}
+
+fn album_data_paths(paths: &AssetPaths) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    for root in data_roots(paths) {
+        let albums_dir = root.join("ui/freeplay/albums");
+        let Ok(entries) = std::fs::read_dir(albums_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                results.push(path);
+            }
+        }
+    }
+    results
+}
+
+fn data_roots(paths: &AssetPaths) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    collect_data_root(&mut roots, paths.find_dir("data"));
+    collect_data_root(
+        &mut roots,
+        Some(Path::new("assets/preload/data").to_path_buf()),
+    );
+    collect_data_root(&mut roots, Some(Path::new("assets/data").to_path_buf()));
+    collect_data_root(
+        &mut roots,
+        Some(Path::new("references/funkin/assets/preload/data").to_path_buf()),
+    );
+    roots
+}
+
+fn collect_data_root(roots: &mut Vec<PathBuf>, root: Option<PathBuf>) {
+    let Some(root) = root else {
+        return;
+    };
+    if root.is_dir() && !roots.iter().any(|existing| existing == &root) {
+        roots.push(root);
+    }
 }

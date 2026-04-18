@@ -50,7 +50,7 @@ impl FreeplayDj {
         let animate = FlxAnimate::load(dir.to_str()?).ok()?;
         let texture = gpu.load_texture_from_path(&dir.join("spritemap1.png"));
         let intro_index = animation_index(&animate, &["intro"]);
-        let idle_index = animation_index(&animate, &["boyfriend dj"]).unwrap_or(0);
+        let idle_index = animation_index_exact(&animate, "Boyfriend DJ").unwrap_or(0);
         let confirm_index = animation_index(&animate, &["confirm"]);
 
         let mut dj = Self {
@@ -200,6 +200,16 @@ fn animation_index(animate: &FlxAnimate, needles: &[&str]) -> Option<usize> {
             let name = anim.sn.to_lowercase();
             needles.iter().all(|needle| name.contains(needle))
         })
+        .map(|(idx, _)| idx)
+}
+
+fn animation_index_exact(animate: &FlxAnimate, symbol: &str) -> Option<usize> {
+    let symbol = symbol.to_lowercase();
+    animate
+        .available_animations
+        .iter()
+        .enumerate()
+        .find(|(_, anim)| anim.sn.to_lowercase() == symbol)
         .map(|(idx, _)| idx)
 }
 
