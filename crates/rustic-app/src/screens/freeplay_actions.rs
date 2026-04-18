@@ -82,10 +82,8 @@ impl FreeplayScreen {
         }
         if let Some(audio) = &mut self.audio {
             audio.stop_loop_music();
-            if let Some(music) = AssetPaths::platform_default().music("freakyMenu") {
-                audio.play_loop_music_vol(&music, 0.7);
-            }
         }
+        self.start_funkin_freeplay_music(&AssetPaths::platform_default());
     }
 
     pub(super) fn toggle_preview(&mut self) {

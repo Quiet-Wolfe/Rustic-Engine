@@ -46,7 +46,8 @@ impl FreeplayDj {
         let dir = find_funkin_dir(paths, "freeplay/freeplay-boyfriend")?;
         let animate = FlxAnimate::load(dir.to_str()?).ok()?;
         let texture = gpu.load_texture_from_path(&dir.join("spritemap1.png"));
-        let idle_index = animation_index(&animate, &["boyfriend dj", "idle"]).unwrap_or(0);
+        let intro_index = animation_index(&animate, &["intro"]);
+        let idle_index = animation_index(&animate, &["boyfriend dj"]).unwrap_or(0);
         let confirm_index = animation_index(&animate, &["confirm"]);
 
         let mut dj = Self {
@@ -55,7 +56,11 @@ impl FreeplayDj {
             idle_index,
             confirm_index,
         };
-        dj.play_index(idle_index, true);
+        if let Some(index) = intro_index {
+            dj.play_index(index, false);
+        } else {
+            dj.play_index(idle_index, true);
+        }
         Some(dj)
     }
 
@@ -112,6 +117,45 @@ pub(super) fn find_funkin_asset(
         .or_else(|| {
             existing_path(
                 Path::new("references/funkin/assets/preload/images").join(relative_after_images),
+            )
+        })
+}
+
+pub(super) fn find_funkin_music(paths: &AssetPaths, name: &str) -> Option<PathBuf> {
+    paths
+        .music(name)
+        .or_else(|| paths.find(&format!("music/{name}/{name}.ogg")))
+        .or_else(|| {
+            existing_path(
+                Path::new("assets/preload/music")
+                    .join(name)
+                    .join(format!("{name}.ogg")),
+            )
+        })
+        .or_else(|| {
+            existing_path(
+                Path::new("assets/music")
+                    .join(name)
+                    .join(format!("{name}.ogg")),
+            )
+        })
+        .or_else(|| {
+            existing_path(
+                Path::new("references/funkin/assets/preload/music")
+                    .join(name)
+                    .join(format!("{name}.ogg")),
+            )
+        })
+        .or_else(|| {
+            existing_path(
+                Path::new("references/funkin/assets/shared/music")
+                    .join(name)
+                    .join(format!("{name}.ogg")),
+            )
+        })
+        .or_else(|| {
+            existing_path(
+                Path::new("references/funkin/assets/shared/music").join(format!("{name}.ogg")),
             )
         })
 }

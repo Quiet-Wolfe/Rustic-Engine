@@ -157,13 +157,7 @@ impl Screen for FreeplayScreen {
         self.displayed_score = self.target_score as f32;
         self.displayed_accuracy = self.target_accuracy;
 
-        if self.audio.is_none() {
-            if let Some(music) = paths.music("freakyMenu") {
-                let mut audio = AudioEngine::new();
-                audio.play_loop_music_vol(&music, 0.7);
-                self.audio = Some(audio);
-            }
-        }
+        self.start_funkin_freeplay_music(&paths);
     }
 
     fn handle_key(&mut self, key: KeyCode) {
@@ -251,6 +245,7 @@ impl Screen for FreeplayScreen {
                     self.rebuild_filter();
                 } else {
                     self.stop_preview();
+                    self.restore_main_menu_music();
                     if let Some(audio) = &mut self.audio {
                         let paths = AssetPaths::platform_default();
                         if let Some(sfx) = paths.sound("cancelMenu") {
@@ -266,6 +261,7 @@ impl Screen for FreeplayScreen {
                     self.rebuild_filter();
                 } else {
                     self.stop_preview();
+                    self.restore_main_menu_music();
                     if let Some(audio) = &mut self.audio {
                         let paths = AssetPaths::platform_default();
                         if let Some(sfx) = paths.sound("cancelMenu") {
