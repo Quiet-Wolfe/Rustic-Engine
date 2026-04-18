@@ -2441,7 +2441,6 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         // Precaching
         "precacheImage", "precacheSound", "precacheMusic",
         // Camera
-        "cameraFade",
         "setCameraScroll", "setCameraFollowPoint",
         "addCameraScroll", "addCameraFollowPoint",
         "getCameraScrollX", "getCameraScrollY",
@@ -2456,8 +2455,6 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         "objectsOverlap",
         // Position queries
         "getScreenPositionX", "getScreenPositionY",
-        // Strum/note
-        "getObjectOrder",
         // Keyboard/gamepad (beyond the basic ones)
         "keyboardJustPressed", "keyboardPressed", "keyboardReleased",
         "mouseClicked", "mousePressed", "mouseReleased",
