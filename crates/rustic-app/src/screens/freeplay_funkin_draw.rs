@@ -3,7 +3,7 @@ use rustic_render::health_icon::IconState;
 
 use super::super::{FreeplayScreen, DIFFICULTIES, GAME_H, GAME_W};
 use super::freeplay_funkin_assets::{CAPSULE_SELECTED, CAPSULE_UNSELECTED};
-use super::{CUTOUT_W, DJ_X, SONGS_X};
+use super::{CUTOUT_W, DJ_X};
 
 impl FreeplayScreen {
     pub(in crate::screens::freeplay) fn draw_funkin(&mut self, gpu: &mut GpuState) {
@@ -64,7 +64,7 @@ impl FreeplayScreen {
             let scale = (GAME_H / bg.height as f32).max((GAME_W * 0.55) / bg.width as f32);
             let w = bg.width as f32 * scale;
             let h = bg.height as f32 * scale;
-            let final_x = CUTOUT_W * 0.74;
+            let final_x = GAME_W * 0.38;
             let x = final_x + (GAME_W - final_x) * (1.0 - intro);
             let y = (GAME_H - h) * 0.5;
             gpu.push_texture_region(
@@ -158,14 +158,9 @@ impl FreeplayScreen {
                 } else {
                     CAPSULE_UNSELECTED
                 };
-                let frame_count = capsule.atlas.frame_count(anim).max(1);
-                let frame_idx = if selected {
-                    self.funkin_ui.capsule_frame % frame_count
-                } else {
-                    (self.funkin_ui.capsule_frame / 2) % frame_count
-                };
+                let frame_idx = stable_capsule_frame(&capsule.atlas, anim);
                 if let Some(frame) = capsule.atlas.get_frame(anim, frame_idx) {
-                    let x = SONGS_X + 270.0 + 60.0 * capsule_index.sin() + (GAME_W * (1.0 - intro));
+                    let x = capsule_x(capsule_index, intro);
                     let y = 120.0 + capsule_index * spacing;
                     let scale = if selected { 0.82 } else { 0.8 };
                     let alpha = if selected { 1.0 } else { 0.55 } * intro;
@@ -190,7 +185,7 @@ impl FreeplayScreen {
                 }
                 let selected = i == self.cur_selected;
                 let capsule_index = target_y + 1.0;
-                let x = SONGS_X + 270.0 + 60.0 * capsule_index.sin() + (GAME_W * (1.0 - intro));
+                let x = capsule_x(capsule_index, intro);
                 let y = 128.0 + capsule_index * spacing;
                 let alpha = if selected { 0.95 } else { 0.45 } * intro;
                 gpu.push_colored_quad(
@@ -212,7 +207,7 @@ impl FreeplayScreen {
 
             let selected = i == self.cur_selected;
             let capsule_index = target_y + 1.0;
-            let x = SONGS_X + 270.0 + 60.0 * capsule_index.sin() + (GAME_W * (1.0 - intro));
+            let x = capsule_x(capsule_index, intro);
             let y = 120.0 + capsule_index * spacing;
             let alpha = if selected { 1.0 } else { 0.58 } * intro;
             let song = &mut self.songs[song_idx];
@@ -220,13 +215,12 @@ impl FreeplayScreen {
             let label_x = x + 155.0;
             let label_y = y + if selected { 36.0 } else { 39.0 };
             let label = truncate_for_capsule(&song.name);
-            gpu.draw_text(
-                &label,
-                label_x,
-                label_y,
-                label_size,
-                [0.06, 0.05, 0.06, alpha],
-            );
+            let text_color = if selected {
+                [0.92, 1.0, 1.0, alpha]
+            } else {
+                [0.72, 0.78, 0.82, alpha]
+            };
+            gpu.draw_text(&label, label_x, label_y, label_size, text_color);
 
             if let Some(icon) = &mut song.icon {
                 icon.set_state(if selected {
@@ -236,9 +230,9 @@ impl FreeplayScreen {
                 });
                 icon.draw(
                     gpu,
-                    x + 118.0,
-                    y + 8.0,
-                    if selected { 76.0 } else { 68.0 },
+                    x - 58.0,
+                    y + 20.0,
+                    if selected { 72.0 } else { 64.0 },
                     [1.0, 1.0, 1.0, alpha],
                 );
             }
@@ -263,8 +257,8 @@ impl FreeplayScreen {
                 0.0,
                 tex.width as f32,
                 tex.height as f32,
-                DJ_X + 90.0,
-                80.0 - 90.0 * (1.0 - hud),
+                66.0,
+                58.0 - 90.0 * (1.0 - hud),
                 w,
                 h,
                 false,
@@ -295,30 +289,30 @@ impl FreeplayScreen {
             44.0,
             [1.0, 1.0, 1.0, hud],
         );
-        gpu.draw_text(
-            &self.current_score_text(),
-            820.0 + 460.0 * (1.0 - hud),
-            62.0,
-            25.0,
-            [1.0, 1.0, 1.0, hud],
-        );
         if let Some(highscore) = &self.funkin_ui.highscore {
             gpu.push_texture_region(
                 highscore.width as f32,
                 highscore.height as f32,
                 0.0,
                 0.0,
-                highscore.width as f32,
-                highscore.height as f32,
+                289.0,
+                43.0,
                 860.0 + 460.0 * (1.0 - hud),
                 72.0,
-                265.0,
-                58.0,
+                260.0,
+                39.0,
                 false,
                 [1.0, 1.0, 1.0, hud],
             );
             gpu.draw_batch(Some(highscore));
         }
+        gpu.draw_text(
+            &self.current_score_text(),
+            820.0 + 460.0 * (1.0 - hud),
+            116.0,
+            21.0,
+            [1.0, 1.0, 1.0, hud],
+        );
 
         let status = if self.previewing_song.is_some() {
             "SPACE Stop Preview"
@@ -393,8 +387,8 @@ impl FreeplayScreen {
 }
 
 fn draw_difficulty_dots(gpu: &mut GpuState, selected: usize, count: usize, alpha: f32) {
-    let start_x = 154.0;
-    let y = 108.0;
+    let start_x = 96.0;
+    let y = 162.0;
     for i in 0..count {
         let active = i == selected;
         let size = if active { 16.0 } else { 10.0 };
@@ -412,6 +406,14 @@ fn draw_difficulty_dots(gpu: &mut GpuState, selected: usize, count: usize, alpha
         );
     }
     gpu.draw_batch(None);
+}
+
+fn capsule_x(capsule_index: f32, intro: f32) -> f32 {
+    270.0 + 45.0 * capsule_index.sin() + GAME_W * (1.0 - intro)
+}
+
+fn stable_capsule_frame(atlas: &rustic_render::sprites::SpriteAtlas, anim: &str) -> usize {
+    atlas.frame_count(anim).saturating_sub(1).min(4)
 }
 
 fn truncate_for_capsule(name: &str) -> String {

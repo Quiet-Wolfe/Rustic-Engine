@@ -14,7 +14,6 @@ use super::{FreeplayScreen, GAME_W};
 
 pub(super) const CUTOUT_W: f32 = GAME_W / 1.5;
 pub(super) const DJ_X: f32 = CUTOUT_W * 0.44;
-pub(super) const SONGS_X: f32 = CUTOUT_W * 0.75;
 
 pub(super) struct FunkinFreeplayUi {
     background: Option<GpuTexture>,

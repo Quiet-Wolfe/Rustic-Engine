@@ -39,6 +39,9 @@ pub(super) struct FreeplayDj {
     animate: FlxAnimate,
     idle_index: usize,
     confirm_index: Option<usize>,
+    intro_active: bool,
+    state_timer: f32,
+    state_duration: f32,
 }
 
 impl FreeplayDj {
@@ -55,9 +58,13 @@ impl FreeplayDj {
             animate,
             idle_index,
             confirm_index,
+            intro_active: false,
+            state_timer: 0.0,
+            state_duration: 0.0,
         };
         if let Some(index) = intro_index {
             dj.play_index(index, false);
+            dj.intro_active = true;
         } else {
             dj.play_index(idle_index, true);
         }
@@ -65,15 +72,19 @@ impl FreeplayDj {
     }
 
     pub(super) fn update(&mut self, dt: f32) {
+        self.state_timer += dt;
         self.animate.update(dt);
-        if self.animate.finished() {
+        let timed_out = self.state_duration > 0.0 && self.state_timer >= self.state_duration;
+        if self.animate.finished() || (self.intro_active && timed_out) {
             self.play_index(self.idle_index, true);
+            self.intro_active = false;
         }
     }
 
     pub(super) fn play_confirm(&mut self) {
         if let Some(index) = self.confirm_index {
             self.play_index(index, false);
+            self.intro_active = false;
         }
     }
 
@@ -85,6 +96,13 @@ impl FreeplayDj {
             self.animate.time_accumulator = 0.0;
             self.animate.finished = false;
             self.animate.set_looping(looping);
+            self.state_timer = 0.0;
+            let frames = self.animate.timeline_length().max(1) as f32;
+            self.state_duration = if looping {
+                0.0
+            } else {
+                frames / self.animate.framerate.max(1.0) + 0.1
+            };
         }
     }
 
