@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use mlua::prelude::*;
 
@@ -19,6 +19,8 @@ fn parse_strum_index(target: &str) -> Option<usize> {
 /// A single Lua script instance.
 pub struct LuaScript {
     lua: Lua,
+    source_path: PathBuf,
+    script_name: String,
     /// Whether this script has been closed (via close() from Lua).
     closed: bool,
 }
@@ -144,7 +146,20 @@ impl LuaScript {
             .exec()
             .map_err(|e| format!("Lua exec error in {:?}: {}", path, e))?;
 
-        Ok(Self { lua, closed: false })
+        Ok(Self {
+            lua,
+            source_path: path.to_path_buf(),
+            script_name: script_name.to_string(),
+            closed: false,
+        })
+    }
+
+    pub fn matches_target(&self, target: &str) -> bool {
+        script_target_matches(&self.source_path, &self.script_name, target)
+    }
+
+    pub fn source_name(&self) -> String {
+        self.source_path.to_string_lossy().replace('\\', "/")
     }
 
     /// Set a numeric global variable on this script's Lua VM.
@@ -190,6 +205,13 @@ impl LuaScript {
         globals.set("__bf_y", state.bf_pos.1 as f64).ok();
         globals.set("__gf_x", state.gf_pos.0 as f64).ok();
         globals.set("__gf_y", state.gf_pos.1 as f64).ok();
+
+        if let Ok(running) = self.lua.create_table() {
+            for (i, script) in state.running_scripts.iter().enumerate() {
+                running.set(i + 1, script.as_str()).ok();
+            }
+            globals.set("__running_scripts", running).ok();
+        }
 
         // Sync shared custom variables so all scripts see each other's setProperty values
         if let Ok(custom) = globals.get::<LuaTable>("__custom_vars") {
@@ -293,6 +315,42 @@ impl LuaScript {
         // Sync sprite properties from Lua tables to Rust structs
         self.sync_sprite_data(state);
 
+        Ok(())
+    }
+
+    /// Call a Lua callback with dynamic Psych-style arguments.
+    pub fn call_callback_values(
+        &mut self,
+        name: &str,
+        state: &mut ScriptState,
+        args: &[crate::script_state::LuaValue],
+    ) -> Result<(), String> {
+        if self.closed {
+            return Ok(());
+        }
+
+        self.sync_shared_state(state);
+
+        let func: Option<LuaFunction> = self.lua.globals().get(name).ok();
+        let Some(func) = func else {
+            return Ok(());
+        };
+
+        let mut multi = mlua::MultiValue::new();
+        for arg in args {
+            multi.push_back(script_value_to_lua(&self.lua, arg).map_err(|e| e.to_string())?);
+        }
+
+        func.call::<()>(multi)
+            .map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
+
+        if let Ok(closed) = self.lua.globals().get::<bool>("__script_closed") {
+            if closed {
+                self.closed = true;
+            }
+        }
+        self.drain_sprite_ops(state);
+        self.sync_sprite_data(state);
         Ok(())
     }
 
@@ -894,6 +952,36 @@ impl LuaScript {
                                     state.script_load_requests.push(script_name);
                                 }
                             }
+                            "remove_script" => {
+                                let script_name: String =
+                                    tbl.get("script_name").unwrap_or_default();
+                                if !script_name.is_empty() {
+                                    state.script_remove_requests.push(script_name);
+                                }
+                            }
+                            "call_script" | "call_luas" => {
+                                let function: String = tbl.get("function").unwrap_or_default();
+                                if function.is_empty() {
+                                    continue;
+                                }
+                                let target = if ty == "call_script" {
+                                    tbl.get::<String>("target").ok().filter(|s| !s.is_empty())
+                                } else {
+                                    None
+                                };
+                                let args = tbl
+                                    .get::<LuaTable>("args")
+                                    .ok()
+                                    .map(|args| table_to_script_values(&args))
+                                    .unwrap_or_default();
+                                state.script_call_requests.push(
+                                    crate::script_state::ScriptCallRequest {
+                                        target,
+                                        function,
+                                        args,
+                                    },
+                                );
+                            }
                             _ => {}
                         }
                     } else if let Ok(prop) = tbl.get::<String>("prop") {
@@ -1466,6 +1554,68 @@ impl LuaScript {
             }
         }
     }
+}
+
+fn table_to_script_values(tbl: &LuaTable) -> Vec<crate::script_state::LuaValue> {
+    let len = tbl.len().unwrap_or(0);
+    let mut values = Vec::with_capacity(len as usize);
+    for i in 1..=len {
+        values.push(lua_value_to_script_value(
+            tbl.get::<LuaValue>(i).unwrap_or(LuaValue::Nil),
+        ));
+    }
+    values
+}
+
+fn lua_value_to_script_value(value: LuaValue) -> crate::script_state::LuaValue {
+    match value {
+        LuaValue::Nil => crate::script_state::LuaValue::Nil,
+        LuaValue::Boolean(v) => crate::script_state::LuaValue::Bool(v),
+        LuaValue::Integer(v) => crate::script_state::LuaValue::Int(v),
+        LuaValue::Number(v) => crate::script_state::LuaValue::Float(v),
+        LuaValue::String(v) => {
+            crate::script_state::LuaValue::String(v.to_string_lossy().to_string())
+        }
+        LuaValue::Table(tbl) => crate::script_state::LuaValue::Array(table_to_script_values(&tbl)),
+        _ => crate::script_state::LuaValue::Nil,
+    }
+}
+
+fn script_value_to_lua(lua: &Lua, value: &crate::script_state::LuaValue) -> LuaResult<LuaValue> {
+    match value {
+        crate::script_state::LuaValue::Nil => Ok(LuaValue::Nil),
+        crate::script_state::LuaValue::Bool(v) => Ok(LuaValue::Boolean(*v)),
+        crate::script_state::LuaValue::Int(v) => Ok(LuaValue::Integer(*v)),
+        crate::script_state::LuaValue::Float(v) => Ok(LuaValue::Number(*v)),
+        crate::script_state::LuaValue::String(v) => Ok(LuaValue::String(lua.create_string(v)?)),
+        crate::script_state::LuaValue::Array(values) => {
+            let tbl = lua.create_table()?;
+            for (i, item) in values.iter().enumerate() {
+                tbl.set(i + 1, script_value_to_lua(lua, item)?)?;
+            }
+            Ok(LuaValue::Table(tbl))
+        }
+    }
+}
+
+fn script_target_matches(path: &Path, script_name: &str, target: &str) -> bool {
+    fn normalize(value: &str) -> String {
+        value
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .trim_end_matches(".lua")
+            .trim_end_matches(".hx")
+            .to_ascii_lowercase()
+    }
+
+    let target = normalize(target);
+    if target.is_empty() {
+        return false;
+    }
+
+    let path = normalize(&path.to_string_lossy());
+    let name = normalize(script_name);
+    path.ends_with(&target) || path.ends_with(&format!("/{target}")) || name == target
 }
 
 fn tbl_to_lua_value(tbl: &LuaTable, key: &str) -> crate::script_state::LuaValue {

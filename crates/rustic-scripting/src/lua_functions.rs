@@ -1,6 +1,24 @@
+use std::collections::HashMap;
 use std::io::Read as _;
+use std::sync::{Mutex, OnceLock};
 
 use mlua::prelude::*;
+
+static SAVE_DATA: OnceLock<Mutex<HashMap<String, HashMap<String, SaveValue>>>> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+enum SaveValue {
+    Nil,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Array(Vec<SaveValue>),
+}
+
+fn save_data() -> &'static Mutex<HashMap<String, HashMap<String, SaveValue>>> {
+    SAVE_DATA.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Resolve a Psych Engine object path to our internal tween target name.
 /// "strumLineNotes.members[N]" → "__strum_opponent_N" or "__strum_player_N"
@@ -77,6 +95,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__sprite_data", lua.create_table()?)?;
     g.set("__script_closed", false)?;
     g.set("__custom_vars", lua.create_table()?)?;
+    g.set("__running_scripts", lua.create_table()?)?;
     // Initialize strum properties table (8 strums: opponent 0-3, player 4-7)
     let strum_props = lua.create_table()?;
     for i in 0..8 {
@@ -104,6 +123,7 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__pending_subtitles", lua.create_table()?)?;
     g.set("__pending_char_positions", lua.create_table()?)?;
     g.set("__pending_audio", lua.create_table()?)?;
+    g.set("__shader_data", lua.create_table()?)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -1760,20 +1780,9 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
             }
 
             // Pattern: game.callOnLuas('setPosition', [N]) — call setPosition from runHaxeCode
-            if code.contains("callOnLuas") && code.contains("setPosition") {
-                // Extract the position value from [N]
-                if let Some(start) = code.find('[') {
-                    if let Some(end) = code.find(']') {
-                        if let Ok(pos) = code[start + 1..end].trim().parse::<f64>() {
-                            // Queue as a property write that the engine will process
-                            let pending: LuaTable = lua.globals().get("__pending_props")?;
-                            let tbl = lua.create_table()?;
-                            tbl.set("prop", "__setPosition")?;
-                            tbl.set("value", pos)?;
-                            let len = pending.len()? as i64;
-                            pending.set(len + 1, tbl)?;
-                        }
-                    }
+            if code.contains("callOnLuas") {
+                if let Some((function, args)) = parse_haxe_call_on_luas(lua, code)? {
+                    queue_script_call(lua, None, &function, args)?;
                 }
                 return Ok(LuaNil);
             }
@@ -3334,21 +3343,188 @@ fn register_note_type_function(lua: &Lua) -> LuaResult<()> {
 
 /// Register no-op stubs for all remaining Psych Engine functions that scripts may call.
 fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
-    // getDataFromSave(saveName, key, ?default) — returns the default if not found.
-    // Critical for mod compatibility: many scripts pass a default value and branch on it.
+    // Psych save data compatibility. This is process-local, shared across Lua VMs,
+    // and preserves values across scripts during a run.
+    lua.globals().set(
+        "initSaveData",
+        lua.create_function(|_lua, save_name: String| {
+            let mut saves = save_data()
+                .lock()
+                .map_err(|e| LuaError::external(e.to_string()))?;
+            saves.entry(save_name).or_default();
+            Ok(())
+        })?,
+    )?;
     lua.globals().set(
         "getDataFromSave",
-        lua.create_function(|_lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
             let mut args_iter = args.into_iter();
-            let _save_name = args_iter.next(); // save name — ignored
-            let _key = args_iter.next(); // key — ignored
-                                         // Return the third argument (default value) if provided, otherwise false
-            match args_iter.next() {
-                Some(val) => Ok(val),
-                None => Ok(LuaValue::Boolean(false)),
+            let save_name = lua_value_to_string(args_iter.next()).unwrap_or_default();
+            let key = lua_value_to_string(args_iter.next()).unwrap_or_default();
+            let default = args_iter.next().unwrap_or(LuaValue::Nil);
+
+            let saves = save_data()
+                .lock()
+                .map_err(|e| LuaError::external(e.to_string()))?;
+            if let Some(value) = saves.get(&save_name).and_then(|save| save.get(&key)) {
+                save_value_to_lua(lua, value)
+            } else {
+                Ok(default)
             }
         })?,
     )?;
+    lua.globals().set(
+        "setDataFromSave",
+        lua.create_function(
+            |_lua, (save_name, key, value): (String, String, LuaValue)| {
+                let mut saves = save_data()
+                    .lock()
+                    .map_err(|e| LuaError::external(e.to_string()))?;
+                saves
+                    .entry(save_name)
+                    .or_default()
+                    .insert(key, lua_value_to_save(&value));
+                Ok(())
+            },
+        )?,
+    )?;
+    lua.globals().set(
+        "flushSaveData",
+        lua.create_function(|_lua, save_name: Option<String>| {
+            if let Some(save_name) = save_name {
+                let mut saves = save_data()
+                    .lock()
+                    .map_err(|e| LuaError::external(e.to_string()))?;
+                saves.entry(save_name).or_default();
+            }
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "eraseSaveData",
+        lua.create_function(|_lua, save_name: String| {
+            let mut saves = save_data()
+                .lock()
+                .map_err(|e| LuaError::external(e.to_string()))?;
+            saves.remove(&save_name);
+            Ok(())
+        })?,
+    )?;
+
+    lua.globals().set(
+        "checkFileExists",
+        lua.create_function(|lua, (relative, _absolute): (String, Option<bool>)| {
+            Ok(find_rooted_file(lua, &relative).is_some())
+        })?,
+    )?;
+    lua.globals().set(
+        "getTextFromFile",
+        lua.create_function(|lua, relative: String| -> LuaResult<String> {
+            let Some(path) = find_rooted_file(lua, &relative) else {
+                return Ok(String::new());
+            };
+            Ok(std::fs::read_to_string(path).unwrap_or_default())
+        })?,
+    )?;
+
+    // Shader compatibility: store parameters so scripts can read back values
+    // they write, even when the renderer does not implement the shader.
+    lua.globals().set(
+        "initLuaShader",
+        lua.create_function(|_lua, (_name, _glsl_version): (String, Option<i32>)| Ok(true))?,
+    )?;
+    lua.globals().set(
+        "setSpriteShader",
+        lua.create_function(|lua, (tag, shader): (String, String)| {
+            let g = lua.globals();
+            if let Ok(sprite_data) = g.get::<LuaTable>("__sprite_data") {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.as_str()) {
+                    tbl.set("shader", shader.clone()).ok();
+                }
+            }
+            let vars: LuaTable = g.get("__custom_vars")?;
+            vars.set(format!("{tag}.shader"), shader)?;
+            Ok(true)
+        })?,
+    )?;
+    register_shader_scalar(lua, "Float")?;
+    register_shader_scalar(lua, "Int")?;
+    register_shader_bool(lua)?;
+
+    lua.globals().set(
+        "removeLuaScript",
+        lua.create_function(|lua, name: String| {
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let entry = lua.create_table()?;
+            entry.set("type", "remove_script")?;
+            entry.set("script_name", name)?;
+            let len = pending.len()? + 1;
+            pending.set(len, entry)?;
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "callScript",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            let mut args = args.into_iter();
+            let target = lua_value_to_string(args.next()).unwrap_or_default();
+            let function = lua_value_to_string(args.next()).unwrap_or_default();
+            if target.is_empty() || function.is_empty() {
+                return Ok(LuaNil);
+            }
+            let call_args = lua_call_args_to_vec(args.next())?;
+            queue_script_call(lua, Some(&target), &function, call_args)?;
+            Ok(LuaNil)
+        })?,
+    )?;
+    lua.globals().set(
+        "callOnLuas",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            let mut args = args.into_iter();
+            let function = lua_value_to_string(args.next()).unwrap_or_default();
+            if function.is_empty() {
+                return Ok(LuaNil);
+            }
+            let call_args = lua_call_args_to_vec(args.next())?;
+            queue_script_call(lua, None, &function, call_args)?;
+            Ok(LuaNil)
+        })?,
+    )?;
+    lua.globals().set(
+        "callOnScripts",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            let mut args = args.into_iter();
+            let function = lua_value_to_string(args.next()).unwrap_or_default();
+            if function.is_empty() {
+                return Ok(LuaNil);
+            }
+            let call_args = lua_call_args_to_vec(args.next())?;
+            queue_script_call(lua, None, &function, call_args)?;
+            Ok(LuaNil)
+        })?,
+    )?;
+    lua.globals().set(
+        "isRunning",
+        lua.create_function(|lua, target: String| -> LuaResult<bool> {
+            let running: LuaTable = lua.globals().get("__running_scripts")?;
+            let len = running.len()?;
+            for i in 1..=len {
+                if let Ok(script) = running.get::<String>(i) {
+                    if lua_script_target_matches(&script, &target) {
+                        return Ok(true);
+                    }
+                }
+            }
+            Ok(false)
+        })?,
+    )?;
+    lua.globals().set(
+        "getRunningScripts",
+        lua.create_function(|lua, ()| -> LuaResult<LuaTable> {
+            lua.globals().get("__running_scripts")
+        })?,
+    )?;
+
     // startVideo(filename, callback) — queue mid-song video playback
     // Pauses gameplay, plays video, then resumes on finish
     lua.globals().set(
@@ -3644,6 +3820,286 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
 }
 
 // === Helpers ===
+
+fn lua_value_to_save(value: &LuaValue) -> SaveValue {
+    match value {
+        LuaValue::Nil => SaveValue::Nil,
+        LuaValue::Boolean(v) => SaveValue::Bool(*v),
+        LuaValue::Integer(v) => SaveValue::Int(*v),
+        LuaValue::Number(v) => SaveValue::Float(*v),
+        LuaValue::String(v) => SaveValue::String(v.to_string_lossy().to_string()),
+        LuaValue::Table(t) => {
+            let len = t.len().unwrap_or(0);
+            let mut values = Vec::new();
+            for i in 1..=len {
+                values.push(
+                    t.get::<LuaValue>(i)
+                        .map(|v| lua_value_to_save(&v))
+                        .unwrap_or(SaveValue::Nil),
+                );
+            }
+            SaveValue::Array(values)
+        }
+        _ => SaveValue::Nil,
+    }
+}
+
+fn save_value_to_lua(lua: &Lua, value: &SaveValue) -> LuaResult<LuaValue> {
+    match value {
+        SaveValue::Nil => Ok(LuaValue::Nil),
+        SaveValue::Bool(v) => Ok(LuaValue::Boolean(*v)),
+        SaveValue::Int(v) => Ok(LuaValue::Integer(*v)),
+        SaveValue::Float(v) => Ok(LuaValue::Number(*v)),
+        SaveValue::String(v) => Ok(LuaValue::String(lua.create_string(v)?)),
+        SaveValue::Array(values) => {
+            let tbl = lua.create_table()?;
+            for (i, item) in values.iter().enumerate() {
+                tbl.set(i + 1, save_value_to_lua(lua, item)?)?;
+            }
+            Ok(LuaValue::Table(tbl))
+        }
+    }
+}
+
+fn lua_value_to_string(value: Option<LuaValue>) -> Option<String> {
+    match value? {
+        LuaValue::String(s) => Some(s.to_string_lossy().to_string()),
+        LuaValue::Integer(i) => Some(i.to_string()),
+        LuaValue::Number(n) => Some(format!("{n}")),
+        LuaValue::Boolean(b) => Some(b.to_string()),
+        LuaValue::Nil => None,
+        other => Some(format!("{:?}", other)),
+    }
+}
+
+fn find_rooted_file(lua: &Lua, relative: &str) -> Option<std::path::PathBuf> {
+    let rel = relative.replace('\\', "/");
+    if rel.starts_with('/') || rel.contains("../") || rel == ".." {
+        return None;
+    }
+    let roots: LuaTable = lua.globals().get("__image_roots").ok()?;
+    let len = roots.len().ok()?;
+    for i in 1..=len {
+        let root: String = roots.get(i).ok()?;
+        let root = std::path::PathBuf::from(root);
+        for candidate in [
+            root.join(&rel),
+            root.join(rel.trim_start_matches("assets/")),
+            root.join("assets").join(&rel),
+        ] {
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn lua_call_args_to_vec(value: Option<LuaValue>) -> LuaResult<Vec<LuaValue>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    match value {
+        LuaValue::Nil => Ok(Vec::new()),
+        LuaValue::Table(tbl) => {
+            let len = tbl.len()?;
+            let mut args = Vec::with_capacity(len as usize);
+            for i in 1..=len {
+                args.push(tbl.get::<LuaValue>(i)?);
+            }
+            Ok(args)
+        }
+        value => Ok(vec![value]),
+    }
+}
+
+fn queue_script_call(
+    lua: &Lua,
+    target: Option<&str>,
+    function: &str,
+    args: Vec<LuaValue>,
+) -> LuaResult<()> {
+    let pending: LuaTable = lua.globals().get("__pending_props")?;
+    let entry = lua.create_table()?;
+    entry.set(
+        "type",
+        if target.is_some() {
+            "call_script"
+        } else {
+            "call_luas"
+        },
+    )?;
+    if let Some(target) = target {
+        entry.set("target", target)?;
+    }
+    entry.set("function", function)?;
+    let args_table = lua.create_table()?;
+    for (i, arg) in args.into_iter().enumerate() {
+        args_table.set(i + 1, arg)?;
+    }
+    entry.set("args", args_table)?;
+    let len = pending.len()? + 1;
+    pending.set(len, entry)?;
+    Ok(())
+}
+
+fn lua_script_target_matches(script: &str, target: &str) -> bool {
+    fn normalize(value: &str) -> String {
+        value
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .trim_end_matches(".lua")
+            .trim_end_matches(".hx")
+            .to_ascii_lowercase()
+    }
+
+    let script = normalize(script);
+    let target = normalize(target);
+    !target.is_empty() && (script == target || script.ends_with(&format!("/{target}")))
+}
+
+fn parse_haxe_call_on_luas(lua: &Lua, code: &str) -> LuaResult<Option<(String, Vec<LuaValue>)>> {
+    let Some(call_start) = code.find("callOnLuas(") else {
+        return Ok(None);
+    };
+    let args_start = call_start + "callOnLuas(".len();
+    let call = &code[args_start..];
+    let Some(func_quote) = call.find(['\'', '"']) else {
+        return Ok(None);
+    };
+    let quote = call.as_bytes()[func_quote] as char;
+    let func_rest = &call[func_quote + 1..];
+    let Some(func_end) = func_rest.find(quote) else {
+        return Ok(None);
+    };
+    let function = func_rest[..func_end].to_string();
+
+    let after_func = &func_rest[func_end + 1..];
+    let Some(bracket_start) = after_func.find('[') else {
+        return Ok(None);
+    };
+    let args_rest = &after_func[bracket_start + 1..];
+    let Some(bracket_end) = args_rest.find(']') else {
+        return Ok(None);
+    };
+    let args = parse_haxe_array_args(lua, &args_rest[..bracket_end])?;
+    Ok(Some((function, args)))
+}
+
+fn parse_haxe_array_args(lua: &Lua, args: &str) -> LuaResult<Vec<LuaValue>> {
+    let mut values = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    for ch in args.chars() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => {
+                quote = None;
+                current.push(ch);
+            }
+            (Some(_), c) => current.push(c),
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            (None, ',') => {
+                values.push(parse_haxe_arg(lua, current.trim())?);
+                current.clear();
+            }
+            (None, c) => current.push(c),
+        }
+    }
+    if !current.trim().is_empty() {
+        values.push(parse_haxe_arg(lua, current.trim())?);
+    }
+    Ok(values)
+}
+
+fn parse_haxe_arg(lua: &Lua, arg: &str) -> LuaResult<LuaValue> {
+    let arg = arg.trim();
+    if arg.is_empty() || arg.eq_ignore_ascii_case("null") {
+        return Ok(LuaValue::Nil);
+    }
+    if let Some(inner) = arg.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        return Ok(LuaValue::String(lua.create_string(inner)?));
+    }
+    if let Some(inner) = arg.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        return Ok(LuaValue::String(lua.create_string(inner)?));
+    }
+    if arg.eq_ignore_ascii_case("true") {
+        return Ok(LuaValue::Boolean(true));
+    }
+    if arg.eq_ignore_ascii_case("false") {
+        return Ok(LuaValue::Boolean(false));
+    }
+    if let Ok(value) = arg.parse::<i64>() {
+        return Ok(LuaValue::Integer(value));
+    }
+    if let Ok(value) = arg.parse::<f64>() {
+        return Ok(LuaValue::Number(value));
+    }
+    Ok(LuaValue::String(lua.create_string(arg)?))
+}
+
+fn register_shader_scalar(lua: &Lua, kind: &str) -> LuaResult<()> {
+    let set_name = format!("setShader{kind}");
+    let is_int = kind == "Int";
+    lua.globals().set(
+        set_name,
+        lua.create_function(|lua, (target, field, value): (String, String, LuaValue)| {
+            let shaders: LuaTable = lua.globals().get("__shader_data")?;
+            shaders.set(shader_key(&target, &field), value)?;
+            Ok(())
+        })?,
+    )?;
+
+    let get_name = format!("getShader{kind}");
+    lua.globals().set(
+        get_name,
+        lua.create_function(
+            move |lua, (target, field): (String, String)| -> LuaResult<LuaValue> {
+                let shaders: LuaTable = lua.globals().get("__shader_data")?;
+                if let Ok(value) = shaders.get::<LuaValue>(shader_key(&target, &field)) {
+                    if value != LuaValue::Nil {
+                        return Ok(value);
+                    }
+                }
+                if is_int {
+                    Ok(LuaValue::Integer(0))
+                } else {
+                    Ok(LuaValue::Number(0.0))
+                }
+            },
+        )?,
+    )?;
+    Ok(())
+}
+
+fn register_shader_bool(lua: &Lua) -> LuaResult<()> {
+    lua.globals().set(
+        "setShaderBool",
+        lua.create_function(|lua, (target, field, value): (String, String, bool)| {
+            let shaders: LuaTable = lua.globals().get("__shader_data")?;
+            shaders.set(shader_key(&target, &field), value)?;
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "getShaderBool",
+        lua.create_function(
+            |lua, (target, field): (String, String)| -> LuaResult<bool> {
+                let shaders: LuaTable = lua.globals().get("__shader_data")?;
+                Ok(shaders
+                    .get::<bool>(shader_key(&target, &field))
+                    .unwrap_or(false))
+            },
+        )?,
+    )?;
+    Ok(())
+}
+
+fn shader_key(target: &str, field: &str) -> String {
+    format!("{target}.{field}")
+}
 
 /// Parse a hex color string to (r, g, b, a) as 0..1 floats.
 fn parse_hex_rgba(hex: &str) -> (f32, f32, f32, f32) {

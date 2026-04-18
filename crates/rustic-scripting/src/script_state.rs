@@ -36,6 +36,14 @@ pub enum AudioRequest {
     SetMusicTime(f64),
 }
 
+/// A queued Psych `callScript` / `callOnLuas` request.
+#[derive(Debug, Clone)]
+pub struct ScriptCallRequest {
+    pub target: Option<String>,
+    pub function: String,
+    pub args: Vec<LuaValue>,
+}
+
 /// Shared mutable state accessible from Lua scripts.
 /// This is the bridge between Lua and the Rust game engine.
 pub struct ScriptState {
@@ -196,6 +204,9 @@ pub struct ScriptState {
     pub video_requests: Vec<(String, Option<String>, bool)>,
 
     pub script_load_requests: Vec<String>,
+    pub script_remove_requests: Vec<String>,
+    pub script_call_requests: Vec<ScriptCallRequest>,
+    pub running_scripts: Vec<String>,
 
     /// Pending audio control requests from Lua.
     pub audio_requests: Vec<AudioRequest>,
@@ -461,6 +472,9 @@ impl ScriptState {
             note_type_registrations: Vec::new(),
             video_requests: Vec::new(),
             script_load_requests: Vec::new(),
+            script_remove_requests: Vec::new(),
+            script_call_requests: Vec::new(),
+            running_scripts: Vec::new(),
             audio_requests: Vec::new(),
             downscroll: false,
         }

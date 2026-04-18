@@ -7,7 +7,8 @@ pub mod tweens;
 pub use hscript_engine::HScriptEngine;
 pub use lua_engine::LuaScript;
 pub use script_state::{
-    AudioRequest, LuaSprite, LuaSpriteKind, LuaValue, NoteTypeRegistration, ScriptState, StrumProps,
+    AudioRequest, LuaSprite, LuaSpriteKind, LuaValue, NoteTypeRegistration, ScriptCallRequest,
+    ScriptState, StrumProps,
 };
 pub use tweens::{EaseFunc, LuaTimer, Tween, TweenManager, TweenProperty};
 
@@ -86,6 +87,7 @@ impl ScriptManager {
                 Ok(engine) => {
                     log::info!("Loaded HScript: {:?}", path);
                     self.scripts.push(Script::HScript(engine));
+                    self.refresh_running_scripts();
                 }
                 Err(e) => {
                     log::error!("Failed to load HScript {:?}: {}", path, e);
@@ -96,6 +98,7 @@ impl ScriptManager {
                 Ok(script) => {
                     log::info!("Loaded Lua script: {:?}", path);
                     self.scripts.push(Script::Lua(script));
+                    self.refresh_running_scripts();
                 }
                 Err(e) => {
                     log::error!("Failed to load Lua script {:?}: {}", path, e);
@@ -106,6 +109,7 @@ impl ScriptManager {
 
     /// Call a named callback on all scripts with no arguments.
     pub fn call(&mut self, callback: &str) {
+        self.refresh_running_scripts();
         for script in &mut self.scripts {
             let result = match script {
                 Script::Lua(s) => s.call_callback(callback, &mut self.state, &[]),
@@ -115,10 +119,12 @@ impl ScriptManager {
                 log::error!("callback '{}' error: {}", callback, e);
             }
         }
+        self.process_script_control_requests();
     }
 
     /// Call a named callback on all scripts, passing `elapsed` (dt) as the first arg.
     pub fn call_with_elapsed(&mut self, callback: &str, elapsed: f64) {
+        self.refresh_running_scripts();
         for script in &mut self.scripts {
             let result = match script {
                 Script::Lua(s) => s.call_callback(callback, &mut self.state, &[elapsed]),
@@ -128,6 +134,7 @@ impl ScriptManager {
                 log::error!("callback '{}' error: {}", callback, e);
             }
         }
+        self.process_script_control_requests();
     }
 
     /// Call a note-hit callback with Psych Engine's standard arguments.
@@ -140,6 +147,7 @@ impl ScriptManager {
         note_type: &str,
         is_sustain: bool,
     ) {
+        self.refresh_running_scripts();
         for script in &mut self.scripts {
             let result = match script {
                 Script::Lua(s) => s.call_note_callback(
@@ -163,6 +171,7 @@ impl ScriptManager {
                 log::error!("callback '{}' error: {}", callback, e);
             }
         }
+        self.process_script_control_requests();
     }
 
     /// Call a callback that receives the current beat number.
@@ -179,6 +188,7 @@ impl ScriptManager {
 
     /// Update tweens/timers and fire completion callbacks.
     pub fn update_tweens(&mut self, dt: f32) {
+        self.refresh_running_scripts();
         self.state.tweens.update(dt);
 
         // Apply tween values to sprites and strums
@@ -286,6 +296,7 @@ impl ScriptManager {
                 }
             }
         }
+        self.process_script_control_requests();
     }
 
     pub fn has_scripts(&self) -> bool {
@@ -339,6 +350,7 @@ impl ScriptManager {
 
     /// Call onEvent(name, value1, value2) on all scripts.
     pub fn call_event(&mut self, name: &str, value1: &str, value2: &str) {
+        self.refresh_running_scripts();
         for script in &mut self.scripts {
             let result = match script {
                 Script::Lua(s) => {
@@ -352,12 +364,14 @@ impl ScriptManager {
                 log::error!("onEvent error: {}", e);
             }
         }
+        self.process_script_control_requests();
     }
 
     /// Call a named function with a single string argument across all scripts.
     /// Used by the "Wildcard" event type (VS Retrospecter) to invoke arbitrary
     /// script functions by name.
     pub fn call_lua_function(&mut self, func_name: &str, arg: &str) {
+        self.refresh_running_scripts();
         for script in &mut self.scripts {
             let result = match script {
                 Script::Lua(s) => s.call_callback_str(func_name, &mut self.state, &[arg]),
@@ -367,11 +381,90 @@ impl ScriptManager {
                 log::warn!("Wildcard {}({}): {}", func_name, arg, e);
             }
         }
+        self.process_script_control_requests();
+    }
+
+    fn process_script_control_requests(&mut self) {
+        loop {
+            let removes: Vec<String> = self.state.script_remove_requests.drain(..).collect();
+            if !removes.is_empty() {
+                self.scripts.retain_mut(|script| match script {
+                    Script::Lua(s) => !removes.iter().any(|target| s.matches_target(target)),
+                    Script::HScript(_) => true,
+                });
+                self.refresh_running_scripts();
+            }
+
+            let requests: Vec<ScriptCallRequest> =
+                self.state.script_call_requests.drain(..).collect();
+            if requests.is_empty() {
+                break;
+            }
+
+            for request in requests {
+                for script in &mut self.scripts {
+                    let should_call = match &request.target {
+                        Some(target) => match script {
+                            Script::Lua(s) => s.matches_target(target),
+                            Script::HScript(_) => false,
+                        },
+                        None => true,
+                    };
+                    if !should_call {
+                        continue;
+                    }
+
+                    let result = match script {
+                        Script::Lua(s) => s.call_callback_values(
+                            &request.function,
+                            &mut self.state,
+                            &request.args,
+                        ),
+                        Script::HScript(s) => {
+                            if request.target.is_some() {
+                                Ok(())
+                            } else {
+                                let args: Vec<String> =
+                                    request.args.iter().map(lua_value_to_arg_string).collect();
+                                let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                                s.call_callback_str(&request.function, &mut self.state, &refs)
+                            }
+                        }
+                    };
+
+                    if let Err(e) = result {
+                        log::warn!("script call {}: {}", request.function, e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn refresh_running_scripts(&mut self) {
+        self.state.running_scripts = self
+            .scripts
+            .iter()
+            .filter_map(|script| match script {
+                Script::Lua(s) => Some(s.source_name()),
+                Script::HScript(_) => None,
+            })
+            .collect();
     }
 }
 
 impl Default for ScriptManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn lua_value_to_arg_string(value: &LuaValue) -> String {
+    match value {
+        LuaValue::Nil => String::new(),
+        LuaValue::Bool(v) => v.to_string(),
+        LuaValue::Int(v) => v.to_string(),
+        LuaValue::Float(v) => v.to_string(),
+        LuaValue::String(v) => v.clone(),
+        LuaValue::Array(_) => String::new(),
     }
 }
