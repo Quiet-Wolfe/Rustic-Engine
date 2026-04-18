@@ -3,6 +3,10 @@ use rustic_render::health_icon::IconState;
 
 use super::super::{FreeplayScreen, DIFFICULTIES, GAME_H, GAME_W};
 use super::freeplay_funkin_assets::{CAPSULE_SELECTED, CAPSULE_UNSELECTED};
+use super::freeplay_funkin_layout::{
+    capsule_x, draw_backing_text_flow, draw_difficulty_dots, draw_transition_wedge,
+    stable_capsule_frame, truncate_for_capsule,
+};
 use super::{CUTOUT_W, DJ_X, DJ_Y};
 
 impl FreeplayScreen {
@@ -26,6 +30,12 @@ impl FreeplayScreen {
         let intro = self.funkin_ui.intro_amount();
         let confirm = self.funkin_ui.confirm_amount();
         let card_x = -CUTOUT_W * (1.0 - intro);
+        let card_color = [
+            1.0 - confirm * 0.72,
+            0.85 - confirm * 0.74,
+            0.39 - confirm * 0.21,
+            1.0,
+        ];
         gpu.push_colored_quad(
             0.0,
             0.0,
@@ -34,12 +44,6 @@ impl FreeplayScreen {
             [c[0] * 0.35, c[1] * 0.35, c[2] * 0.35, 1.0],
         );
         if let Some(pink) = &self.funkin_ui.pink_back {
-            let card_color = [
-                1.0 - confirm * 0.72,
-                0.85 - confirm * 0.74,
-                0.39 - confirm * 0.21,
-                1.0,
-            ];
             gpu.push_texture_region(
                 pink.width as f32,
                 pink.height as f32,
@@ -55,11 +59,12 @@ impl FreeplayScreen {
                 card_color,
             );
         } else {
-            gpu.push_colored_quad(card_x, 0.0, CUTOUT_W, GAME_H, [1.0, 0.85, 0.39, 1.0]);
+            gpu.push_colored_quad(card_x, 0.0, CUTOUT_W, GAME_H, card_color);
         }
-        gpu.push_colored_quad(card_x + 84.0, 440.0, CUTOUT_W, 75.0, [1.0, 0.85, 0.0, 1.0]);
-        gpu.push_colored_quad(card_x, 440.0, 100.0, 75.0, [1.0, 0.83, 0.0, 1.0]);
+        gpu.push_colored_quad(card_x + 84.0, 440.0, CUTOUT_W, 75.0, card_color);
+        gpu.push_colored_quad(card_x, 440.0, 100.0, 75.0, card_color);
         gpu.draw_batch(None);
+        draw_backing_text_flow(gpu, self.funkin_ui.capsule_frame, intro);
 
         if let Some(bg) = &self.funkin_ui.background {
             let scale = (GAME_H / bg.height as f32).max((GAME_W * 0.55) / bg.width as f32);
@@ -107,6 +112,7 @@ impl FreeplayScreen {
             );
             gpu.draw_batch(Some(bg));
         }
+        draw_transition_wedge(gpu, CUTOUT_W, intro);
 
         if let Some(glow) = &self.funkin_ui.card_glow {
             let alpha = ((1.0 - intro) * 0.7 + confirm * 0.65).clamp(0.0, 0.7);
@@ -312,6 +318,8 @@ impl FreeplayScreen {
         gpu.draw_batch(None);
 
         let diff = DIFFICULTIES[self.cur_difficulty];
+        let diff_x = 118.0;
+        let diff_y = 104.0 - 64.0 * (1.0 - hud);
         if let Some(tex) = self.funkin_ui.difficulty_texture(diff) {
             let scale = 0.74;
             let w = tex.width as f32 * scale;
@@ -323,8 +331,8 @@ impl FreeplayScreen {
                 0.0,
                 tex.width as f32,
                 tex.height as f32,
-                66.0,
-                58.0 - 90.0 * (1.0 - hud),
+                diff_x,
+                diff_y,
                 w,
                 h,
                 false,
@@ -334,12 +342,13 @@ impl FreeplayScreen {
         } else {
             gpu.draw_text(
                 &format!("< {} >", diff.to_uppercase()),
-                116.0,
-                42.0,
+                diff_x,
+                diff_y,
                 30.0,
                 [1.0, 1.0, 1.0, 1.0],
             );
         }
+        self.draw_difficulty_arrows(gpu, diff_y, hud);
 
         gpu.draw_text(
             "FREEPLAY",
@@ -420,7 +429,37 @@ impl FreeplayScreen {
             );
         }
 
-        draw_difficulty_dots(gpu, self.cur_difficulty, DIFFICULTIES.len(), hud);
+        draw_difficulty_dots(
+            gpu,
+            self.funkin_ui.difficulty_dot.as_ref(),
+            self.cur_difficulty,
+            DIFFICULTIES.len(),
+            hud,
+        );
+    }
+
+    fn draw_difficulty_arrows(&self, gpu: &mut GpuState, diff_y: f32, alpha: f32) {
+        if let Some(selector) = &self.funkin_ui.selector {
+            let idx = self.funkin_ui.capsule_frame % selector.atlas.frame_count("shine").max(1);
+            if let Some(frame) = selector.atlas.get_frame("shine", idx) {
+                for (x, flip) in [(58.0, false), (422.0, true)] {
+                    gpu.draw_sprite_frame(
+                        frame,
+                        selector.texture.width as f32,
+                        selector.texture.height as f32,
+                        x,
+                        diff_y - 8.0,
+                        0.55,
+                        flip,
+                        [1.0, 1.0, 1.0, alpha],
+                    );
+                }
+                gpu.draw_batch(Some(&selector.texture));
+            }
+        } else {
+            gpu.draw_text("<", 70.0, diff_y + 8.0, 34.0, [1.0, 1.0, 1.0, alpha]);
+            gpu.draw_text(">", 430.0, diff_y + 8.0, 34.0, [1.0, 1.0, 1.0, alpha]);
+        }
     }
 
     fn draw_funkin_overlays(&mut self, gpu: &mut GpuState) {
@@ -450,44 +489,4 @@ impl FreeplayScreen {
             reset_modal.draw(gpu);
         }
     }
-}
-
-fn draw_difficulty_dots(gpu: &mut GpuState, selected: usize, count: usize, alpha: f32) {
-    let start_x = 96.0;
-    let y = 162.0;
-    for i in 0..count {
-        let active = i == selected;
-        let size = if active { 16.0 } else { 10.0 };
-        let offset = if active { 0.0 } else { 3.0 };
-        gpu.push_colored_quad(
-            start_x + i as f32 * 26.0,
-            y + offset,
-            size,
-            size,
-            if active {
-                [1.0, 1.0, 1.0, alpha]
-            } else {
-                [0.0, 0.0, 0.0, 0.55 * alpha]
-            },
-        );
-    }
-    gpu.draw_batch(None);
-}
-
-fn capsule_x(capsule_index: f32, intro: f32) -> f32 {
-    270.0 + 45.0 * capsule_index.sin() + GAME_W * (1.0 - intro)
-}
-
-fn stable_capsule_frame(atlas: &rustic_render::sprites::SpriteAtlas, anim: &str) -> usize {
-    atlas.frame_count(anim).saturating_sub(1).min(4)
-}
-
-fn truncate_for_capsule(name: &str) -> String {
-    const MAX: usize = 23;
-    if name.chars().count() <= MAX {
-        return name.to_string();
-    }
-    let mut out: String = name.chars().take(MAX.saturating_sub(1)).collect();
-    out.push_str("...");
-    out
 }

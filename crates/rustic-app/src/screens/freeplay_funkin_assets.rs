@@ -34,6 +34,27 @@ impl CapsuleAsset {
     }
 }
 
+pub(super) struct SelectorAsset {
+    pub(super) texture: GpuTexture,
+    pub(super) atlas: SpriteAtlas,
+}
+
+impl SelectorAsset {
+    pub(super) fn load(gpu: &GpuState, paths: &AssetPaths) -> Option<Self> {
+        let png = find_funkin_asset(paths, "freeplay/freeplaySelector/freeplaySelector.png")
+            .or_else(|| find_funkin_asset(paths, "freeplay/freeplaySelector.png"))?;
+        let xml = find_funkin_asset(paths, "freeplay/freeplaySelector/freeplaySelector.xml")
+            .or_else(|| find_funkin_asset(paths, "freeplay/freeplaySelector.xml"))?;
+        let xml_data = std::fs::read_to_string(xml).ok()?;
+        let mut atlas = SpriteAtlas::from_xml(&xml_data);
+        atlas.add_by_prefix("shine", "arrow pointer loop");
+        Some(Self {
+            texture: gpu.load_texture_from_path(&png),
+            atlas,
+        })
+    }
+}
+
 pub(super) struct FreeplayDj {
     texture: GpuTexture,
     animate: FlxAnimate,

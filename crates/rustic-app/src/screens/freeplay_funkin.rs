@@ -2,6 +2,8 @@
 mod freeplay_funkin_assets;
 #[path = "freeplay_funkin_draw.rs"]
 mod freeplay_funkin_draw;
+#[path = "freeplay_funkin_layout.rs"]
+mod freeplay_funkin_layout;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use rustic_render::sprites::SpriteAtlas;
 use serde_json::Value;
 
 use self::freeplay_funkin_assets::{
-    find_funkin_asset, find_funkin_music, CapsuleAsset, FreeplayDj,
+    find_funkin_asset, find_funkin_music, CapsuleAsset, FreeplayDj, SelectorAsset,
 };
 use super::{FreeplayScreen, GAME_W};
 
@@ -29,6 +31,8 @@ pub(super) struct FunkinFreeplayUi {
     glowing_text: Option<GpuTexture>,
     highscore: Option<GpuTexture>,
     clear_box: Option<GpuTexture>,
+    difficulty_dot: Option<GpuTexture>,
+    selector: Option<SelectorAsset>,
     albums: HashMap<String, AlbumAsset>,
     song_albums: HashMap<String, String>,
     current_album: Option<String>,
@@ -52,6 +56,8 @@ impl FunkinFreeplayUi {
             glowing_text: None,
             highscore: None,
             clear_box: None,
+            difficulty_dot: None,
+            selector: None,
             albums: HashMap::new(),
             song_albums: HashMap::new(),
             current_album: None,
@@ -88,6 +94,15 @@ impl FunkinFreeplayUi {
         );
         load_optional_texture(gpu, paths, &mut self.highscore, "freeplay/highscore.png");
         load_optional_texture(gpu, paths, &mut self.clear_box, "freeplay/clearBox.png");
+        load_optional_texture(
+            gpu,
+            paths,
+            &mut self.difficulty_dot,
+            "freeplay/seperator.png",
+        );
+        if self.selector.is_none() {
+            self.selector = SelectorAsset::load(gpu, paths);
+        }
         if self.albums.is_empty() {
             load_album_assets(gpu, paths, &mut self.albums);
             self.song_albums = load_song_album_map(paths);
