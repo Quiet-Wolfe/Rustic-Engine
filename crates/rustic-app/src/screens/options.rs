@@ -3,6 +3,8 @@ use winit::keyboard::KeyCode;
 use rustic_core::prefs::Preferences;
 use rustic_render::gpu::GpuState;
 
+use crate::screen::Screen;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionsCategory {
     Gameplay,
@@ -35,6 +37,54 @@ pub struct OptionsMenuState {
     pub calibrating: bool,
     pub calibration_timer: f32,
     pub calibration_samples: Vec<i32>,
+}
+
+pub struct OptionsScreen {
+    menu: OptionsMenuState,
+    next: Option<Box<dyn Screen>>,
+}
+
+impl OptionsScreen {
+    pub fn new() -> Self {
+        Self {
+            menu: OptionsMenuState::load(),
+            next: None,
+        }
+    }
+}
+
+impl Screen for OptionsScreen {
+    fn init(&mut self, _gpu: &GpuState) {}
+
+    fn handle_key(&mut self, key: KeyCode) {
+        if key == KeyCode::Escape
+            && !self.menu.calibrating
+            && self.menu.waiting_for_rebind.is_none()
+        {
+            self.menu.save();
+            self.next = Some(Box::new(super::main_menu::MainMenuScreen::new()));
+            return;
+        }
+        let _ = handle_input(&mut self.menu, key);
+    }
+
+    fn update(&mut self, dt: f32) {
+        update(&mut self.menu, dt);
+    }
+
+    fn draw(&mut self, gpu: &mut GpuState) {
+        if !gpu.begin_frame() {
+            return;
+        }
+        gpu.push_colored_quad(0.0, 0.0, 1280.0, 720.0, [0.04, 0.05, 0.07, 1.0]);
+        gpu.draw_batch(None);
+        self.menu.draw(gpu);
+        crate::debug_overlay::finish_frame(gpu);
+    }
+
+    fn next_screen(&mut self) -> Option<Box<dyn Screen>> {
+        self.next.take()
+    }
 }
 
 impl OptionsMenuState {
