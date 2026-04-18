@@ -18,8 +18,8 @@ use self::freeplay_funkin_assets::{
 use super::{FreeplayScreen, GAME_W};
 
 pub(super) const CUTOUT_W: f32 = GAME_W / 1.5;
-pub(super) const DJ_X: f32 = 590.0;
-pub(super) const DJ_Y: f32 = 260.0;
+pub(super) const DJ_X: f32 = 650.0;
+pub(super) const DJ_Y: f32 = 355.0;
 
 pub(super) struct FunkinFreeplayUi {
     background: Option<GpuTexture>,

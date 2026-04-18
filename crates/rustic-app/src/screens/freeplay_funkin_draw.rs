@@ -296,7 +296,7 @@ impl FreeplayScreen {
                 });
                 icon.draw(
                     gpu,
-                    x + 38.0,
+                    x + 18.0,
                     y + 10.0,
                     if selected { 98.0 } else { 88.0 },
                     [1.0, 1.0, 1.0, alpha],
