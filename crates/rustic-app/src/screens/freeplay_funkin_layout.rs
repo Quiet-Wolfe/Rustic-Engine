@@ -4,17 +4,28 @@ use super::super::{GAME_H, GAME_W};
 
 pub(super) fn draw_backing_text_flow(gpu: &mut GpuState, frame: usize, alpha: f32) {
     let messages = ["BIG SHOES", "YEAH", "YES YES YES", "GET IT"];
-    let drift = (frame as f32 * 0.7) % 190.0;
-    let text_left = 18.0;
-    let text_width = 595.0;
+    let drift = (frame as f32 * 0.62) % 245.0;
+    let text_left = 34.0;
+    let text_right = 500.0;
+    let spacing = 245.0;
     for row in 0..5 {
         let y = 126.0 + row as f32 * 72.0;
-        let row_drift = if row % 2 == 0 { drift } else { 190.0 - drift };
+        let row_drift = if row % 2 == 0 { drift } else { spacing - drift };
         for col in 0..4 {
             let msg = messages[(row + col) % messages.len()];
-            let wrapped = (col as f32 * 190.0 + row_drift) % text_width;
-            let x = text_left + wrapped;
-            gpu.draw_text(msg, x, y, 38.0, [1.0, 0.73, 0.04, 0.18 * alpha]);
+            let size = if msg == "YES YES YES" { 27.0 } else { 31.0 };
+            let width = estimate_text_width(msg, size);
+            let x = text_left - spacing + col as f32 * spacing + row_drift;
+            if x < text_left || x + width > text_right {
+                continue;
+            }
+            let color = if (row + col) % 3 == 0 {
+                [1.0, 1.0, 1.0, 0.24 * alpha]
+            } else {
+                [0.88, 0.45, 0.02, 0.28 * alpha]
+            };
+            gpu.draw_text(msg, x + 2.0, y + 2.0, size, [0.18, 0.12, 0.0, 0.18 * alpha]);
+            gpu.draw_text(msg, x, y, size, color);
         }
     }
 }
@@ -22,17 +33,21 @@ pub(super) fn draw_backing_text_flow(gpu: &mut GpuState, frame: usize, alpha: f3
 pub(super) fn draw_transition_wedge(gpu: &mut GpuState, cutout_w: f32, alpha: f32) {
     let seam_x = cutout_w * 0.74;
     let positions = [
-        [seam_x - 30.0, 0.0],
-        [seam_x + 122.0, 0.0],
-        [seam_x - 42.0, GAME_H],
-        [seam_x - 194.0, GAME_H],
+        [seam_x - 2.0, 0.0],
+        [seam_x + 150.0, 0.0],
+        [seam_x - 88.0, GAME_H],
+        [seam_x - 2.0, GAME_H],
     ];
     gpu.push_raw_quad(
         positions,
         [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-        [1.0, 0.85, 0.39, 0.92 * alpha],
+        [1.0, 0.85, 0.39, alpha],
     );
     gpu.draw_batch(None);
+}
+
+fn estimate_text_width(text: &str, size: f32) -> f32 {
+    text.chars().count() as f32 * size * 0.58
 }
 
 pub(super) fn draw_difficulty_dots(
