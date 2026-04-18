@@ -21,6 +21,7 @@ pub struct ModInfo {
     pub path: PathBuf,
     pub enabled: bool,
     pub pack_json: Option<PackJson>,
+    pub icon_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +46,11 @@ impl ModLoader {
 
     pub fn discover(base_game: PathBuf, mods_dir: PathBuf) -> Self {
         let mods_list = mods_list_path(&mods_dir);
-        let entries = scan_mods(&mods_dir);
+        let entries = if is_mod_directory(&mods_dir) {
+            vec![mod_info_from_path(&mods_dir)]
+        } else {
+            scan_mods(&mods_dir)
+        };
         let by_name: HashMap<_, _> = entries
             .into_iter()
             .map(|info| (info.name.clone(), info))
@@ -124,17 +129,24 @@ fn scan_mods(mods_dir: &Path) -> Vec<ModInfo> {
             continue;
         }
 
-        let name = entry.file_name().to_string_lossy().to_string();
-        let pack_json = read_pack_json(&path);
-        mods.push(ModInfo {
-            name,
-            path,
-            enabled: true,
-            pack_json,
-        });
+        mods.push(mod_info_from_path(&path));
     }
     mods.sort_by(|a, b| a.name.cmp(&b.name));
     mods
+}
+
+fn mod_info_from_path(path: &Path) -> ModInfo {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "mod".to_string());
+    ModInfo {
+        name,
+        path: path.to_path_buf(),
+        enabled: true,
+        pack_json: read_pack_json(path),
+        icon_path: find_mod_icon(path),
+    }
 }
 
 fn parse_mods_list(path: &Path) -> Vec<(String, bool)> {
@@ -154,7 +166,10 @@ fn parse_mods_list(path: &Path) -> Vec<(String, bool)> {
             if name.is_empty() {
                 return None;
             }
-            let enabled = parts.next().map(|value| value.trim() == "1").unwrap_or(true);
+            let enabled = parts
+                .next()
+                .map(|value| value.trim() == "1")
+                .unwrap_or(true);
             Some((name.to_string(), enabled))
         })
         .collect()
@@ -174,7 +189,10 @@ fn is_mod_directory(path: &Path) -> bool {
 }
 
 fn read_pack_json(mod_path: &Path) -> Option<PackJson> {
-    let candidates = [mod_path.join("pack.json"), mod_path.join("assets").join("pack.json")];
+    let candidates = [
+        mod_path.join("pack.json"),
+        mod_path.join("assets").join("pack.json"),
+    ];
     for candidate in candidates {
         let Ok(contents) = fs::read_to_string(&candidate) else {
             continue;
@@ -184,6 +202,21 @@ fn read_pack_json(mod_path: &Path) -> Option<PackJson> {
         }
     }
     None
+}
+
+fn find_mod_icon(mod_path: &Path) -> Option<PathBuf> {
+    [
+        mod_path.join("icon.png"),
+        mod_path.join("icon.ico"),
+        mod_path.join("pack.png"),
+        mod_path.join("pack.ico"),
+        mod_path.join("assets").join("icon.png"),
+        mod_path.join("assets").join("icon.ico"),
+        mod_path.join("assets").join("pack.png"),
+        mod_path.join("assets").join("pack.ico"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 fn mod_asset_roots(mod_path: &Path) -> Vec<PathBuf> {

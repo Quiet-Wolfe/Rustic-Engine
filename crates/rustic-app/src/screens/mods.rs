@@ -1,11 +1,12 @@
 use std::fs;
+use std::path::PathBuf;
 
 use winit::keyboard::KeyCode;
 
 use rustic_audio::AudioEngine;
 use rustic_core::mods::ModLoader;
 use rustic_core::paths::AssetPaths;
-use rustic_render::gpu::GpuState;
+use rustic_render::gpu::{GpuState, GpuTexture};
 
 use crate::screen::Screen;
 
@@ -22,12 +23,13 @@ pub struct ModsScreen {
     next: Option<Box<dyn Screen>>,
 }
 
-#[derive(Clone)]
 struct ModEntry {
     name: String,
     description: String,
     color: [u8; 3],
     enabled: bool,
+    icon_path: Option<PathBuf>,
+    icon: Option<GpuTexture>,
 }
 
 impl ModsScreen {
@@ -125,10 +127,30 @@ impl ModsScreen {
         }
         self.needs_restart = true;
     }
+
+    fn load_icons(&mut self, gpu: &GpuState) {
+        for entry in &mut self.mods {
+            if entry.icon.is_some() {
+                continue;
+            }
+            let Some(path) = &entry.icon_path else {
+                continue;
+            };
+            let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                gpu.load_texture_from_path(path)
+            }));
+            match loaded {
+                Ok(texture) => entry.icon = Some(texture),
+                Err(_) => log::warn!("Failed to load mod icon {:?}", path),
+            }
+        }
+    }
 }
 
 impl Screen for ModsScreen {
-    fn init(&mut self, _gpu: &GpuState) {
+    fn init(&mut self, gpu: &GpuState) {
+        self.load_icons(gpu);
+
         // Audio - continue freakyMenu
         if self.audio.is_none() {
             let paths = AssetPaths::platform_default();
@@ -204,7 +226,11 @@ impl Screen for ModsScreen {
         gpu.draw_batch(None);
 
         // Title
-        let title = if self.holding { "MODS - REORDERING" } else { "MODS" };
+        let title = if self.holding {
+            "MODS - REORDERING"
+        } else {
+            "MODS"
+        };
         gpu.draw_text(title, GAME_W / 2.0 - 60.0, 30.0, 36.0, white);
 
         // Mod list panel (left side)
@@ -223,7 +249,13 @@ impl Screen for ModsScreen {
                 0
             };
 
-            for (i, entry) in self.mods.iter().enumerate().skip(start).take(visible_count + 1) {
+            for (i, entry) in self
+                .mods
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(visible_count + 1)
+            {
                 let y = 100.0 + (i - start) as f32 * 80.0;
                 let is_selected = i == self.selected;
 
@@ -245,13 +277,37 @@ impl Screen for ModsScreen {
 
                 // Mod name
                 let name_color = if is_selected {
-                    if self.holding { cyan } else { yellow }
+                    if self.holding {
+                        cyan
+                    } else {
+                        yellow
+                    }
                 } else if entry.enabled {
                     white
                 } else {
                     gray
                 };
-                gpu.draw_text(&entry.name, 110.0, y + 5.0, 22.0, name_color);
+                if let Some(icon) = &entry.icon {
+                    let icon_size = 52.0;
+                    gpu.push_texture_region(
+                        icon.width as f32,
+                        icon.height as f32,
+                        0.0,
+                        0.0,
+                        icon.width as f32,
+                        icon.height as f32,
+                        104.0,
+                        y + 6.0,
+                        icon_size,
+                        icon_size,
+                        false,
+                        [1.0, 1.0, 1.0, 1.0],
+                    );
+                    gpu.draw_batch(Some(icon));
+                    gpu.draw_text(&entry.name, 166.0, y + 5.0, 22.0, name_color);
+                } else {
+                    gpu.draw_text(&entry.name, 110.0, y + 5.0, 22.0, name_color);
+                }
 
                 // Priority number
                 let priority = format!("#{}", i + 1);
@@ -290,8 +346,20 @@ impl Screen for ModsScreen {
             gpu.draw_text("ENTER/ESC - Stop reordering", 470.0, 590.0, 18.0, white);
         } else {
             gpu.draw_text("CONTROLS", 470.0, 520.0, 24.0, yellow);
-            gpu.draw_text("UP/DOWN - Select | LEFT/RIGHT - Toggle", 470.0, 555.0, 18.0, white);
-            gpu.draw_text("ENTER - Reorder mode | Q - Disable all | E - Enable all", 470.0, 585.0, 18.0, white);
+            gpu.draw_text(
+                "UP/DOWN - Select | LEFT/RIGHT - Toggle",
+                470.0,
+                555.0,
+                18.0,
+                white,
+            );
+            gpu.draw_text(
+                "ENTER - Reorder mode | Q - Disable all | E - Enable all",
+                470.0,
+                585.0,
+                18.0,
+                white,
+            );
             gpu.draw_text("ESC - Save and exit", 470.0, 615.0, 18.0, white);
         }
 
@@ -346,10 +414,11 @@ fn scan_all_mods(loader: &ModLoader) -> Vec<ModEntry> {
                 .and_then(|p| p.color)
                 .unwrap_or([102, 90, 255]),
             enabled: mod_info.enabled,
+            icon_path: mod_info.icon_path.clone(),
+            icon: None,
         });
     }
 
-    // Then add any mods found in directory but not in the list
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -357,12 +426,10 @@ fn scan_all_mods(loader: &ModLoader) -> Vec<ModEntry> {
         }
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip if already added
         if result.iter().any(|m| m.name == name) {
             continue;
         }
 
-        // Check if it's a valid mod directory
         let pack_json_path = path.join("pack.json");
         let pack_json = if pack_json_path.exists() {
             fs::read_to_string(&pack_json_path)
@@ -383,13 +450,29 @@ fn scan_all_mods(loader: &ModLoader) -> Vec<ModEntry> {
                 .and_then(|p| p.color)
                 .unwrap_or([102, 90, 255]),
             enabled: true, // New mods default to enabled
+            icon_path: find_local_mod_icon(&path),
+            icon: None,
         });
     }
 
     result
 }
 
-/// Simple word-wrap for descriptions.
+fn find_local_mod_icon(path: &std::path::Path) -> Option<PathBuf> {
+    [
+        path.join("icon.png"),
+        path.join("icon.ico"),
+        path.join("pack.png"),
+        path.join("pack.ico"),
+        path.join("assets").join("icon.png"),
+        path.join("assets").join("icon.ico"),
+        path.join("assets").join("pack.png"),
+        path.join("assets").join("pack.ico"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
 fn word_wrap(text: &str, max_chars: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current_line = String::new();
