@@ -188,3 +188,37 @@ fn hscript_atlas_animation_and_camera_assignment_survive_add() {
     assert_eq!(sprite.current_anim, "idle");
     assert!(sprite.animations.contains_key("idle"));
 }
+
+#[test]
+fn hscript_callbacks_preserve_mixed_argument_types() {
+    let src = r#"
+        function goodNoteHit(id, direction, noteType, isSustainNote) {
+            setVar("noteId", id + 1);
+            setVar("noteDirection", direction);
+            setVar("noteType", noteType);
+            setVar("noteSustain", isSustainNote);
+        }
+    "#;
+    let path = write_tmp("mixed_args.hx", src);
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&path);
+    mgr.call_note_hit("goodNoteHit", 4, 2, "Hurt Note", true);
+
+    assert!(matches!(
+        mgr.state.custom_vars.get("noteId"),
+        Some(LuaValue::Int(5))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("noteDirection"),
+        Some(LuaValue::Int(2))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("noteType"),
+        Some(LuaValue::String(s)) if s == "Hurt Note"
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("noteSustain"),
+        Some(LuaValue::Bool(true))
+    ));
+}

@@ -184,14 +184,16 @@ impl ScriptManager {
                     note_type,
                     is_sustain,
                 ),
-                Script::HScript(s) => {
-                    // HScript bridge takes numeric-only or string-only right now;
-                    // wrap as strings so mods can use them uniformly.
-                    let mi = members_index.to_string();
-                    let nd = note_data.to_string();
-                    let sus = if is_sustain { "true" } else { "false" };
-                    s.call_callback_str(callback, &mut self.state, &[&mi, &nd, note_type, sus])
-                }
+                Script::HScript(s) => s.call_callback_values(
+                    callback,
+                    &mut self.state,
+                    &[
+                        LuaValue::Int(members_index as i64),
+                        LuaValue::Int(note_data as i64),
+                        LuaValue::String(note_type.to_string()),
+                        LuaValue::Bool(is_sustain),
+                    ],
+                ),
             };
             if let Err(e) = result {
                 log::error!("callback '{}' error: {}", callback, e);
@@ -307,15 +309,15 @@ impl ScriptManager {
                         loops_done,
                         loops_left,
                     ),
-                    Script::HScript(s) => {
-                        let done = loops_done.to_string();
-                        let left = loops_left.to_string();
-                        s.call_callback_str(
-                            "onTimerCompleted",
-                            &mut self.state,
-                            &[&tag, &done, &left],
-                        )
-                    }
+                    Script::HScript(s) => s.call_callback_values(
+                        "onTimerCompleted",
+                        &mut self.state,
+                        &[
+                            LuaValue::String(tag.clone()),
+                            LuaValue::Int(loops_done as i64),
+                            LuaValue::Int(loops_left as i64),
+                        ],
+                    ),
                 };
                 if let Err(e) = result {
                     log::error!("onTimerCompleted error: {}", e);
@@ -463,12 +465,11 @@ impl ScriptManager {
                             &mut self.state,
                             &request.args,
                         ),
-                        Script::HScript(s) => {
-                            let args: Vec<String> =
-                                request.args.iter().map(lua_value_to_arg_string).collect();
-                            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                            s.call_callback_str(&request.function, &mut self.state, &refs)
-                        }
+                        Script::HScript(s) => s.call_callback_values(
+                            &request.function,
+                            &mut self.state,
+                            &request.args,
+                        ),
                     };
 
                     if let Err(e) = result {
@@ -494,16 +495,5 @@ impl ScriptManager {
 impl Default for ScriptManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn lua_value_to_arg_string(value: &LuaValue) -> String {
-    match value {
-        LuaValue::Nil => String::new(),
-        LuaValue::Bool(v) => v.to_string(),
-        LuaValue::Int(v) => v.to_string(),
-        LuaValue::Float(v) => v.to_string(),
-        LuaValue::String(v) => v.clone(),
-        LuaValue::Array(_) => String::new(),
     }
 }

@@ -97,6 +97,26 @@ impl HScriptEngine {
         Ok(())
     }
 
+    /// Call a callback with mixed typed values. This is used for Psych
+    /// callbacks like goodNoteHit(id, direction, noteType, isSustainNote).
+    pub fn call_callback_values(
+        &mut self,
+        callback: &str,
+        state: &mut ScriptState,
+        args: &[crate::script_state::LuaValue],
+    ) -> Result<(), String> {
+        if !self.interp.has_function(callback) {
+            return Ok(());
+        }
+        refresh_engine_globals(&mut self.interp, state);
+        let hargs: Vec<HValue> = args.iter().map(lua_value_to_h).collect();
+        let mut bridge = ScriptStateBridge { state };
+        self.interp
+            .call(callback, &hargs, &mut bridge)
+            .map_err(|e| format!("{}: {}: {e}", self.name, callback))?;
+        Ok(())
+    }
+
     pub fn set_global_number(&mut self, name: &str, value: f64) {
         self.interp.set_global(name, HValue::Float(value));
     }
@@ -107,5 +127,18 @@ impl HScriptEngine {
 
     pub fn set_global_bool(&mut self, name: &str, value: bool) {
         self.interp.set_global(name, HValue::Bool(value));
+    }
+}
+
+fn lua_value_to_h(value: &crate::script_state::LuaValue) -> HValue {
+    match value {
+        crate::script_state::LuaValue::Nil => HValue::Null,
+        crate::script_state::LuaValue::Bool(v) => HValue::Bool(*v),
+        crate::script_state::LuaValue::Int(v) => HValue::Int(*v),
+        crate::script_state::LuaValue::Float(v) => HValue::Float(*v),
+        crate::script_state::LuaValue::String(v) => HValue::from_str(v),
+        crate::script_state::LuaValue::Array(values) => {
+            HValue::new_array(values.iter().map(lua_value_to_h).collect())
+        }
     }
 }
