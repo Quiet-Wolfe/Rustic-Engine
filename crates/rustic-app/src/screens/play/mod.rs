@@ -1910,6 +1910,10 @@ impl PlayScreen {
             // Replace stale GPU-side state instead of keeping the old atlas forever.
             self.lua_textures.remove(&tag);
             self.lua_atlases.remove(&tag);
+            let previous_pos = self
+                .draw_order
+                .iter()
+                .position(|l| l == &DrawLayer::LuaSprite(tag.clone()));
             self.draw_order
                 .retain(|l| l != &DrawLayer::LuaSprite(tag.clone()));
 
@@ -1992,7 +1996,12 @@ impl PlayScreen {
             }
 
             self.lua_textures.insert(tag.clone(), tex);
-            if in_front {
+            if let Some(pos) = previous_pos {
+                self.draw_order.insert(
+                    pos.min(self.draw_order.len()),
+                    DrawLayer::LuaSprite(tag.clone()),
+                );
+            } else if in_front {
                 self.draw_order.push(DrawLayer::LuaSprite(tag.clone()));
             } else {
                 let mut pos = self.draw_order.len();

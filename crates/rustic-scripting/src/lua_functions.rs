@@ -943,17 +943,36 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
 
     // loadGraphic(tag, image, ?width, ?height)
     // In Psych Engine this reloads (and optionally crops) the graphic for a sprite.
-    globals.set("loadGraphic", lua.create_function(|lua, (tag, image, width, height): (String, Option<String>, Option<f64>, Option<f64>)| {
-        if let (Some(_w), Some(_h)) = (width, height) {
-            // Store crop dimensions for the sprite — the render layer will apply them
-            if let Ok(tbl) = lua.globals().get::<LuaTable>("__sprite_data")?.get::<LuaTable>(&tag as &str) {
-                tbl.set("crop_w", _w)?;
-                tbl.set("crop_h", _h)?;
-            }
-        }
-        let _ = image; // image path — actual reload handled by render layer
-        Ok(())
-    })?)?;
+    globals.set(
+        "loadGraphic",
+        lua.create_function(
+            |lua,
+             (tag, image, width, height): (
+                String,
+                Option<String>,
+                Option<f64>,
+                Option<f64>,
+            )| {
+                if let Ok(tbl) = lua
+                    .globals()
+                    .get::<LuaTable>("__sprite_data")?
+                    .get::<LuaTable>(tag.as_str())
+                {
+                    if let Some(image) = image.filter(|image| !image.is_empty()) {
+                        tbl.set("kind", "image")?;
+                        tbl.set("image", image.as_str())?;
+                        update_lua_sprite_dimensions(lua, &tbl, &image)?;
+                        queue_lua_sprite_reload(lua, &tag, false)?;
+                    }
+                    if let (Some(w), Some(h)) = (width, height) {
+                        tbl.set("crop_w", w)?;
+                        tbl.set("crop_h", h)?;
+                    }
+                }
+                Ok(())
+            },
+        )?,
+    )?;
 
     // updateHitboxFromGroup(group, index) — deprecated Psych Engine function
     // Calls updateHitbox on a member of a FlxTypedGroup (e.g. unspawnNotes[i]).
@@ -4290,6 +4309,82 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         "changePresence",
         lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> { Ok(LuaNil) })?,
     )?;
+    lua.globals().set(
+        "runHaxeCodePost",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            let func: LuaFunction = lua.globals().get("runHaxeCode")?;
+            func.call(args)
+        })?,
+    )?;
+    for name in ["createCallback", "createGlobalCallback"] {
+        lua.globals().set(
+            name,
+            lua.create_function(|lua, (name, func): (String, LuaFunction)| {
+                lua.globals().set(name, func)?;
+                Ok(true)
+            })?,
+        )?;
+    }
+    lua.globals().set(
+        "isPaused",
+        lua.create_function(|lua, ()| -> LuaResult<bool> {
+            Ok(lua.globals().get::<bool>("__is_paused").unwrap_or(false))
+        })?,
+    )?;
+    lua.globals().set(
+        "createRuntimeShader",
+        lua.create_function(|lua, name: String| -> LuaResult<LuaValue> {
+            let func: LuaFunction = lua.globals().get("initLuaShader")?;
+            let _ = func.call::<bool>(name.clone());
+            Ok(LuaValue::String(lua.create_string(&name)?))
+        })?,
+    )?;
+    lua.globals().set(
+        "addLuaSpriteSubstate",
+        lua.create_function(|lua, (tag, in_front): (String, Option<bool>)| {
+            let func: LuaFunction = lua.globals().get("addLuaSprite")?;
+            func.call::<()>((tag, in_front.or(Some(true))))
+        })?,
+    )?;
+    lua.globals().set(
+        "removeLuaSpriteSubstate",
+        lua.create_function(|lua, (tag, destroy): (String, Option<bool>)| {
+            let func: LuaFunction = lua.globals().get("removeLuaSprite")?;
+            func.call::<()>((tag, destroy))
+        })?,
+    )?;
+    lua.globals().set(
+        "addLuaTextSubstate",
+        lua.create_function(|lua, tag: String| {
+            let func: LuaFunction = lua.globals().get("addLuaText")?;
+            func.call::<()>((tag, true))
+        })?,
+    )?;
+    lua.globals().set(
+        "removeLuaTextSubstate",
+        lua.create_function(|lua, (tag, destroy): (String, Option<bool>)| {
+            let func: LuaFunction = lua.globals().get("removeLuaText")?;
+            func.call::<()>((tag, destroy))
+        })?,
+    )?;
+    lua.globals().set(
+        "insertToCustomSubstate",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let Some(tag) = multi_string(&args, 0).or_else(|| multi_string(&args, 1)) else {
+                return Ok(false);
+            };
+            if text_table(lua, &tag).is_some() {
+                let func: LuaFunction = lua.globals().get("addLuaText")?;
+                func.call::<()>((tag, true))?;
+            } else if lua_sprite_or_text_exists(lua, &tag) {
+                let func: LuaFunction = lua.globals().get("addLuaSprite")?;
+                func.call::<()>((tag, true))?;
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?,
+    )?;
 
     let noop =
         lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> { Ok(LuaNil) })?;
@@ -5276,6 +5371,33 @@ fn input_table_contains(tbl: &LuaTable, key: &str) -> bool {
         .any(|variant| tbl.get::<bool>(variant.as_str()).unwrap_or(false))
 }
 
+fn update_lua_sprite_dimensions(lua: &Lua, tbl: &LuaTable, image: &str) -> LuaResult<()> {
+    if let Some(path) = resolve_image_path(lua, image) {
+        if let Some((w, h)) = read_png_dimensions(&path) {
+            tbl.set("tex_w", w as f64)?;
+            tbl.set("tex_h", h as f64)?;
+        }
+    }
+    Ok(())
+}
+
+fn queue_lua_sprite_reload(lua: &Lua, tag: &str, in_front: bool) -> LuaResult<()> {
+    let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+    let tbl: LuaTable = sprite_data.get(tag)?;
+
+    let pending_sprites: LuaTable = lua.globals().get("__pending_sprites")?;
+    let len = pending_sprites.len()? as i64;
+    pending_sprites.set(len + 1, tbl)?;
+
+    let pending_adds: LuaTable = lua.globals().get("__pending_adds")?;
+    let add_tbl = lua.create_table()?;
+    add_tbl.set("tag", tag)?;
+    add_tbl.set("in_front", in_front)?;
+    let len = pending_adds.len()? as i64;
+    pending_adds.set(len + 1, add_tbl)?;
+    Ok(())
+}
+
 fn text_table(lua: &Lua, tag: &str) -> Option<LuaTable> {
     lua.globals()
         .get::<LuaTable>("__text_data")
@@ -5706,7 +5828,22 @@ fn register_reflection_default_functions(lua: &Lua) -> LuaResult<()> {
     )?;
     globals.set(
         "addInstance",
-        lua.create_function(|_lua, (_name, _front): (String, Option<bool>)| Ok(true))?,
+        lua.create_function(
+            |lua, (name, in_front): (String, Option<bool>)| -> LuaResult<bool> {
+                if text_table(lua, &name).is_some() {
+                    let func: LuaFunction = lua.globals().get("addLuaText")?;
+                    func.call::<()>((name, in_front))?;
+                    return Ok(true);
+                }
+                if lua_sprite_or_text_exists(lua, &name) {
+                    let func: LuaFunction = lua.globals().get("addLuaSprite")?;
+                    func.call::<()>((name, in_front))?;
+                    return Ok(true);
+                }
+                let instances: LuaTable = lua.globals().get("__instances")?;
+                Ok(instances.get::<LuaValue>(name).unwrap_or(LuaNil) != LuaNil)
+            },
+        )?,
     )?;
     globals.set(
         "instanceArg",
@@ -5727,7 +5864,9 @@ fn register_reflection_default_functions(lua: &Lua) -> LuaResult<()> {
     )?;
     globals.set(
         "callMethodFromClass",
-        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> { Ok(LuaNil) })?,
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            dispatch_reflection_class_method(lua, args)
+        })?,
     )?;
     globals.set(
         "addToGroup",
@@ -5752,7 +5891,7 @@ fn register_reflection_default_functions(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "removeFromGroup",
         lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
-            let object = multi_string(&args, 1).or_else(|| multi_string(&args, 0));
+            let object = multi_string(&args, 2).or_else(|| multi_string(&args, 1));
             let Some(object) = object else {
                 return Ok(false);
             };
@@ -5856,6 +5995,52 @@ fn dispatch_reflection_method(lua: &Lua, args: LuaMultiValue) -> LuaResult<LuaVa
             }
         }
         _ => {}
+    }
+
+    Ok(LuaNil)
+}
+
+fn dispatch_reflection_class_method(lua: &Lua, args: LuaMultiValue) -> LuaResult<LuaValue> {
+    let class_name = multi_string(&args, 0).unwrap_or_default();
+    let method = multi_string(&args, 1).unwrap_or_default();
+    let call_args = args.get(2).cloned().unwrap_or(LuaValue::Nil);
+    let class_lc = class_name.to_ascii_lowercase();
+    let method_lc = method.to_ascii_lowercase();
+
+    if class_lc == "flixel.flxg" {
+        match method_lc.as_str() {
+            "cameras.remove" | "cameras.add" | "cameras.reset" | "cameras.setdefaultdrawtarget" => {
+                return Ok(LuaValue::Boolean(true));
+            }
+            "sound.music.pause" => {
+                queue_sound_tag_request(lua, "pause_music", None, &[])?;
+                return Ok(LuaValue::Boolean(true));
+            }
+            "sound.music.resume" | "sound.music.play" => {
+                queue_sound_tag_request(lua, "resume_music", None, &[])?;
+                return Ok(LuaValue::Boolean(true));
+            }
+            "sound.music.stop" => {
+                queue_sound_tag_request(lua, "stop_music", None, &[])?;
+                return Ok(LuaValue::Boolean(true));
+            }
+            "sound.play" => {
+                if let Some(path) = indexed_arg_string(&call_args, 1) {
+                    let volume = indexed_arg_number(&call_args, 2).unwrap_or(1.0);
+                    let func: LuaFunction = lua.globals().get("playSound")?;
+                    func.call::<()>((path, Some(volume), None::<String>, Some(false)))?;
+                    return Ok(LuaValue::Boolean(true));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if matches!(
+        class_lc.as_str(),
+        "coolutil" | "backend.coolutil" | "lime.app.application" | "openfl.lib"
+    ) {
+        return Ok(LuaValue::Boolean(true));
     }
 
     Ok(LuaNil)
@@ -5984,11 +6169,43 @@ fn register_deprecated_aliases(lua: &Lua) -> LuaResult<()> {
     )?;
     globals.set(
         "musicFadeIn",
-        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+        lua.create_function(|lua, args: LuaMultiValue| {
+            let duration = multi_number(&args, 0).unwrap_or(1.0);
+            let from = multi_number(&args, 1).unwrap_or(0.0);
+            let to = multi_number(&args, 2).unwrap_or(1.0);
+            queue_sound_tag_request(
+                lua,
+                "sound_fade",
+                None,
+                &[
+                    ("duration", LuaValue::Number(duration)),
+                    ("from", LuaValue::Number(from)),
+                    ("to", LuaValue::Number(to)),
+                    ("stop_when_done", LuaValue::Boolean(false)),
+                ],
+            )?;
+            lua.globals().set("__music_volume", to)?;
+            Ok(())
+        })?,
     )?;
     globals.set(
         "musicFadeOut",
-        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+        lua.create_function(|lua, args: LuaMultiValue| {
+            let duration = multi_number(&args, 0).unwrap_or(1.0);
+            let to = multi_number(&args, 1).unwrap_or(0.0);
+            queue_sound_tag_request(
+                lua,
+                "sound_fade",
+                None,
+                &[
+                    ("duration", LuaValue::Number(duration)),
+                    ("to", LuaValue::Number(to)),
+                    ("stop_when_done", LuaValue::Boolean(true)),
+                ],
+            )?;
+            lua.globals().set("__music_volume", to)?;
+            Ok(())
+        })?,
     )?;
     globals.set(
         "makeFlxAnimateSprite",
@@ -6001,15 +6218,55 @@ fn register_deprecated_aliases(lua: &Lua) -> LuaResult<()> {
     )?;
     globals.set(
         "loadAnimateAtlas",
-        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let tag = multi_string(&args, 0).unwrap_or_default();
+            let image = multi_string(&args, 1).unwrap_or_default();
+            if tag.is_empty() || image.is_empty() {
+                return Ok(false);
+            }
+            let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+            let tbl: LuaTable = sprite_data.get(tag.as_str())?;
+            tbl.set("kind", "animated")?;
+            tbl.set("image", image.as_str())?;
+            update_lua_sprite_dimensions(lua, &tbl, &image)?;
+            queue_lua_sprite_reload(lua, &tag, false)?;
+            Ok(true)
+        })?,
     )?;
     globals.set(
         "loadFrames",
-        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let tag = multi_string(&args, 0).unwrap_or_default();
+            let image = multi_string(&args, 1).unwrap_or_default();
+            if tag.is_empty() || image.is_empty() {
+                return Ok(false);
+            }
+            let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+            let tbl: LuaTable = sprite_data.get(tag.as_str())?;
+            tbl.set("kind", "animated")?;
+            tbl.set("image", image.as_str())?;
+            update_lua_sprite_dimensions(lua, &tbl, &image)?;
+            queue_lua_sprite_reload(lua, &tag, false)?;
+            Ok(true)
+        })?,
     )?;
     globals.set(
         "loadMultipleFrames",
-        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let tag = multi_string(&args, 0).unwrap_or_default();
+            if tag.is_empty() {
+                return Ok(false);
+            }
+            let Some(images) = args.get(1).and_then(|value| match value {
+                LuaValue::Table(tbl) => tbl.get::<String>(1).ok(),
+                LuaValue::String(s) => s.to_str().ok().map(|s| s.to_string()),
+                _ => None,
+            }) else {
+                return Ok(false);
+            };
+            let func: LuaFunction = lua.globals().get("loadFrames")?;
+            func.call::<bool>((tag, images)).map(|_| true)
+        })?,
     )?;
     globals.set(
         "addAnimationBySymbol",

@@ -356,3 +356,92 @@ fn psych_start_video_boolean_signature_queues_cutscene() {
     assert_eq!(mgr.state.video_requests[0].0, "intro-cutscene");
     assert!(mgr.state.video_requests[0].2);
 }
+
+#[test]
+fn dynamic_callbacks_and_frame_reload_are_backed_by_state() {
+    let script = write_tmp(
+        "callbacks_and_reload.lua",
+        r#"
+        function onCreate()
+            createCallback('madeAtRuntime', function(value)
+                return value + 7
+            end)
+            createGlobalCallback('madeGlobal', function(value)
+                return value * 3
+            end)
+            local callbackOk = madeAtRuntime(5) == 12
+                and madeGlobal(4) == 12
+                and runHaxeCodePost('game.moveCameraSection(2)') == nil
+                and isPaused() == false
+            makeLuaSprite('reloadMe', 'old/image', 0, 0)
+            addLuaSprite('reloadMe', false)
+            local reloadOk = loadFrames('reloadMe', 'new/image')
+            musicFadeIn(1, 0.2, 0.8)
+            setVar('callbackReloadOk', callbackOk and reloadOk)
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&script);
+    assert!(
+        mgr.has_scripts(),
+        "callback/reload smoke script failed to load"
+    );
+    mgr.call("onCreate");
+    assert!(matches!(
+        mgr.state.custom_vars.get("callbackReloadOk"),
+        Some(LuaValue::Bool(true))
+    ));
+    assert!(mgr
+        .state
+        .lua_sprites
+        .get("reloadMe")
+        .is_some_and(|sprite| matches!(
+            &sprite.kind,
+            rustic_scripting::LuaSpriteKind::Animated(image) if image == "new/image"
+        )));
+    assert!(!mgr.state.sprites_to_add.is_empty());
+    assert!(mgr
+        .state
+        .audio_requests
+        .iter()
+        .any(|request| matches!(request, rustic_scripting::AudioRequest::SoundFade { tag: None, to, .. } if (*to - 0.8).abs() < f64::EPSILON)));
+    assert_eq!(mgr.state.camera_section_requests, vec![2]);
+}
+
+#[test]
+fn reflection_and_substate_aliases_route_to_existing_systems() {
+    let script = write_tmp(
+        "reflection_aliases.lua",
+        r#"
+        function onCreate()
+            makeLuaSprite('subSprite', nil, 0, 0)
+            makeGraphic('subSprite', 2, 2, 'FFFFFF')
+            local addOk = addLuaSpriteSubstate('subSprite')
+            local classOk = callMethodFromClass('flixel.FlxG', 'cameras.add', {instanceArg('camHUD'), false}) == true
+            local shader = createRuntimeShader('fakeShader')
+            local shaderOk = shader == 'fakeShader'
+            local removeOk = removeFromGroup('members', -1, 'subSprite', true)
+            setVar('reflectionAliasOk', addOk == nil and classOk and shaderOk and removeOk)
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&script);
+    assert!(
+        mgr.has_scripts(),
+        "reflection alias smoke script failed to load"
+    );
+    mgr.call("onCreate");
+    assert!(matches!(
+        mgr.state.custom_vars.get("reflectionAliasOk"),
+        Some(LuaValue::Bool(true))
+    ));
+    assert!(mgr
+        .state
+        .sprites_to_remove
+        .iter()
+        .any(|tag| tag == "subSprite"));
+}
