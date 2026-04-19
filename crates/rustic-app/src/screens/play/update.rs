@@ -909,22 +909,35 @@ impl PlayScreen {
             .drain(..)
             .collect();
         for target in cam_targets {
-            match target.trim().to_lowercase().as_str() {
+            let raw_target = target.trim();
+            let (target, snap) = raw_target
+                .strip_prefix("__snap:")
+                .map(|target| (target, true))
+                .unwrap_or((raw_target, false));
+            let mut follow_target = None;
+            match target.to_lowercase().as_str() {
                 "dad" | "opponent" => {
                     self.recompute_camera_targets();
-                    self.camera.follow(self.cam_dad[0], self.cam_dad[1]);
+                    follow_target = Some((self.cam_dad[0], self.cam_dad[1]));
                 }
                 "gf" | "girlfriend" => {
                     // GF camera: use GF midpoint if available, otherwise dad position
                     if let Some(gf) = &self.char_gf {
                         let (mx, my) = gf.midpoint();
-                        self.camera.follow(mx, my);
+                        follow_target = Some((mx, my));
                     }
                 }
                 _ => {
                     // Default = boyfriend
                     self.recompute_camera_targets();
-                    self.camera.follow(self.cam_bf[0], self.cam_bf[1]);
+                    follow_target = Some((self.cam_bf[0], self.cam_bf[1]));
+                }
+            }
+            if let Some((x, y)) = follow_target {
+                if snap {
+                    self.camera.snap_to(x, y);
+                } else {
+                    self.camera.follow(x, y);
                 }
             }
         }

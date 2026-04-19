@@ -2348,7 +2348,8 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
                 .get::<LuaTable>("__pending_cam_targets")
                 .unwrap_or_else(|_| lua.create_table().unwrap());
             let len = pending.len().unwrap_or(0);
-            pending.set(len + 1, target)?;
+            pending.set(len + 1, target.as_str())?;
+            g.set("__last_camera_target", target.as_str())?;
             g.set("__pending_cam_targets", pending)?;
             Ok(())
         })?,
@@ -5463,6 +5464,19 @@ fn dispatch_reflection_method(lua: &Lua, args: LuaMultiValue) -> LuaResult<LuaVa
     let call_args = args.get(1).cloned().unwrap_or(LuaValue::Nil);
 
     match member {
+        "snapToTarget" if object == "camGame" || object == "game.camGame" => {
+            let g = lua.globals();
+            let target = g
+                .get::<String>("__last_camera_target")
+                .unwrap_or_else(|_| "bf".to_string());
+            let pending: LuaTable = g
+                .get::<LuaTable>("__pending_cam_targets")
+                .unwrap_or_else(|_| lua.create_table().unwrap());
+            let len = pending.len().unwrap_or(0);
+            pending.set(len + 1, format!("__snap:{target}"))?;
+            g.set("__pending_cam_targets", pending)?;
+            return Ok(LuaValue::Boolean(true));
+        }
         "playAnim" | "playAnimation" | "play" if method.ends_with(".animation.play") => {
             if let Some(anim) = indexed_arg_string(&call_args, 1) {
                 let forced = indexed_arg_bool(&call_args, 2).unwrap_or(false);
