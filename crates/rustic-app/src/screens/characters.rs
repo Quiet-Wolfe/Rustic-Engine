@@ -20,6 +20,8 @@ pub struct CharacterSprite {
     pub y: f32,
     pub scale: f32,
     pub alpha: f32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
     flip_x: bool,
     offsets: HashMap<String, [f64; 2]>,
     loop_flags: HashMap<String, bool>,
@@ -94,6 +96,8 @@ impl CharacterSprite {
             y,
             scale: char_def.scale as f32,
             alpha: 1.0,
+            scroll_x: 1.0,
+            scroll_y: 1.0,
             flip_x,
             offsets,
             loop_flags,
@@ -297,7 +301,12 @@ impl CharacterSprite {
         };
         let reflect_world_y = world_y + display_h * self.scale + dist_y - off_y;
 
-        let (sx, sy) = cam.world_to_screen(world_x, reflect_world_y, GAME_W, GAME_H);
+        let scroll_x = cam.x - GAME_W / 2.0;
+        let scroll_y = cam.y - GAME_H / 2.0;
+        let buf_x = world_x - scroll_x * self.scroll_x;
+        let buf_y = reflect_world_y - scroll_y * self.scroll_y;
+        let sx = (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0;
+        let sy = (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0;
         let scale = self.scale * cam.zoom;
         let a = alpha * self.alpha;
 
@@ -347,6 +356,8 @@ pub struct AtlasCharacterSprite {
     pub y: f32,
     pub scale: f32,
     pub alpha: f32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
     flip_x: bool,
     offsets: HashMap<String, [f64; 2]>,
     pub hold_timer: f64,
@@ -460,6 +471,8 @@ impl AtlasCharacterSprite {
             y,
             scale: char_def.scale as f32,
             alpha: 1.0,
+            scroll_x: 1.0,
+            scroll_y: 1.0,
             flip_x,
             offsets,
             hold_timer: 0.0,
@@ -661,7 +674,14 @@ impl AtlasCharacterSprite {
         let world_x = self.x - off_x;
         let world_y = self.y - off_y;
 
-        let (screen_x, screen_y) = cam.world_to_screen(world_x, world_y, GAME_W, GAME_H);
+        let scroll_x = cam.x - GAME_W / 2.0;
+        let scroll_y = cam.y - GAME_H / 2.0;
+        let buf_x = world_x - scroll_x * self.scroll_x;
+        let buf_y = world_y - scroll_y * self.scroll_y;
+        let (screen_x, screen_y) = (
+            (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0,
+            (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0,
+        );
         let scale = self.scale * cam.zoom;
 
         // render_symbol bypasses the main timeline M3D, rendering the symbol at origin
@@ -690,7 +710,14 @@ impl AtlasCharacterSprite {
         let world_x = self.x - off_x;
         let world_y = self.y - off_y;
 
-        let (screen_x, screen_y) = cam.world_to_screen(world_x, world_y, GAME_W, GAME_H);
+        let scroll_x = cam.x - GAME_W / 2.0;
+        let scroll_y = cam.y - GAME_H / 2.0;
+        let buf_x = world_x - scroll_x * self.scroll_x;
+        let buf_y = world_y - scroll_y * self.scroll_y;
+        let (screen_x, screen_y) = (
+            (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0,
+            (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0,
+        );
         let scale = self.scale * cam.zoom;
 
         let draw_calls = self
@@ -834,6 +861,19 @@ impl Character {
         }
     }
 
+    pub fn set_scroll_factor(&mut self, sx: f32, sy: f32) {
+        match self {
+            Character::Sparrow(s) => {
+                s.scroll_x = sx;
+                s.scroll_y = sy;
+            }
+            Character::Atlas(a) => {
+                a.scroll_x = sx;
+                a.scroll_y = sy;
+            }
+        }
+    }
+
     pub fn set_scale(&mut self, scale: f32) {
         match self {
             Character::Sparrow(s) => s.scale = scale,
@@ -887,6 +927,45 @@ impl Character {
         match self {
             Character::Sparrow(s) => s.anim.finished,
             Character::Atlas(a) => a.animate.finished(),
+        }
+    }
+
+    pub fn anim_frame_index(&self) -> usize {
+        match self {
+            Character::Sparrow(s) => s.anim.frame_index,
+            Character::Atlas(a) => {
+                if a.current_play_indices.is_empty() {
+                    a.animate.current_frame as usize
+                } else {
+                    a.current_index_pos
+                }
+            }
+        }
+    }
+
+    pub fn set_anim_frame_index(&mut self, frame: usize) {
+        match self {
+            Character::Sparrow(s) => {
+                let count = s.atlas.frame_count(&s.anim.current_anim);
+                s.anim.frame_index = if count == 0 {
+                    frame
+                } else {
+                    frame.min(count.saturating_sub(1))
+                };
+                s.anim.finished = false;
+            }
+            Character::Atlas(a) => {
+                if a.current_play_indices.is_empty() {
+                    a.animate.current_frame = frame as u32;
+                } else {
+                    a.current_index_pos = frame.min(a.current_play_indices.len().saturating_sub(1));
+                    if let Some(actual) = a.current_play_indices.get(a.current_index_pos) {
+                        a.animate.current_frame = *actual;
+                    }
+                }
+                a.animate.time_accumulator = 0.0;
+                a.animate.finished = false;
+            }
         }
     }
 

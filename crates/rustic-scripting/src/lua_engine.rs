@@ -223,6 +223,24 @@ impl LuaScript {
         globals
             .set("__gf_anim_name", state.gf_anim_name.as_str())
             .ok();
+        globals
+            .set("__dad_anim_frame", state.dad_anim_frame as i64)
+            .ok();
+        globals
+            .set("__bf_anim_frame", state.bf_anim_frame as i64)
+            .ok();
+        globals
+            .set("__gf_anim_frame", state.gf_anim_frame as i64)
+            .ok();
+        globals
+            .set("__dad_anim_finished", state.dad_anim_finished)
+            .ok();
+        globals
+            .set("__bf_anim_finished", state.bf_anim_finished)
+            .ok();
+        globals
+            .set("__gf_anim_finished", state.gf_anim_finished)
+            .ok();
         globals.set("__dad_x", state.dad_pos.0 as f64).ok();
         globals.set("__dad_y", state.dad_pos.1 as f64).ok();
         globals.set("__bf_x", state.bf_pos.0 as f64).ok();
@@ -308,6 +326,39 @@ impl LuaScript {
                     tbl.set("ct_red", sprite.color_red_offset as f64).ok();
                     tbl.set("ct_green", sprite.color_green_offset as f64).ok();
                     tbl.set("ct_blue", sprite.color_blue_offset as f64).ok();
+                    tbl.set("current_anim", sprite.current_anim.as_str()).ok();
+                    tbl.set("animation.name", sprite.current_anim.as_str()).ok();
+                    tbl.set("animation.finished", sprite.anim_finished).ok();
+                    tbl.set("anim_frame", sprite.anim_frame as i64).ok();
+                    tbl.set("anim_finished", sprite.anim_finished).ok();
+                    tbl.set("anim_fps", sprite.anim_fps as f64).ok();
+
+                    let anim_tbl = match tbl.get::<LuaTable>("animation") {
+                        Ok(t) => t,
+                        Err(_) => match self.lua.create_table() {
+                            Ok(t) => {
+                                tbl.set("animation", t.clone()).ok();
+                                t
+                            }
+                            Err(_) => continue,
+                        },
+                    };
+                    anim_tbl.set("name", sprite.current_anim.as_str()).ok();
+                    anim_tbl.set("finished", sprite.anim_finished).ok();
+                    let cur_anim_tbl = match anim_tbl.get::<LuaTable>("curAnim") {
+                        Ok(t) => t,
+                        Err(_) => match self.lua.create_table() {
+                            Ok(t) => {
+                                anim_tbl.set("curAnim", t.clone()).ok();
+                                t
+                            }
+                            Err(_) => continue,
+                        },
+                    };
+                    cur_anim_tbl.set("name", sprite.current_anim.as_str()).ok();
+                    cur_anim_tbl.set("curFrame", sprite.anim_frame as i64).ok();
+                    cur_anim_tbl.set("finished", sprite.anim_finished).ok();
+                    cur_anim_tbl.set("frameRate", sprite.anim_fps as f64).ok();
                 }
             }
         }
@@ -1657,6 +1708,46 @@ impl LuaScript {
                     sprite.color_blue_offset = v;
                 }
             }
+            if let Ok(frame) = tbl.get::<i64>("anim_frame") {
+                sprite.anim_frame = frame.max(0) as usize;
+                sprite.anim_finished = false;
+            }
+            if let Ok(fps) = tbl.get::<f32>("anim_fps") {
+                sprite.anim_fps = fps.max(0.0);
+            }
+            if let Ok(finished) = tbl.get::<bool>("anim_finished") {
+                sprite.anim_finished = finished;
+            }
+            if let Ok(anim_tbl) = tbl.get::<LuaTable>("animation") {
+                if let Ok(name) = anim_tbl.get::<String>("name") {
+                    if !name.is_empty() && sprite.current_anim != name {
+                        sprite.current_anim = name;
+                        sprite.anim_frame = 0;
+                        sprite.anim_timer = 0.0;
+                        sprite.anim_finished = false;
+                    }
+                }
+                if let Ok(finished) = anim_tbl.get::<bool>("finished") {
+                    sprite.anim_finished = finished;
+                }
+                if let Ok(cur_anim) = anim_tbl.get::<LuaTable>("curAnim") {
+                    if let Ok(name) = cur_anim.get::<String>("name") {
+                        if !name.is_empty() && sprite.current_anim != name {
+                            sprite.current_anim = name;
+                            sprite.anim_frame = 0;
+                            sprite.anim_timer = 0.0;
+                            sprite.anim_finished = false;
+                        }
+                    }
+                    if let Ok(frame) = cur_anim.get::<i64>("curFrame") {
+                        sprite.anim_frame = frame.max(0) as usize;
+                        sprite.anim_finished = false;
+                    }
+                    if let Ok(finished) = cur_anim.get::<bool>("finished") {
+                        sprite.anim_finished = finished;
+                    }
+                }
+            }
 
             // Sync animation definitions from __anims subtable
             if let Ok(anims) = tbl.get::<LuaTable>("__anims") {
@@ -1703,10 +1794,16 @@ impl LuaScript {
             if let Ok(pending) = tbl.get::<LuaTable>("__pending_anim") {
                 let anim: String = pending.get("anim").unwrap_or_default();
                 let forced: bool = pending.get("forced").unwrap_or(false);
+                let start_frame = pending.get::<i64>("frame").ok();
                 if !anim.is_empty() {
-                    if forced || sprite.current_anim != anim || sprite.anim_finished {
+                    if forced
+                        || sprite.current_anim != anim
+                        || sprite.anim_finished
+                        || start_frame.is_some()
+                    {
                         sprite.current_anim = anim;
-                        sprite.anim_frame = 0;
+                        sprite.anim_frame =
+                            start_frame.map(|frame| frame.max(0) as usize).unwrap_or(0);
                         sprite.anim_timer = 0.0;
                         sprite.anim_finished = false;
                         if let Some(def) = sprite.animations.get(&sprite.current_anim) {

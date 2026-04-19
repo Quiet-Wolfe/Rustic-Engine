@@ -414,7 +414,8 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
             // Queue for removal by the game engine
             let pending: LuaTable = lua.globals().get("__pending_removes")?;
             let len = pending.len()? as i64;
-            pending.set(len + 1, tag)?;
+            pending.set(len + 1, tag.clone())?;
+            sprite_data.set(tag, LuaValue::Nil)?;
             Ok(())
         })?,
     )?;
@@ -752,7 +753,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         "playAnim",
         lua.create_function(
             |lua,
-             (tag, anim, forced, _reversed, _frame): (
+             (tag, anim, forced, _reversed, frame): (
                 String,
                 String,
                 Option<bool>,
@@ -765,6 +766,9 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                     let play_tbl = lua.create_table()?;
                     play_tbl.set("anim", anim)?;
                     play_tbl.set("forced", forced)?;
+                    if let Some(frame) = frame {
+                        play_tbl.set("frame", frame)?;
+                    }
                     tbl.set("__pending_anim", play_tbl)?;
                 }
                 Ok(())
@@ -1086,12 +1090,38 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                                 tbl.set("ct_blue", n)?;
                             }
                         }
-                        "animation.frameIndex" => {
-                            if let Some(n) = lua_val_to_f32(&value) {
-                                tbl.set("anim_frame", n as i32)?;
+                        "animation.frameIndex" | "animation.curAnim.curFrame" => {
+                            if let Some(n) = lua_val_to_i64(&value) {
+                                tbl.set("anim_frame", n.max(0))?;
+                                set_sprite_animation_value(
+                                    lua,
+                                    &tbl,
+                                    "curFrame",
+                                    LuaValue::Integer(n.max(0)),
+                                )?;
+                                set_sprite_animation_value(
+                                    lua,
+                                    &tbl,
+                                    "finished",
+                                    LuaValue::Boolean(false),
+                                )?;
                             }
                         }
-                        "animation.framerate" => {
+                        "animation.name" | "animation.curAnim.name" => {
+                            tbl.set("anim_finished", false)?;
+                            set_sprite_animation_value(lua, &tbl, "name", value.clone())?;
+                        }
+                        "animation.finished" | "animation.curAnim.finished" => {
+                            if let LuaValue::Boolean(b) = &value {
+                                set_sprite_animation_value(
+                                    lua,
+                                    &tbl,
+                                    "finished",
+                                    LuaValue::Boolean(*b),
+                                )?;
+                            }
+                        }
+                        "animation.framerate" | "animation.curAnim.frameRate" => {
                             if let Some(n) = lua_val_to_f32(&value) {
                                 tbl.set("anim_fps", n)?;
                             }
@@ -1271,10 +1301,24 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                             let scale_y: f64 = tbl.get("scale_y").unwrap_or(1.0);
                             Ok(LuaValue::Number(tex_h * scale_y.abs()))
                         }
-                        "animation.frameIndex" => Ok(tbl
+                        "animation.frameIndex" | "animation.curAnim.curFrame" => Ok(tbl
                             .get::<LuaValue>("anim_frame")
                             .unwrap_or(LuaValue::Integer(0))),
-                        "animation.framerate" => Ok(tbl
+                        "animation.name" | "animation.curAnim.name" => Ok(sprite_animation_value(
+                            lua,
+                            &tbl,
+                            "name",
+                            LuaValue::String(lua.create_string("")?),
+                        )?),
+                        "animation.finished" | "animation.curAnim.finished" => {
+                            Ok(sprite_animation_value(
+                                lua,
+                                &tbl,
+                                "finished",
+                                LuaValue::Boolean(false),
+                            )?)
+                        }
+                        "animation.framerate" | "animation.curAnim.frameRate" => Ok(tbl
                             .get::<LuaValue>("anim_fps")
                             .unwrap_or(LuaValue::Number(24.0))),
                         _ => Ok(tbl
@@ -1322,24 +1366,75 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
             {
                 let g = lua.globals();
                 match prop.as_str() {
-                    "dad.animation.curAnim.name" | "opponent.animation.curAnim.name" => {
+                    "dad.animation.name"
+                    | "dad.animation.curAnim.name"
+                    | "opponent.animation.name"
+                    | "opponent.animation.curAnim.name" => {
                         return Ok(g
                             .get::<LuaValue>("__dad_anim_name")
                             .unwrap_or(LuaValue::String(lua.create_string("")?)))
                     }
-                    "boyfriend.animation.curAnim.name" | "bf.animation.curAnim.name" => {
+                    "boyfriend.animation.name"
+                    | "boyfriend.animation.curAnim.name"
+                    | "bf.animation.name"
+                    | "bf.animation.curAnim.name" => {
                         return Ok(g
                             .get::<LuaValue>("__bf_anim_name")
                             .unwrap_or(LuaValue::String(lua.create_string("")?)))
                     }
-                    "gf.animation.curAnim.name" | "girlfriend.animation.curAnim.name" => {
+                    "gf.animation.name"
+                    | "gf.animation.curAnim.name"
+                    | "girlfriend.animation.name"
+                    | "girlfriend.animation.curAnim.name" => {
                         return Ok(g
                             .get::<LuaValue>("__gf_anim_name")
                             .unwrap_or(LuaValue::String(lua.create_string("")?)))
                     }
-                    "dad.animateAtlas.anim.curFrame"
+                    "dad.animation.finished"
+                    | "dad.animation.curAnim.finished"
+                    | "opponent.animation.finished"
+                    | "opponent.animation.curAnim.finished" => {
+                        return Ok(g
+                            .get::<LuaValue>("__dad_anim_finished")
+                            .unwrap_or(LuaValue::Boolean(false)))
+                    }
+                    "boyfriend.animation.finished"
+                    | "boyfriend.animation.curAnim.finished"
+                    | "bf.animation.finished"
+                    | "bf.animation.curAnim.finished" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_anim_finished")
+                            .unwrap_or(LuaValue::Boolean(false)))
+                    }
+                    "gf.animation.finished"
+                    | "gf.animation.curAnim.finished"
+                    | "girlfriend.animation.finished"
+                    | "girlfriend.animation.curAnim.finished" => {
+                        return Ok(g
+                            .get::<LuaValue>("__gf_anim_finished")
+                            .unwrap_or(LuaValue::Boolean(false)))
+                    }
+                    "dad.animation.curAnim.curFrame"
+                    | "dad.animateAtlas.anim.curFrame"
+                    | "opponent.animation.curAnim.curFrame" => {
+                        return Ok(g
+                            .get::<LuaValue>("__dad_anim_frame")
+                            .unwrap_or(LuaValue::Integer(0)))
+                    }
+                    "boyfriend.animation.curAnim.curFrame"
                     | "boyfriend.animateAtlas.anim.curFrame"
-                    | "gf.animateAtlas.anim.curFrame" => return Ok(LuaValue::Integer(0)),
+                    | "bf.animation.curAnim.curFrame" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_anim_frame")
+                            .unwrap_or(LuaValue::Integer(0)))
+                    }
+                    "gf.animation.curAnim.curFrame"
+                    | "gf.animateAtlas.anim.curFrame"
+                    | "girlfriend.animation.curAnim.curFrame" => {
+                        return Ok(g
+                            .get::<LuaValue>("__gf_anim_frame")
+                            .unwrap_or(LuaValue::Integer(0)))
+                    }
                     // Character position reads — synced from game each frame
                     "dad.x" | "dadGroup.x" => {
                         return Ok(g
@@ -1365,6 +1460,44 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     }
                     _ => {}
                 }
+            }
+
+            if prop.starts_with("iconP1.animation.") || prop.starts_with("iconP2.animation.") {
+                let g = lua.globals();
+                if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                    if let Ok(value) = custom.get::<LuaValue>(prop.as_str()) {
+                        if value != LuaNil {
+                            return Ok(value);
+                        }
+                    }
+                }
+                let health = g.get::<f64>("__health").unwrap_or(1.0);
+                let frame = if prop.starts_with("iconP1.") {
+                    if health < 0.4 {
+                        1
+                    } else {
+                        0
+                    }
+                } else if health > 1.6 {
+                    1
+                } else {
+                    0
+                };
+                return if prop.ends_with(".curFrame") {
+                    Ok(LuaValue::Integer(frame))
+                } else if prop.ends_with(".finished") || prop.ends_with(".animation.finished") {
+                    Ok(LuaValue::Boolean(true))
+                } else if prop.ends_with(".name") {
+                    let name_key = if prop.starts_with("iconP1.") {
+                        "boyfriendName"
+                    } else {
+                        "dadName"
+                    };
+                    Ok(g.get::<LuaValue>(name_key)
+                        .unwrap_or(LuaValue::String(lua.create_string("")?)))
+                } else {
+                    Ok(LuaValue::Integer(frame))
+                };
             }
 
             // Handle dotted paths for game object arrays (e.g. "unspawnNotes.length")
@@ -5493,8 +5626,91 @@ fn lua_val_to_f32(val: &LuaValue) -> Option<f32> {
     match val {
         LuaValue::Number(n) => Some(*n as f32),
         LuaValue::Integer(n) => Some(*n as f32),
+        LuaValue::String(s) => s.to_string_lossy().trim().parse::<f32>().ok(),
         _ => None,
     }
+}
+
+fn lua_val_to_i64(val: &LuaValue) -> Option<i64> {
+    match val {
+        LuaValue::Integer(n) => Some(*n),
+        LuaValue::Number(n) => Some(*n as i64),
+        LuaValue::String(s) => {
+            let s = s.to_string_lossy();
+            let trimmed = s.trim();
+            trimmed
+                .parse::<i64>()
+                .ok()
+                .or_else(|| trimmed.parse::<f64>().ok().map(|n| n as i64))
+        }
+        _ => None,
+    }
+}
+
+fn sprite_animation_value(
+    lua: &Lua,
+    tbl: &LuaTable,
+    key: &str,
+    default: LuaValue,
+) -> LuaResult<LuaValue> {
+    if let Ok(value) = tbl.get::<LuaValue>(format!("animation.{key}")) {
+        if !matches!(value, LuaValue::Nil) {
+            return Ok(value);
+        }
+    }
+    if let Ok(animation) = tbl.get::<LuaTable>("animation") {
+        if let Ok(value) = animation.get::<LuaValue>(key) {
+            if !matches!(value, LuaValue::Nil) {
+                return Ok(value);
+            }
+        }
+        if let Ok(cur_anim) = animation.get::<LuaTable>("curAnim") {
+            if let Ok(value) = cur_anim.get::<LuaValue>(key) {
+                if !matches!(value, LuaValue::Nil) {
+                    return Ok(value);
+                }
+            }
+        }
+    }
+    match key {
+        "name" => Ok(tbl
+            .get::<LuaValue>("current_anim")
+            .unwrap_or(LuaValue::String(lua.create_string("")?))),
+        "finished" => Ok(tbl.get::<LuaValue>("anim_finished").unwrap_or(default)),
+        _ => Ok(default),
+    }
+}
+
+fn set_sprite_animation_value(
+    lua: &Lua,
+    tbl: &LuaTable,
+    key: &str,
+    value: LuaValue,
+) -> LuaResult<()> {
+    let animation = match tbl.get::<LuaTable>("animation") {
+        Ok(t) => t,
+        Err(_) => {
+            let t = lua.create_table()?;
+            tbl.set("animation", t.clone())?;
+            t
+        }
+    };
+    let cur_anim = match animation.get::<LuaTable>("curAnim") {
+        Ok(t) => t,
+        Err(_) => {
+            let t = lua.create_table()?;
+            animation.set("curAnim", t.clone())?;
+            t
+        }
+    };
+
+    if key == "curFrame" {
+        cur_anim.set(key, value)?;
+    } else {
+        animation.set(key, value.clone())?;
+        cur_anim.set(key, value)?;
+    }
+    Ok(())
 }
 
 /// Parse a FlxTween.num(getVar('name'), endVal, duration, {ease: FlxEase.X}, ...) pattern.

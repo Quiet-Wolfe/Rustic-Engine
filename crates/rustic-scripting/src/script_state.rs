@@ -241,6 +241,14 @@ pub struct ScriptState {
     pub dad_anim_name: String,
     pub bf_anim_name: String,
     pub gf_anim_name: String,
+    /// Current animation frame indices for characters (synced from game each frame).
+    pub dad_anim_frame: usize,
+    pub bf_anim_frame: usize,
+    pub gf_anim_frame: usize,
+    /// Whether the current character animation has finished.
+    pub dad_anim_finished: bool,
+    pub bf_anim_finished: bool,
+    pub gf_anim_finished: bool,
     /// Current character positions (synced from game each frame).
     pub dad_pos: (f32, f32),
     pub bf_pos: (f32, f32),
@@ -562,6 +570,12 @@ impl ScriptState {
             dad_anim_name: String::new(),
             bf_anim_name: String::new(),
             gf_anim_name: String::new(),
+            dad_anim_frame: 0,
+            bf_anim_frame: 0,
+            gf_anim_frame: 0,
+            dad_anim_finished: false,
+            bf_anim_finished: false,
+            gf_anim_finished: false,
             dad_pos: (0.0, 0.0),
             bf_pos: (0.0, 0.0),
             gf_pos: (0.0, 0.0),

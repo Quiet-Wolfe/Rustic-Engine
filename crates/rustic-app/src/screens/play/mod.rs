@@ -1429,6 +1429,7 @@ impl PlayScreen {
             let as_f32 = match &val {
                 LuaValue::Float(f) => Some(*f as f32),
                 LuaValue::Int(i) => Some(*i as f32),
+                LuaValue::String(s) => s.trim().parse::<f32>().ok(),
                 _ => None,
             };
             match prop.as_str() {
@@ -1628,6 +1629,27 @@ impl PlayScreen {
                 "__charDance.gf" | "__charDance.girlfriend" => {
                     if let Some(gf) = &mut self.char_gf {
                         gf.dance();
+                    }
+                }
+                "dad.animation.curAnim.curFrame" | "opponent.animation.curAnim.curFrame" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.set_anim_frame_index(v.max(0.0) as usize);
+                        }
+                    }
+                }
+                "boyfriend.animation.curAnim.curFrame" | "bf.animation.curAnim.curFrame" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.set_anim_frame_index(v.max(0.0) as usize);
+                        }
+                    }
+                }
+                "gf.animation.curAnim.curFrame" | "girlfriend.animation.curAnim.curFrame" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.set_anim_frame_index(v.max(0.0) as usize);
+                        }
                     }
                 }
                 "opponentCameraOffset.x" => {
@@ -1873,10 +1895,12 @@ impl PlayScreen {
         let adds: Vec<(String, bool)> = self.scripts.state.sprites_to_add.drain(..).collect();
         let has_adds = !adds.is_empty();
         for (tag, in_front) in adds {
-            // Skip if already added
-            if self.lua_textures.contains_key(&tag) {
-                continue;
-            }
+            // Psych scripts often recreate a tag to swap animation/image data.
+            // Replace stale GPU-side state instead of keeping the old atlas forever.
+            self.lua_textures.remove(&tag);
+            self.lua_atlases.remove(&tag);
+            self.draw_order
+                .retain(|l| l != &DrawLayer::LuaSprite(tag.clone()));
 
             // Load texture based on sprite kind
             let sprite = match self.scripts.state.lua_sprites.get(&tag) {
