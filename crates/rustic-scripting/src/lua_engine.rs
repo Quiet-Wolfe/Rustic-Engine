@@ -694,6 +694,9 @@ impl LuaScript {
                         if let Ok(v) = tbl.get::<f32>("ct_blue") {
                             sprite.color_blue_offset = v;
                         }
+                        if let Ok(color) = tbl.get::<String>("color") {
+                            sprite.color = parse_lua_color(&color);
+                        }
                         state.lua_sprites.insert(tag, sprite);
                     }
                 }
@@ -1708,6 +1711,9 @@ impl LuaScript {
                     sprite.color_blue_offset = v;
                 }
             }
+            if let Ok(color) = tbl.get::<String>("color") {
+                sprite.color = parse_lua_color(&color);
+            }
             if let Ok(frame) = tbl.get::<i64>("anim_frame") {
                 sprite.anim_frame = frame.max(0) as usize;
                 sprite.anim_finished = false;
@@ -1918,6 +1924,35 @@ fn script_value_to_lua(lua: &Lua, value: &crate::script_state::LuaValue) -> LuaR
             }
             Ok(LuaValue::Table(tbl))
         }
+    }
+}
+
+fn parse_lua_color(color: &str) -> [u8; 3] {
+    let normalized = color
+        .trim()
+        .trim_start_matches('#')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    let hex = if normalized.len() >= 6 {
+        &normalized[normalized.len() - 6..]
+    } else {
+        normalized
+    };
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return [r, g, b];
+        }
+    }
+    match normalized.to_ascii_uppercase().as_str() {
+        "BLACK" => [0, 0, 0],
+        "RED" => [255, 0, 0],
+        "GREEN" => [0, 255, 0],
+        "BLUE" => [0, 0, 255],
+        _ => [255, 255, 255],
     }
 }
 

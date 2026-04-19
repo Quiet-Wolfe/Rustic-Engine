@@ -23,6 +23,18 @@ fn note_color(nd: &NoteData, alpha: f32) -> [f32; 4] {
     }
 }
 
+fn lua_sprite_color(sprite: &rustic_scripting::LuaSprite) -> [f32; 4] {
+    let alpha = sprite.alpha.clamp(0.0, 1.0);
+    let channel =
+        |base: u8, offset: f32| ((base as f32 + offset).clamp(0.0, 255.0) / 255.0) * alpha;
+    [
+        channel(sprite.color[0], sprite.color_red_offset),
+        channel(sprite.color[1], sprite.color_green_offset),
+        channel(sprite.color[2], sprite.color_blue_offset),
+        alpha,
+    ]
+}
+
 impl PlayScreen {
     pub(super) fn draw_inner(&mut self, gpu: &mut GpuState) {
         let white = [1.0, 1.0, 1.0, 1.0];
@@ -968,8 +980,7 @@ impl PlayScreen {
             return;
         }
 
-        let a = sprite.alpha.clamp(0.0, 1.0);
-        let color = [a, a, a, a];
+        let color = lua_sprite_color(sprite);
 
         let cam = &self.camera;
         let scroll_x = cam.x - GAME_W / 2.0;
@@ -1082,8 +1093,7 @@ impl PlayScreen {
                 continue;
             }
 
-            let a = sprite.alpha.clamp(0.0, 1.0);
-            let color = [a, a, a, a];
+            let color = lua_sprite_color(sprite);
             let zoom = self.hud_zoom;
 
             // Animated sprite. If no current animation was explicitly selected,

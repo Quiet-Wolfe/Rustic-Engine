@@ -1090,6 +1090,9 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                                 tbl.set("ct_blue", n)?;
                             }
                         }
+                        "color" => {
+                            tbl.set("color", lua_value_to_color_string(&value))?;
+                        }
                         "animation.frameIndex" | "animation.curAnim.curFrame" => {
                             if let Some(n) = lua_val_to_i64(&value) {
                                 tbl.set("anim_frame", n.max(0))?;
@@ -1290,6 +1293,9 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         "colorTransform.blueOffset" => Ok(tbl
                             .get::<LuaValue>("ct_blue")
                             .unwrap_or(LuaValue::Number(0.0))),
+                        "color" => Ok(tbl
+                            .get::<LuaValue>("color")
+                            .unwrap_or(LuaValue::String(lua.create_string("FFFFFF")?))),
                         // HaxeFlixel: width = frameWidth * abs(scale.x)
                         "width" => {
                             let tex_w: f64 = tbl.get("tex_w").unwrap_or(0.0);
