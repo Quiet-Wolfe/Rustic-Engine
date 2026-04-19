@@ -1769,7 +1769,7 @@ impl LuaScript {
                         }
                     }
                     sprite.animations.insert(
-                        name,
+                        name.clone(),
                         crate::script_state::LuaAnimDef {
                             prefix,
                             fps,
@@ -1777,6 +1777,14 @@ impl LuaScript {
                             indices,
                         },
                     );
+                    if sprite.current_anim.is_empty() {
+                        sprite.current_anim = name.clone();
+                        sprite.anim_frame = 0;
+                        sprite.anim_timer = 0.0;
+                        sprite.anim_fps = fps;
+                        sprite.anim_looping = looping;
+                        sprite.anim_finished = false;
+                    }
                 }
             }
 

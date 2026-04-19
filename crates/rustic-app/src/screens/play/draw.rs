@@ -976,15 +976,19 @@ impl PlayScreen {
         let scroll_y = cam.y - GAME_H / 2.0;
         let zoom = cam.zoom;
 
-        // Animated sprite: render current atlas frame
+        // Animated sprite: render a frame from the atlas. Some Psych scripts add an
+        // animation but never explicitly play it; HaxeFlixel still shows a frame,
+        // not the whole packed atlas.
         if let Some(atlas) = self.lua_atlases.get(tag) {
-            if !sprite.current_anim.is_empty() {
-                if let Some(frame) = atlas.get_frame(&sprite.current_anim, sprite.anim_frame) {
-                    let (off_x, off_y) = sprite
-                        .anim_offsets
-                        .get(&sprite.current_anim)
-                        .copied()
-                        .unwrap_or((0.0, 0.0));
+            let anim = if sprite.current_anim.is_empty() {
+                atlas.anim_names().into_iter().next()
+            } else {
+                Some(sprite.current_anim.as_str())
+            };
+            if let Some(anim) = anim {
+                if let Some(frame) = atlas.get_frame(anim, sprite.anim_frame) {
+                    let (off_x, off_y) =
+                        sprite.anim_offsets.get(anim).copied().unwrap_or((0.0, 0.0));
                     let world_x = sprite.x - off_x;
                     let world_y = sprite.y - off_y;
                     let buf_x = world_x - scroll_x * sprite.scroll_x;
@@ -1082,15 +1086,18 @@ impl PlayScreen {
             let color = [a, a, a, a];
             let zoom = self.hud_zoom;
 
-            // Animated sprite
+            // Animated sprite. If no current animation was explicitly selected,
+            // draw the first registered animation frame instead of the full atlas.
             if let Some(atlas) = self.lua_atlases.get(tag) {
-                if !sprite.current_anim.is_empty() {
-                    if let Some(frame) = atlas.get_frame(&sprite.current_anim, sprite.anim_frame) {
-                        let (off_x, off_y) = sprite
-                            .anim_offsets
-                            .get(&sprite.current_anim)
-                            .copied()
-                            .unwrap_or((0.0, 0.0));
+                let anim = if sprite.current_anim.is_empty() {
+                    atlas.anim_names().into_iter().next()
+                } else {
+                    Some(sprite.current_anim.as_str())
+                };
+                if let Some(anim) = anim {
+                    if let Some(frame) = atlas.get_frame(anim, sprite.anim_frame) {
+                        let (off_x, off_y) =
+                            sprite.anim_offsets.get(anim).copied().unwrap_or((0.0, 0.0));
                         let dx = (sprite.x - off_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
                         let dy = (sprite.y - off_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
                         let scale = sprite.scale_x * zoom;
