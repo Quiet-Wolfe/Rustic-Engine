@@ -18,7 +18,7 @@
 use std::rc::Rc;
 
 use rayzor_parser::haxe_ast::{
-    AssignOp, BinaryOp, BlockElement, Expr, ExprKind, Function, StringPart, UnaryOp,
+    AssignOp, BinaryOp, BlockElement, Expr, ExprKind, Function, Pattern, StringPart, UnaryOp,
 };
 
 use crate::host::HostBridge;
@@ -327,6 +327,39 @@ impl Interp {
                     self.eval_expr(then_branch, host)
                 } else if let Some(else_b) = else_branch {
                     self.eval_expr(else_b, host)
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+
+            ExprKind::Switch {
+                expr,
+                cases,
+                default,
+            } => {
+                let value = self.eval_expr(expr, host)?;
+                for case in cases {
+                    self.scope.push();
+                    let matched = case.patterns.iter().any(|pattern| {
+                        self.pattern_matches(pattern, &value, host).unwrap_or(false)
+                    });
+                    let guard_ok = if matched {
+                        case.guard
+                            .as_ref()
+                            .map(|guard| self.eval_expr(guard, host).map(|v| v.is_truthy()))
+                            .unwrap_or(Ok(true))?
+                    } else {
+                        false
+                    };
+                    if matched && guard_ok {
+                        let result = self.eval_expr(&case.body, host);
+                        self.scope.pop();
+                        return result;
+                    }
+                    self.scope.pop();
+                }
+                if let Some(default) = default {
+                    self.eval_expr(default, host)
                 } else {
                     Ok(Value::Null)
                 }
@@ -810,6 +843,32 @@ impl Interp {
             _ => Err(Flow::Err(HScriptError::Runtime(
                 "invalid assignment target".into(),
             ))),
+        }
+    }
+
+    fn pattern_matches(
+        &mut self,
+        pattern: &Pattern,
+        value: &Value,
+        host: &mut dyn HostBridge,
+    ) -> Result<bool, Flow> {
+        match pattern {
+            Pattern::Const(expr) => Ok(self.eval_expr(expr, host)?.loose_eq(value)),
+            Pattern::Null => Ok(matches!(value, Value::Null)),
+            Pattern::Underscore => Ok(true),
+            Pattern::Var(name) => {
+                self.scope.declare(name, value.clone());
+                Ok(true)
+            }
+            Pattern::Or(patterns) => {
+                for pattern in patterns {
+                    if self.pattern_matches(pattern, value, host)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
         }
     }
 }

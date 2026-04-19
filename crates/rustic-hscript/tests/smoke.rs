@@ -167,3 +167,35 @@ fn builtin_array_and_string_methods_match_hscript_expectations() {
     let out = interp.call("exercise", &[], &mut host).unwrap().unwrap();
     assert_eq!(out.as_str(), Some("ONE|middle:abc"));
 }
+
+#[test]
+fn switch_supports_const_default_and_variable_patterns() {
+    let src = r#"
+        function label(v) {
+            switch (v) {
+                case 1: return "one";
+                case "bf": return "boyfriend";
+                case captured: return "got " + captured;
+                default: return "none";
+            }
+        }
+    "#;
+
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
+    let one = interp
+        .call("label", &[Value::Int(1)], &mut host)
+        .unwrap()
+        .unwrap();
+    let bf = interp
+        .call("label", &[Value::from_str("bf")], &mut host)
+        .unwrap()
+        .unwrap();
+    let any = interp
+        .call("label", &[Value::Int(7)], &mut host)
+        .unwrap()
+        .unwrap();
+    assert_eq!(one.as_str(), Some("one"));
+    assert_eq!(bf.as_str(), Some("boyfriend"));
+    assert_eq!(any.as_str(), Some("got 7"));
+}
