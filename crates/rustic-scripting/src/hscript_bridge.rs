@@ -30,6 +30,7 @@ const HOST_HANDLES: &[&str] = &[
     "FlxG",
     "FlxG.sound",
     "FlxG.camera",
+    "FlxG.random",
     "FlxG.keys.justPressed",
     "FlxG.keys.pressed",
     "FlxG.keys.justReleased",
@@ -44,6 +45,7 @@ const HOST_HANDLES: &[&str] = &[
     "Std",
     "StringTools",
     "Reflect",
+    "FlxColor",
 ];
 
 pub(crate) struct ScriptStateBridge<'a> {
@@ -484,7 +486,7 @@ fn handle_field_get(state: &ScriptState, name: &str, field: &str) -> Result<HVal
         "FlxG" => match field {
             "width" => Ok(HValue::Int(state.screen_width as i64)),
             "height" => Ok(HValue::Int(state.screen_height as i64)),
-            "sound" | "camera" | "mouse" => Ok(handle_by_name(&format!("FlxG.{field}"))),
+            "sound" | "camera" | "mouse" | "random" => Ok(handle_by_name(&format!("FlxG.{field}"))),
             "keys" => Ok(handle_by_name("FlxG.keys.pressed")),
             _ => Ok(HValue::Null),
         },
@@ -505,6 +507,7 @@ fn handle_field_get(state: &ScriptState, name: &str, field: &str) -> Result<HVal
             _ => Ok(HValue::Null),
         },
         "FlxEase" => Ok(HValue::from_str(field)),
+        "FlxColor" => Ok(HValue::Int(color_name_to_int(field))),
         "Math" => match field {
             "PI" => Ok(HValue::Float(std::f64::consts::PI)),
             "NaN" => Ok(HValue::Float(f64::NAN)),
@@ -596,6 +599,17 @@ fn handle_method_call(
             ],
         )
         .map(|v| v.unwrap_or(HValue::Null)),
+        ("FlxG.random", "int") => Ok(HValue::Int(rand_int(
+            arg_i64(args, 0, 0),
+            arg_i64(args, 1, 100),
+        ))),
+        ("FlxG.random", "float") => Ok(HValue::Float(rand_float(
+            arg_f64(args, 0, 0.0),
+            arg_f64(args, 1, 1.0),
+        ))),
+        ("FlxG.random", "bool") => Ok(HValue::Bool(
+            rand_float(0.0, 100.0) < arg_f64(args, 0, 50.0),
+        )),
         ("FlxTween", "tween") => {
             start_object_tween(state, args);
             Ok(HValue::Null)
@@ -673,6 +687,16 @@ fn handle_method_call(
             obj_get(args.first().unwrap_or(&HValue::Null), &arg_str(args, 1, "")).is_some(),
         )),
         ("Reflect", "callMethod") => Ok(HValue::Null),
+        ("FlxColor", "fromRGB") => {
+            let r = arg_i64(args, 0, 0).clamp(0, 255);
+            let g = arg_i64(args, 1, 0).clamp(0, 255);
+            let b = arg_i64(args, 2, 0).clamp(0, 255);
+            let a = arg_i64(args, 3, 255).clamp(0, 255);
+            Ok(HValue::Int((a << 24) | (r << 16) | (g << 8) | b))
+        }
+        ("FlxColor", "fromString") => Ok(HValue::Int(color_string_to_int(&arg_str(
+            args, 0, "FFFFFF",
+        )))),
         _ => Err(format!(
             "hscript bridge: method '{name}.{method}' is not wired"
         )),
@@ -1328,4 +1352,39 @@ fn rand_float(min: f64, max: f64) -> f64 {
 
 fn rand_int(min: i64, max: i64) -> i64 {
     rand_float(min as f64, (max + 1) as f64).floor() as i64
+}
+
+fn color_name_to_int(name: &str) -> i64 {
+    match name.to_ascii_uppercase().as_str() {
+        "BLACK" => 0xFF000000,
+        "BLUE" => 0xFF0000FF,
+        "CYAN" => 0xFF00FFFF,
+        "GRAY" | "GREY" => 0xFF808080,
+        "GREEN" => 0xFF008000,
+        "LIME" => 0xFF00FF00,
+        "MAGENTA" | "PINK" => 0xFFFF00FF,
+        "ORANGE" => 0xFFFFA500,
+        "PURPLE" => 0xFF800080,
+        "RED" => 0xFFFF0000,
+        "TRANSPARENT" => 0x00000000,
+        "WHITE" => 0xFFFFFFFF,
+        "YELLOW" => 0xFFFFFF00,
+        other => color_string_to_int(other),
+    }
+}
+
+fn color_string_to_int(value: &str) -> i64 {
+    let hex = value
+        .trim()
+        .trim_start_matches("FlxColor.")
+        .trim_start_matches('#')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    match hex.len() {
+        6 => i64::from_str_radix(hex, 16)
+            .map(|rgb| 0xFF000000 | rgb)
+            .unwrap_or(0xFFFFFFFF),
+        8 => i64::from_str_radix(hex, 16).unwrap_or(0xFFFFFFFF),
+        _ => 0xFFFFFFFF,
+    }
 }

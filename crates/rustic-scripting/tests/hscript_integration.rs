@@ -222,3 +222,38 @@ fn hscript_callbacks_preserve_mixed_argument_types() {
         Some(LuaValue::Bool(true))
     ));
 }
+
+#[test]
+fn hscript_flxcolor_and_random_helpers_are_backed() {
+    let src = r##"
+        function onCreate() {
+            setVar("white", FlxColor.WHITE);
+            setVar("rgb", FlxColor.fromRGB(1, 2, 3));
+            setVar("hex", FlxColor.fromString("#112233"));
+            var roll = FlxG.random.int(2, 2);
+            setVar("roll", roll);
+        }
+    "##;
+    let path = write_tmp("flxcolor_random.hx", src);
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&path);
+    mgr.call("onCreate");
+
+    assert!(matches!(
+        mgr.state.custom_vars.get("white"),
+        Some(LuaValue::Int(0xFFFFFFFF))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("rgb"),
+        Some(LuaValue::Int(0xFF010203))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("hex"),
+        Some(LuaValue::Int(0xFF112233))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("roll"),
+        Some(LuaValue::Int(2))
+    ));
+}
