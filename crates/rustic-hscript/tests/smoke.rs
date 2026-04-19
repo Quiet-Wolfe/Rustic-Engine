@@ -199,3 +199,26 @@ fn switch_supports_const_default_and_variable_patterns() {
     assert_eq!(bf.as_str(), Some("boyfriend"));
     assert_eq!(any.as_str(), Some("got 7"));
 }
+
+#[test]
+fn map_literals_behave_like_dynamic_lookup_objects() {
+    let src = r#"
+        function lookup(name) {
+            var values = ["bf" => 10, "dad" => 20];
+            values["gf"] = 30;
+            var total = 0;
+            for (key => value in values) {
+                total += value;
+            }
+            return values[name] + total;
+        }
+    "#;
+
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
+    let out = interp
+        .call("lookup", &[Value::from_str("dad")], &mut host)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(out, Value::Int(80)), "got {out:?}");
+}

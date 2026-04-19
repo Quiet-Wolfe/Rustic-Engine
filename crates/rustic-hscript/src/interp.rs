@@ -229,6 +229,22 @@ impl Interp {
                 Ok(Value::new_array(values))
             }
 
+            ExprKind::Map(entries) => {
+                let obj = Value::new_object();
+                if let Value::Object(map) = &obj {
+                    for (key, value) in entries {
+                        let key = self.eval_expr(key, host)?;
+                        let key = key
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| key.to_string());
+                        let value = self.eval_expr(value, host)?;
+                        map.borrow_mut().insert(key, value);
+                    }
+                }
+                Ok(obj)
+            }
+
             ExprKind::Object(fields) => {
                 let obj = Value::new_object();
                 if let Value::Object(map) = &obj {
