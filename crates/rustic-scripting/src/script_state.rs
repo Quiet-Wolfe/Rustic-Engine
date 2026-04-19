@@ -253,6 +253,10 @@ pub struct ScriptState {
     pub dad_pos: (f32, f32),
     pub bf_pos: (f32, f32),
     pub gf_pos: (f32, f32),
+    /// Character cameraPosition values from Psych character JSON.
+    pub dad_camera_position: (f32, f32),
+    pub bf_camera_position: (f32, f32),
+    pub gf_camera_position: (f32, f32),
 
     /// Pending character position adjustments from runHaxeCode.
     /// Each entry: (character: "boyfriend"/"dad"/"gf", field: "x"/"y", value: f64).
@@ -579,6 +583,9 @@ impl ScriptState {
             dad_pos: (0.0, 0.0),
             bf_pos: (0.0, 0.0),
             gf_pos: (0.0, 0.0),
+            dad_camera_position: (0.0, 0.0),
+            bf_camera_position: (0.0, 0.0),
+            gf_camera_position: (0.0, 0.0),
             char_position_adjustments: Vec::new(),
             stage_color_requests: Vec::new(),
             stage_color_swap_requests: Vec::new(),

@@ -256,18 +256,27 @@ impl PlayScreen {
             self.scripts.state.dad_anim_frame = dad.anim_frame_index();
             self.scripts.state.dad_anim_finished = dad.anim_finished();
             self.scripts.state.dad_pos = (dad.x(), dad.y());
+            let camera_position = dad.camera_position();
+            self.scripts.state.dad_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
         }
         if let Some(bf) = &self.char_bf {
             self.scripts.state.bf_anim_name = bf.current_anim_name().to_string();
             self.scripts.state.bf_anim_frame = bf.anim_frame_index();
             self.scripts.state.bf_anim_finished = bf.anim_finished();
             self.scripts.state.bf_pos = (bf.x(), bf.y());
+            let camera_position = bf.camera_position();
+            self.scripts.state.bf_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
         }
         if let Some(gf) = &self.char_gf {
             self.scripts.state.gf_anim_name = gf.current_anim_name().to_string();
             self.scripts.state.gf_anim_frame = gf.anim_frame_index();
             self.scripts.state.gf_anim_finished = gf.anim_finished();
             self.scripts.state.gf_pos = (gf.x(), gf.y());
+            let camera_position = gf.camera_position();
+            self.scripts.state.gf_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
         }
 
         // Lua: onUpdate (before gameplay logic)
@@ -814,18 +823,27 @@ impl PlayScreen {
             self.scripts.state.dad_anim_frame = dad.anim_frame_index();
             self.scripts.state.dad_anim_finished = dad.anim_finished();
             self.scripts.state.dad_pos = (dad.x(), dad.y());
+            let camera_position = dad.camera_position();
+            self.scripts.state.dad_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
         }
         if let Some(bf) = &self.char_bf {
             self.scripts.state.bf_anim_name = bf.current_anim_name().to_string();
             self.scripts.state.bf_anim_frame = bf.anim_frame_index();
             self.scripts.state.bf_anim_finished = bf.anim_finished();
             self.scripts.state.bf_pos = (bf.x(), bf.y());
+            let camera_position = bf.camera_position();
+            self.scripts.state.bf_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
         }
         if let Some(gf) = &self.char_gf {
             self.scripts.state.gf_anim_name = gf.current_anim_name().to_string();
             self.scripts.state.gf_anim_frame = gf.anim_frame_index();
             self.scripts.state.gf_anim_finished = gf.anim_finished();
             self.scripts.state.gf_pos = (gf.x(), gf.y());
+            let camera_position = gf.camera_position();
+            self.scripts.state.gf_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
         }
 
         // Visual: icon scale decay

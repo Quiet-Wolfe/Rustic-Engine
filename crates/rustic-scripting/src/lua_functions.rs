@@ -57,6 +57,35 @@ fn resolve_strum_target(target: &str) -> String {
     target.to_string()
 }
 
+fn normalize_camera_offset_prop(prop: &str) -> Option<&'static str> {
+    match prop {
+        "opponentCameraOffset[0]" | "opponentCameraOffset.x" => Some("opponentCameraOffset.x"),
+        "opponentCameraOffset[1]" | "opponentCameraOffset.y" => Some("opponentCameraOffset.y"),
+        "boyfriendCameraOffset[0]" | "boyfriendCameraOffset.x" => Some("boyfriendCameraOffset.x"),
+        "boyfriendCameraOffset[1]" | "boyfriendCameraOffset.y" => Some("boyfriendCameraOffset.y"),
+        _ => None,
+    }
+}
+
+fn normalize_lua_camera_name(camera: &str) -> String {
+    match camera.trim().to_lowercase().as_str() {
+        "" | "camgame" | "game" => "camGame".to_string(),
+        "camhud" | "hud" => "camHUD".to_string(),
+        "camother" | "other" => "camOther".to_string(),
+        _ => camera.trim().to_string(),
+    }
+}
+
+fn extract_quoted_argument<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
+    let after_marker = text.find(marker)? + marker.len();
+    let rel = &text[after_marker..];
+    let quote_offset = rel.find(|c| c == '\'' || c == '"')?;
+    let quote = rel.as_bytes()[quote_offset] as char;
+    let value_start = after_marker + quote_offset + 1;
+    let value_end = value_start + text[value_start..].find(quote)?;
+    Some(&text[value_start..value_end])
+}
+
 /// Read width and height from a PNG file's IHDR chunk (first 24 bytes).
 fn read_png_dimensions(path: &std::path::Path) -> Option<(u32, u32)> {
     let mut f = std::fs::File::open(path).ok()?;
@@ -871,20 +900,16 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         "setObjectCamera",
         lua.create_function(|lua, (tag, cam): (String, Option<String>)| {
             let cam = cam.unwrap_or_else(|| "camGame".to_string());
-            let cam_name = match cam.to_lowercase().as_str() {
-                "camhud" | "hud" => "camHUD",
-                "camother" | "other" => "camOther",
-                _ => "camGame",
-            };
+            let cam_name = normalize_lua_camera_name(&cam);
             // Set on sprite data
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
             if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
-                tbl.set("camera", cam_name)?;
+                tbl.set("camera", cam_name.as_str())?;
             }
             // Also set on text data
             let text_data: LuaTable = lua.globals().get("__text_data")?;
             if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
-                tbl.set("camera", cam_name)?;
+                tbl.set("camera", cam_name.as_str())?;
             }
             Ok(())
         })?,
@@ -988,6 +1013,9 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "setProperty",
         lua.create_function(|lua, (prop, value): (String, LuaValue)| {
+            let prop = normalize_camera_offset_prop(&prop)
+                .map(str::to_string)
+                .unwrap_or(prop);
             // Check if it's a sprite property (tag.field) — also handles nested like tag.origin.y
             if let Some(dot_pos) = prop.find('.') {
                 let tag = &prop[..dot_pos];
@@ -1192,6 +1220,30 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 | "isCameraOnForcedPos"
                 | "health" => {
                     g.set(prop.as_str(), value.clone()).ok();
+                }
+                "opponentCameraOffset.x" => {
+                    g.set("__opponent_camera_offset_x", value.clone()).ok();
+                    if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                        custom.set(prop.as_str(), value.clone()).ok();
+                    }
+                }
+                "opponentCameraOffset.y" => {
+                    g.set("__opponent_camera_offset_y", value.clone()).ok();
+                    if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                        custom.set(prop.as_str(), value.clone()).ok();
+                    }
+                }
+                "boyfriendCameraOffset.x" => {
+                    g.set("__bf_camera_offset_x", value.clone()).ok();
+                    if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                        custom.set(prop.as_str(), value.clone()).ok();
+                    }
+                }
+                "boyfriendCameraOffset.y" => {
+                    g.set("__bf_camera_offset_y", value.clone()).ok();
+                    if let Ok(custom) = g.get::<LuaTable>("__custom_vars") {
+                        custom.set(prop.as_str(), value.clone()).ok();
+                    }
                 }
                 // Array properties: split table values into separate writes
                 "opponentCameraOffset" | "boyfriendCameraOffset" => {
@@ -1463,6 +1515,74 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     }
                     "gf.y" | "girlfriend.y" | "gfGroup.y" => {
                         return Ok(g.get::<LuaValue>("__gf_y").unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "opponentCameraOffset[0]" | "opponentCameraOffset.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__opponent_camera_offset_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "opponentCameraOffset[1]" | "opponentCameraOffset.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__opponent_camera_offset_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "boyfriendCameraOffset[0]" | "boyfriendCameraOffset.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_camera_offset_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "boyfriendCameraOffset[1]" | "boyfriendCameraOffset.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_camera_offset_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "dad.cameraPosition[0]"
+                    | "dad.cameraPosition.x"
+                    | "opponent.cameraPosition[0]"
+                    | "opponent.cameraPosition.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__dad_camera_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "dad.cameraPosition[1]"
+                    | "dad.cameraPosition.y"
+                    | "opponent.cameraPosition[1]"
+                    | "opponent.cameraPosition.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__dad_camera_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "boyfriend.cameraPosition[0]"
+                    | "boyfriend.cameraPosition.x"
+                    | "bf.cameraPosition[0]"
+                    | "bf.cameraPosition.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_camera_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "boyfriend.cameraPosition[1]"
+                    | "boyfriend.cameraPosition.y"
+                    | "bf.cameraPosition[1]"
+                    | "bf.cameraPosition.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_camera_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "gf.cameraPosition[0]"
+                    | "gf.cameraPosition.x"
+                    | "girlfriend.cameraPosition[0]"
+                    | "girlfriend.cameraPosition.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__gf_camera_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "gf.cameraPosition[1]"
+                    | "gf.cameraPosition.y"
+                    | "girlfriend.cameraPosition[1]"
+                    | "girlfriend.cameraPosition.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__gf_camera_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
                     }
                     _ => {}
                 }
@@ -1917,6 +2037,25 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
                         let pending: LuaTable = g.get("__pending_cam_sections")?;
                         let len = pending.len()? as i64;
                         pending.set(len + 1, section)?;
+                    }
+                }
+                return Ok(LuaNil);
+            }
+
+            // Pattern: game.getLuaObject('tag').camera = getVar('cameraName')
+            if code.contains("game.getLuaObject") && code.contains(".camera") {
+                if let (Some(tag), Some(camera)) = (
+                    extract_quoted_argument(code, "game.getLuaObject("),
+                    extract_quoted_argument(code, "getVar("),
+                ) {
+                    let camera = normalize_lua_camera_name(camera);
+                    let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+                    if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+                        tbl.set("camera", camera.as_str())?;
+                    }
+                    let text_data: LuaTable = lua.globals().get("__text_data")?;
+                    if let Ok(tbl) = text_data.get::<LuaTable>(tag) {
+                        tbl.set("camera", camera.as_str())?;
                     }
                 }
                 return Ok(LuaNil);

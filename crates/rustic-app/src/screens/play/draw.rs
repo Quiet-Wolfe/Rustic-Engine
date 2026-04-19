@@ -35,6 +35,13 @@ fn lua_sprite_color(sprite: &rustic_scripting::LuaSprite) -> [f32; 4] {
     ]
 }
 
+fn lua_camera_is_game(camera: &str) -> bool {
+    let camera = camera.trim();
+    camera.is_empty()
+        || camera.eq_ignore_ascii_case("camGame")
+        || camera.eq_ignore_ascii_case("game")
+}
+
 impl PlayScreen {
     pub(super) fn draw_inner(&mut self, gpu: &mut GpuState) {
         let white = [1.0, 1.0, 1.0, 1.0];
@@ -806,9 +813,9 @@ impl PlayScreen {
             }
         }
 
-        // === Lua sprites on camHUD ===
+        // === Lua sprites on screen-space cameras ===
         if self.hud_visible {
-            self.draw_lua_sprites_hud(gpu);
+            self.draw_lua_sprites_screen(gpu);
         }
 
         // === Countdown sprite ===
@@ -974,9 +981,8 @@ impl PlayScreen {
             return;
         }
 
-        // Skip HUD sprites — they're drawn in draw_lua_sprites_hud
-        let is_hud = sprite.camera == "camHUD" || sprite.camera == "hud";
-        if is_hud {
+        // Non-game cameras (camHUD, camOther, custom FlxCameras) use screen space.
+        if !lua_camera_is_game(&sprite.camera) {
             return;
         }
 
@@ -1070,8 +1076,8 @@ impl PlayScreen {
         gpu.draw_batch(Some(tex));
     }
 
-    /// Draw Lua sprites assigned to camHUD (rendered in HUD space with HUD zoom).
-    fn draw_lua_sprites_hud(&self, gpu: &mut GpuState) {
+    /// Draw Lua sprites assigned to screen-space cameras with HUD zoom.
+    fn draw_lua_sprites_screen(&self, gpu: &mut GpuState) {
         for layer in &self.draw_order {
             let tag = match layer {
                 DrawLayer::LuaSprite(tag) => tag,
@@ -1088,8 +1094,7 @@ impl PlayScreen {
             if !sprite.visible || sprite.alpha <= 0.0 {
                 continue;
             }
-            let is_hud = sprite.camera == "camHUD" || sprite.camera == "hud";
-            if !is_hud {
+            if lua_camera_is_game(&sprite.camera) {
                 continue;
             }
 

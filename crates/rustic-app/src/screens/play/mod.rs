@@ -1367,16 +1367,18 @@ impl PlayScreen {
     pub(super) fn recompute_camera_targets(&mut self) {
         if let Some(bf) = &self.char_bf {
             let (mx, my) = bf.midpoint();
+            let lua_offset = self.scripts.state.bf_camera_offset;
             self.cam_bf = [
-                mx - 100.0 - self.bf_cam_off[0] + self.stage_cam_bf[0],
-                my - 100.0 + self.bf_cam_off[1] + self.stage_cam_bf[1],
+                mx - 100.0 - self.bf_cam_off[0] + lua_offset.0 + self.stage_cam_bf[0],
+                my - 100.0 + self.bf_cam_off[1] + lua_offset.1 + self.stage_cam_bf[1],
             ];
         }
         if let Some(dad) = &self.char_dad {
             let (mx, my) = dad.midpoint();
+            let lua_offset = self.scripts.state.opponent_camera_offset;
             self.cam_dad = [
-                mx + 150.0 + self.dad_cam_off[0] + self.stage_cam_dad[0],
-                my - 100.0 + self.dad_cam_off[1] + self.stage_cam_dad[1],
+                mx + 150.0 + self.dad_cam_off[0] + lua_offset.0 + self.stage_cam_dad[0],
+                my - 100.0 + self.dad_cam_off[1] + lua_offset.1 + self.stage_cam_dad[1],
             ];
         }
     }
@@ -1425,6 +1427,7 @@ impl PlayScreen {
 
         let writes: Vec<(String, LuaValue)> =
             self.scripts.state.property_writes.drain(..).collect();
+        let mut camera_offsets_changed = false;
         for (prop, val) in writes {
             let as_f32 = match &val {
                 LuaValue::Float(f) => Some(*f as f32),
@@ -1652,24 +1655,28 @@ impl PlayScreen {
                         }
                     }
                 }
-                "opponentCameraOffset.x" => {
+                "opponentCameraOffset.x" | "opponentCameraOffset[0]" => {
                     if let Some(v) = as_f32 {
                         self.scripts.state.opponent_camera_offset.0 = v;
+                        camera_offsets_changed = true;
                     }
                 }
-                "opponentCameraOffset.y" => {
+                "opponentCameraOffset.y" | "opponentCameraOffset[1]" => {
                     if let Some(v) = as_f32 {
                         self.scripts.state.opponent_camera_offset.1 = v;
+                        camera_offsets_changed = true;
                     }
                 }
-                "boyfriendCameraOffset.x" => {
+                "boyfriendCameraOffset.x" | "boyfriendCameraOffset[0]" => {
                     if let Some(v) = as_f32 {
                         self.scripts.state.bf_camera_offset.0 = v;
+                        camera_offsets_changed = true;
                     }
                 }
-                "boyfriendCameraOffset.y" => {
+                "boyfriendCameraOffset.y" | "boyfriendCameraOffset[1]" => {
                     if let Some(v) = as_f32 {
                         self.scripts.state.bf_camera_offset.1 = v;
+                        camera_offsets_changed = true;
                     }
                 }
                 "__camCharactersVisible" => {
@@ -1792,6 +1799,10 @@ impl PlayScreen {
                     log::debug!("Unhandled property write: {} = {:?}", prop, val);
                 }
             }
+        }
+
+        if camera_offsets_changed {
+            self.recompute_camera_targets();
         }
 
         // Sync note overrides from scripting state to NoteData

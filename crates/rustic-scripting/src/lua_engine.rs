@@ -247,6 +247,42 @@ impl LuaScript {
         globals.set("__bf_y", state.bf_pos.1 as f64).ok();
         globals.set("__gf_x", state.gf_pos.0 as f64).ok();
         globals.set("__gf_y", state.gf_pos.1 as f64).ok();
+        globals
+            .set(
+                "__opponent_camera_offset_x",
+                state.opponent_camera_offset.0 as f64,
+            )
+            .ok();
+        globals
+            .set(
+                "__opponent_camera_offset_y",
+                state.opponent_camera_offset.1 as f64,
+            )
+            .ok();
+        globals
+            .set("__bf_camera_offset_x", state.bf_camera_offset.0 as f64)
+            .ok();
+        globals
+            .set("__bf_camera_offset_y", state.bf_camera_offset.1 as f64)
+            .ok();
+        globals
+            .set("__dad_camera_x", state.dad_camera_position.0 as f64)
+            .ok();
+        globals
+            .set("__dad_camera_y", state.dad_camera_position.1 as f64)
+            .ok();
+        globals
+            .set("__bf_camera_x", state.bf_camera_position.0 as f64)
+            .ok();
+        globals
+            .set("__bf_camera_y", state.bf_camera_position.1 as f64)
+            .ok();
+        globals
+            .set("__gf_camera_x", state.gf_camera_position.0 as f64)
+            .ok();
+        globals
+            .set("__gf_camera_y", state.gf_camera_position.1 as f64)
+            .ok();
 
         if let Ok(running) = self.lua.create_table() {
             for (i, script) in state.running_scripts.iter().enumerate() {
