@@ -1,3 +1,4 @@
+use rustic_core::rating;
 use rustic_gameplay::events::GameEvent;
 
 use super::{
@@ -143,6 +144,37 @@ impl PlayScreen {
         self.scripts.state.default_cam_zoom = self.default_cam_zoom;
         self.scripts.state.camera_speed = self.camera.camera_speed;
         self.scripts.state.health = self.game.score.health;
+        self.scripts.state.score = self.game.score.score;
+        self.scripts.state.misses = self.game.score.misses;
+        self.scripts.state.hits = self.game.score.total_notes_played - self.game.score.misses;
+        self.scripts.state.combo = self.game.score.combo;
+        let rating_value = self.game.score.accuracy() / 100.0;
+        self.scripts.state.rating = self.scripts.state.rating_override.unwrap_or(rating_value);
+        self.scripts.state.rating_name = self
+            .scripts
+            .state
+            .rating_name_override
+            .clone()
+            .unwrap_or_else(|| self.game.score.grade().to_string());
+        let fc = match rating::classify_fc(
+            self.game.score.sicks,
+            self.game.score.goods,
+            self.game.score.bads,
+            self.game.score.shits,
+            self.game.score.misses,
+        ) {
+            rating::FcClassification::Sfc => "SFC",
+            rating::FcClassification::Gfc => "GFC",
+            rating::FcClassification::Fc => "FC",
+            rating::FcClassification::Sdcb => "SDCB",
+            rating::FcClassification::Clear => "Clear",
+        };
+        self.scripts.state.rating_fc = self
+            .scripts
+            .state
+            .rating_fc_override
+            .clone()
+            .unwrap_or_else(|| fc.to_string());
         if let Some(audio) = &self.audio {
             self.scripts
                 .set_on_all("__music_time", audio.loop_music_position_ms());
@@ -965,5 +997,10 @@ impl PlayScreen {
             splash.frame = (splash.timer / splash_frame_ms) as usize;
         }
         self.splashes.retain(|s| s.frame < SPLASH_FRAMES);
+
+        self.scripts.state.input_just_pressed.clear();
+        self.scripts.state.input_just_released.clear();
+        self.scripts.state.mouse_just_pressed = false;
+        self.scripts.state.mouse_just_released = false;
     }
 }

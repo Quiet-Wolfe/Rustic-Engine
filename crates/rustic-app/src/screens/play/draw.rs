@@ -31,6 +31,8 @@ impl PlayScreen {
             return;
         }
 
+        self.process_precache_requests(gpu);
+
         // Process video playback requests from Lua (needs GPU for texture creation)
         let video_reqs: Vec<_> = self.scripts.state.video_requests.drain(..).collect();
         for (filename, callback, blocks_gameplay) in video_reqs {
@@ -145,13 +147,8 @@ impl PlayScreen {
             }
         }
 
-        // === Lua sprites behind characters ===
-        let is_death = self.death.is_some();
-        if !is_death {
-            self.draw_lua_sprites(gpu, false);
-        }
-
         // === Stage background color overlay (generic, controlled via setStageColor Lua API) ===
+        let is_death = self.death.is_some();
         if !is_death {
             let lc = self.stage_overlay.color_left;
             let rc = self.stage_overlay.color_right;
@@ -177,7 +174,7 @@ impl PlayScreen {
             }
         }
 
-        // === Stage & Characters (draw order from stage objects) ===
+        // === Stage & Characters (draw order from stage objects or Lua scripts) ===
         for layer in &self.draw_order {
             match layer {
                 DrawLayer::StageBg(i) => {
@@ -230,12 +227,12 @@ impl PlayScreen {
                         gpu.draw_batch(Some(bf.texture()));
                     }
                 }
+                DrawLayer::LuaSprite(tag) => {
+                    if !is_death {
+                        self.draw_single_lua_sprite(gpu, tag);
+                    }
+                }
             }
-        }
-
-        // === Lua sprites in front of characters ===
-        if !is_death {
-            self.draw_lua_sprites(gpu, true);
         }
 
         // === Mid-song (non-blocking) video overlay: above stage/characters, below HUD ===
@@ -798,10 +795,12 @@ impl PlayScreen {
         }
 
         // === Lua sprites on camHUD ===
-        self.draw_lua_sprites_hud(gpu);
+        if self.hud_visible {
+            self.draw_lua_sprites_hud(gpu);
+        }
 
         // === Countdown sprite ===
-        if self.countdown_alpha > 0.0 {
+        if self.hud_visible && self.countdown_alpha > 0.0 {
             let cd_tex = match self.countdown_swag {
                 1 => self.countdown_ready.as_ref(),
                 2 => self.countdown_set.as_ref(),
@@ -949,124 +948,120 @@ impl PlayScreen {
         gpu.draw_batch(None);
     }
 
-    /// Draw all Lua-created sprites in either the behind or in-front layer (game camera only).
-    fn draw_lua_sprites(&self, gpu: &mut GpuState, front: bool) {
-        let tags = if front {
-            &self.lua_front
-        } else {
-            &self.lua_behind
+    /// Draw a single Lua-created sprite (game camera only).
+    fn draw_single_lua_sprite(&self, gpu: &mut GpuState, tag: &str) {
+        let tex = match self.lua_textures.get(tag) {
+            Some(t) => t,
+            None => return,
         };
-        for tag in tags {
-            let tex = match self.lua_textures.get(tag) {
-                Some(t) => t,
-                None => continue,
-            };
-            let sprite = match self.scripts.state.lua_sprites.get(tag) {
-                Some(s) => s,
-                None => continue,
-            };
-            if !sprite.visible || sprite.alpha <= 0.0 {
-                continue;
-            }
+        let sprite = match self.scripts.state.lua_sprites.get(tag) {
+            Some(s) => s,
+            None => return,
+        };
+        if !sprite.visible || sprite.alpha <= 0.0 {
+            return;
+        }
 
-            // Skip HUD sprites — they're drawn in draw_lua_sprites_hud
-            let is_hud = sprite.camera == "camHUD" || sprite.camera == "hud";
-            if is_hud {
-                continue;
-            }
+        // Skip HUD sprites — they're drawn in draw_lua_sprites_hud
+        let is_hud = sprite.camera == "camHUD" || sprite.camera == "hud";
+        if is_hud {
+            return;
+        }
 
-            let a = sprite.alpha.clamp(0.0, 1.0);
-            let color = [a, a, a, a];
+        let a = sprite.alpha.clamp(0.0, 1.0);
+        let color = [a, a, a, a];
 
-            let cam = &self.camera;
-            let scroll_x = cam.x - GAME_W / 2.0;
-            let scroll_y = cam.y - GAME_H / 2.0;
-            let zoom = cam.zoom;
+        let cam = &self.camera;
+        let scroll_x = cam.x - GAME_W / 2.0;
+        let scroll_y = cam.y - GAME_H / 2.0;
+        let zoom = cam.zoom;
 
-            // Animated sprite: render current atlas frame
-            if let Some(atlas) = self.lua_atlases.get(tag) {
-                if !sprite.current_anim.is_empty() {
-                    if let Some(frame) = atlas.get_frame(&sprite.current_anim, sprite.anim_frame) {
-                        let (off_x, off_y) = sprite
-                            .anim_offsets
-                            .get(&sprite.current_anim)
-                            .copied()
-                            .unwrap_or((0.0, 0.0));
-                        let world_x = sprite.x - off_x;
-                        let world_y = sprite.y - off_y;
-                        let buf_x = world_x - scroll_x * sprite.scroll_x;
-                        let buf_y = world_y - scroll_y * sprite.scroll_y;
-                        let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
-                        let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
-                        let scale = sprite.scale_x * zoom;
+        // Animated sprite: render current atlas frame
+        if let Some(atlas) = self.lua_atlases.get(tag) {
+            if !sprite.current_anim.is_empty() {
+                if let Some(frame) = atlas.get_frame(&sprite.current_anim, sprite.anim_frame) {
+                    let (off_x, off_y) = sprite
+                        .anim_offsets
+                        .get(&sprite.current_anim)
+                        .copied()
+                        .unwrap_or((0.0, 0.0));
+                    let world_x = sprite.x - off_x;
+                    let world_y = sprite.y - off_y;
+                    let buf_x = world_x - scroll_x * sprite.scroll_x;
+                    let buf_y = world_y - scroll_y * sprite.scroll_y;
+                    let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+                    let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+                    let scale = sprite.scale_x * zoom;
 
-                        gpu.draw_sprite_frame(
-                            frame,
-                            tex.width as f32,
-                            tex.height as f32,
-                            dx,
-                            dy,
-                            scale,
-                            sprite.flip_x,
-                            color,
-                        );
-                        gpu.draw_batch(Some(tex));
-                        continue;
-                    }
+                    gpu.draw_sprite_frame(
+                        frame,
+                        tex.width as f32,
+                        tex.height as f32,
+                        dx,
+                        dy,
+                        scale,
+                        sprite.flip_x,
+                        color,
+                    );
+                    gpu.draw_batch(Some(tex));
+                    return;
                 }
             }
-
-            // Static sprite: draw full texture
-            let w = tex.width as f32 * sprite.scale_x;
-            let h = tex.height as f32 * sprite.scale_y;
-            let buf_x = sprite.x - scroll_x * sprite.scroll_x;
-            let buf_y = sprite.y - scroll_y * sprite.scroll_y;
-            let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
-            let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
-            let dw = w * zoom;
-            let dh = h * zoom;
-
-            if sprite.angle.abs() > 0.01 {
-                // Rotated sprite: draw around center
-                let cx = dx + dw / 2.0;
-                let cy = dy + dh / 2.0;
-                gpu.push_quad_rotated(
-                    cx,
-                    cy,
-                    dw,
-                    dh,
-                    0.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                    sprite.angle.to_radians(),
-                    sprite.flip_x,
-                    color,
-                );
-            } else {
-                gpu.push_texture_region(
-                    tex.width as f32,
-                    tex.height as f32,
-                    0.0,
-                    0.0,
-                    tex.width as f32,
-                    tex.height as f32,
-                    dx,
-                    dy,
-                    dw,
-                    dh,
-                    sprite.flip_x,
-                    color,
-                );
-            }
-            gpu.draw_batch(Some(tex));
         }
+
+        // Static sprite: draw full texture
+        let w = tex.width as f32 * sprite.scale_x;
+        let h = tex.height as f32 * sprite.scale_y;
+        let buf_x = sprite.x - scroll_x * sprite.scroll_x;
+        let buf_y = sprite.y - scroll_y * sprite.scroll_y;
+        let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+        let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+        let dw = w * zoom;
+        let dh = h * zoom;
+
+        if sprite.angle.abs() > 0.01 {
+            // Rotated sprite: draw around center
+            let cx = dx + dw / 2.0;
+            let cy = dy + dh / 2.0;
+            gpu.push_quad_rotated(
+                cx,
+                cy,
+                dw,
+                dh,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                sprite.angle.to_radians(),
+                sprite.flip_x,
+                color,
+            );
+        } else {
+            gpu.push_texture_region(
+                tex.width as f32,
+                tex.height as f32,
+                0.0,
+                0.0,
+                tex.width as f32,
+                tex.height as f32,
+                dx,
+                dy,
+                dw,
+                dh,
+                sprite.flip_x,
+                color,
+            );
+        }
+        gpu.draw_batch(Some(tex));
     }
 
     /// Draw Lua sprites assigned to camHUD (rendered in HUD space with HUD zoom).
     fn draw_lua_sprites_hud(&self, gpu: &mut GpuState) {
-        let all_tags = self.lua_behind.iter().chain(self.lua_front.iter());
-        for tag in all_tags {
+        for layer in &self.draw_order {
+            let tag = match layer {
+                DrawLayer::LuaSprite(tag) => tag,
+                _ => continue,
+            };
             let tex = match self.lua_textures.get(tag) {
                 Some(t) => t,
                 None => continue,

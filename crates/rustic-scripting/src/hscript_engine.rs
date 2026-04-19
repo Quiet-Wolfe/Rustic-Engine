@@ -7,7 +7,7 @@
 //! itself lives in `rustic-hscript`; this file only deals with the bridge
 //! between our ScriptState and that interpreter's HostBridge trait.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rustic_hscript::{HostBridge, Interp, Value as HValue};
 
@@ -16,6 +16,7 @@ use crate::script_state::{LuaValue, ScriptState};
 /// A single loaded HScript file.
 pub struct HScriptEngine {
     interp: Interp,
+    source_path: PathBuf,
     name: String,
 }
 
@@ -40,7 +41,15 @@ impl HScriptEngine {
             .load(&name, &source, &mut bridge)
             .map_err(|e| format!("{name}: {e}"))?;
 
-        Ok(Self { interp, name })
+        Ok(Self {
+            interp,
+            source_path: path.to_path_buf(),
+            name,
+        })
+    }
+
+    pub fn matches_target(&self, target: &str) -> bool {
+        crate::lua_engine::script_target_matches(&self.source_path, &self.name, target)
     }
 
     /// Returns true if the script defines a callback with the given name.

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use kira::manager::{AudioManager, AudioManagerSettings, DefaultBackend};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
@@ -18,6 +20,8 @@ pub struct AudioEngine {
     loop_music: Option<StaticSoundHandle>,
     /// One-shot video/cutscene audio handle.
     cutscene_audio: Option<StaticSoundHandle>,
+    /// Lua/Psych tagged sounds, addressed by tag for stop/pause/seek/fade APIs.
+    tagged_sounds: HashMap<String, StaticSoundHandle>,
 }
 
 impl AudioEngine {
@@ -34,6 +38,7 @@ impl AudioEngine {
             miss_index: 0,
             loop_music: None,
             cutscene_audio: None,
+            tagged_sounds: HashMap::new(),
         }
     }
 
@@ -187,6 +192,104 @@ impl AudioEngine {
         }
     }
 
+    /// Play a Lua/Psych sound with an optional tag. Tagged sounds keep their
+    /// handle so scripts can control them later.
+    pub fn play_tagged_sound(&mut self, tag: &str, path: &Path, volume: f64, looping: bool) {
+        if !path.exists() || tag.is_empty() {
+            return;
+        }
+        self.stop_tagged_sound(tag);
+        if let Ok(data) = StaticSoundData::from_file(path) {
+            let data = if looping { data.loop_region(..) } else { data };
+            if let Ok(mut handle) = self.manager.play(data) {
+                handle.set_volume(volume, Tween::default());
+                self.tagged_sounds.insert(tag.to_string(), handle);
+            }
+        }
+    }
+
+    pub fn stop_tagged_sound(&mut self, tag: &str) {
+        if let Some(mut handle) = self.tagged_sounds.remove(tag) {
+            handle.stop(Tween::default());
+        }
+    }
+
+    pub fn stop_all_tagged_sounds(&mut self) {
+        for (_, mut handle) in self.tagged_sounds.drain() {
+            handle.stop(Tween::default());
+        }
+    }
+
+    pub fn pause_tagged_sound(&mut self, tag: &str) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            handle.pause(Tween::default());
+        }
+    }
+
+    pub fn pause_all_tagged_sounds(&mut self) {
+        for handle in self.tagged_sounds.values_mut() {
+            handle.pause(Tween::default());
+        }
+    }
+
+    pub fn resume_tagged_sound(&mut self, tag: &str) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            handle.resume(Tween::default());
+        }
+    }
+
+    pub fn resume_all_tagged_sounds(&mut self) {
+        for handle in self.tagged_sounds.values_mut() {
+            handle.resume(Tween::default());
+        }
+    }
+
+    pub fn set_tagged_sound_volume(&mut self, tag: &str, volume: f64) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            handle.set_volume(volume, Tween::default());
+        }
+    }
+
+    pub fn fade_tagged_sound(&mut self, tag: &str, from: Option<f64>, to: f64, duration_secs: f64) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            if let Some(from) = from {
+                handle.set_volume(from, Tween::default());
+            }
+            handle.set_volume(to, tween_secs(duration_secs));
+        }
+    }
+
+    pub fn fade_out_tagged_sound(&mut self, tag: &str, duration_secs: f64) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            handle.stop(tween_secs(duration_secs));
+        }
+    }
+
+    pub fn seek_tagged_sound(&mut self, tag: &str, position_ms: f64) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            handle.seek_to(position_ms / 1000.0);
+        }
+    }
+
+    pub fn tagged_sound_position_ms(&self, tag: &str) -> Option<f64> {
+        self.tagged_sounds
+            .get(tag)
+            .map(|handle| handle.position() * 1000.0)
+    }
+
+    pub fn tagged_sound_exists(&self, tag: &str) -> bool {
+        self.tagged_sounds
+            .get(tag)
+            .map(|handle| handle.state() != PlaybackState::Stopped)
+            .unwrap_or(false)
+    }
+
+    pub fn set_tagged_sound_pitch(&mut self, tag: &str, pitch: f64) {
+        if let Some(handle) = self.tagged_sounds.get_mut(tag) {
+            handle.set_playback_rate(pitch, Tween::default());
+        }
+    }
+
     /// Play a looping music track (e.g. gameOver.ogg). Stops any previous loop.
     pub fn play_loop_music(&mut self, path: &Path) {
         self.play_loop_music_vol(path, 1.0);
@@ -221,6 +324,21 @@ impl AudioEngine {
         }
     }
 
+    pub fn fade_loop_music(&mut self, from: Option<f64>, to: f64, duration_secs: f64) {
+        if let Some(h) = &mut self.loop_music {
+            if let Some(from) = from {
+                h.set_volume(from, Tween::default());
+            }
+            h.set_volume(to, tween_secs(duration_secs));
+        }
+    }
+
+    pub fn fade_out_loop_music(&mut self, duration_secs: f64) {
+        if let Some(h) = &mut self.loop_music {
+            h.stop(tween_secs(duration_secs));
+        }
+    }
+
     pub fn pause_loop_music(&mut self) {
         if let Some(h) = &mut self.loop_music {
             h.pause(Tween::default());
@@ -243,6 +361,12 @@ impl AudioEngine {
     pub fn seek_loop_music(&mut self, position_ms: f64) {
         if let Some(h) = &mut self.loop_music {
             h.seek_to(position_ms / 1000.0);
+        }
+    }
+
+    pub fn set_loop_music_pitch(&mut self, pitch: f64) {
+        if let Some(h) = &mut self.loop_music {
+            h.set_playback_rate(pitch, Tween::default());
         }
     }
 
@@ -304,5 +428,12 @@ impl AudioEngine {
         StaticSoundData::from_file(path)
             .ok()
             .map(|data| data.duration().as_secs_f64() * 1000.0)
+    }
+}
+
+fn tween_secs(secs: f64) -> Tween {
+    Tween {
+        duration: Duration::from_secs_f64(secs.max(0.001)),
+        ..Default::default()
     }
 }

@@ -7,8 +7,8 @@ pub mod tweens;
 pub use hscript_engine::HScriptEngine;
 pub use lua_engine::LuaScript;
 pub use script_state::{
-    AudioRequest, LuaSprite, LuaSpriteKind, LuaValue, NoteTypeRegistration, ScriptCallRequest,
-    ScriptState, StrumProps,
+    AudioRequest, LuaSprite, LuaSpriteKind, LuaValue, NoteTypeRegistration, PrecacheRequest,
+    ScriptCallRequest, ScriptState, SongControlRequest, StrumProps,
 };
 pub use tweens::{EaseFunc, LuaTimer, Tween, TweenManager, TweenProperty};
 
@@ -73,6 +73,15 @@ impl ScriptManager {
         self.state.image_roots = roots;
     }
 
+    /// Sync object order mapping to Lua so `getObjectOrder` can return correct values.
+    pub fn set_object_orders(&mut self, tags: &[String]) {
+        for script in &mut self.scripts {
+            if let Script::Lua(s) = script {
+                s.set_object_orders(tags);
+            }
+        }
+    }
+
     /// Load a script file. Dispatches by extension: `.hx` → HScript,
     /// anything else → Lua.
     pub fn load_script(&mut self, path: &Path) {
@@ -111,6 +120,22 @@ impl ScriptManager {
     pub fn call(&mut self, callback: &str) {
         self.refresh_running_scripts();
         for script in &mut self.scripts {
+            let result = match script {
+                Script::Lua(s) => s.call_callback(callback, &mut self.state, &[]),
+                Script::HScript(s) => s.call_callback(callback, &mut self.state, &[]),
+            };
+            if let Err(e) = result {
+                log::error!("callback '{}' error: {}", callback, e);
+            }
+        }
+        self.process_script_control_requests();
+    }
+
+    /// Call a named callback only on the most recently loaded script.
+    /// Used after dynamic `addLuaScript` so onCreate/onCreatePost fire once for
+    /// the new script without re-invoking them on already-initialized scripts.
+    pub fn call_on_last_script(&mut self, callback: &str) {
+        if let Some(script) = self.scripts.last_mut() {
             let result = match script {
                 Script::Lua(s) => s.call_callback(callback, &mut self.state, &[]),
                 Script::HScript(s) => s.call_callback(callback, &mut self.state, &[]),
@@ -390,14 +415,31 @@ impl ScriptManager {
             if !removes.is_empty() {
                 self.scripts.retain_mut(|script| match script {
                     Script::Lua(s) => !removes.iter().any(|target| s.matches_target(target)),
-                    Script::HScript(_) => true,
+                    Script::HScript(s) => !removes.iter().any(|target| s.matches_target(target)),
                 });
                 self.refresh_running_scripts();
             }
 
+            let global_sets: Vec<(String, LuaValue)> =
+                self.state.script_global_sets.drain(..).collect();
+            for (name, value) in &global_sets {
+                for script in &mut self.scripts {
+                    match script {
+                        Script::Lua(s) => s.set_global_value(name, value),
+                        Script::HScript(s) => match value {
+                            LuaValue::Bool(v) => s.set_global_bool(name, *v),
+                            LuaValue::Int(v) => s.set_global_number(name, *v as f64),
+                            LuaValue::Float(v) => s.set_global_number(name, *v),
+                            LuaValue::String(v) => s.set_global_string(name, v),
+                            _ => {}
+                        },
+                    }
+                }
+            }
+
             let requests: Vec<ScriptCallRequest> =
                 self.state.script_call_requests.drain(..).collect();
-            if requests.is_empty() {
+            if requests.is_empty() && global_sets.is_empty() {
                 break;
             }
 
@@ -406,7 +448,7 @@ impl ScriptManager {
                     let should_call = match &request.target {
                         Some(target) => match script {
                             Script::Lua(s) => s.matches_target(target),
-                            Script::HScript(_) => false,
+                            Script::HScript(s) => s.matches_target(target),
                         },
                         None => true,
                     };
@@ -421,14 +463,10 @@ impl ScriptManager {
                             &request.args,
                         ),
                         Script::HScript(s) => {
-                            if request.target.is_some() {
-                                Ok(())
-                            } else {
-                                let args: Vec<String> =
-                                    request.args.iter().map(lua_value_to_arg_string).collect();
-                                let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                                s.call_callback_str(&request.function, &mut self.state, &refs)
-                            }
+                            let args: Vec<String> =
+                                request.args.iter().map(lua_value_to_arg_string).collect();
+                            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                            s.call_callback_str(&request.function, &mut self.state, &refs)
                         }
                     };
 

@@ -9,7 +9,7 @@ mod update;
 #[cfg(feature = "rl")]
 mod rl;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use winit::event::TouchPhase;
 use winit::keyboard::KeyCode;
@@ -22,7 +22,9 @@ use rustic_gameplay::play_state::PlayState;
 use rustic_render::camera::GameCamera;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::SpriteAtlas;
-use rustic_scripting::{AudioRequest, LuaSpriteKind, ScriptManager};
+use rustic_scripting::{
+    AudioRequest, LuaSpriteKind, PrecacheRequest, ScriptManager, SongControlRequest,
+};
 
 use self::pause::PauseMenuState;
 use self::story::StorySession;
@@ -139,12 +141,13 @@ pub(super) struct HealthDrain {
 
 /// Draw order layer — determines what gets drawn when.
 /// Built from stage `objects` array or hardcoded fallback.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DrawLayer {
     StageBg(usize),
     Gf,
     Dad,
     Bf,
+    LuaSprite(String),
 }
 
 /// Generic stage overlay: split left/right color tint system.
@@ -322,6 +325,7 @@ pub struct PlayScreen {
     pub(super) countdown_alpha: f32,
     pub(super) countdown_swag: i32,
     pub(super) hud_zoom: f32,
+    pub(super) hud_visible: bool,
     pub(super) icon_scale_bf: f32,
     pub(super) icon_scale_dad: f32,
 
@@ -379,8 +383,8 @@ pub struct PlayScreen {
     pub(super) scripts: ScriptManager,
     pub(super) lua_textures: HashMap<String, GpuTexture>,
     pub(super) lua_atlases: HashMap<String, SpriteAtlas>,
-    pub(super) lua_behind: Vec<String>, // sprite tags drawn behind characters
-    pub(super) lua_front: Vec<String>,  // sprite tags drawn in front of characters
+    pub(super) precached_textures: HashMap<String, GpuTexture>,
+    pub(super) precached_assets: HashSet<String>,
     pub(super) paths: AssetPaths,
     /// Per-note-type custom skin assets, keyed by type string (e.g. "scytheNote").
     pub(super) custom_note_assets: HashMap<String, NoteAssets>,
@@ -462,6 +466,7 @@ impl PlayScreen {
             countdown_alpha: 0.0,
             countdown_swag: -1,
             hud_zoom: 1.0,
+            hud_visible: true,
             icon_scale_bf: 1.0,
             icon_scale_dad: 1.0,
             note_assets: None,
@@ -504,8 +509,8 @@ impl PlayScreen {
             scripts: ScriptManager::new(),
             lua_textures: HashMap::new(),
             lua_atlases: HashMap::new(),
-            lua_behind: Vec::new(),
-            lua_front: Vec::new(),
+            precached_textures: HashMap::new(),
+            precached_assets: HashSet::new(),
             paths: AssetPaths::platform_default(),
             custom_note_assets: HashMap::new(),
             pending_note_skin_loads: Vec::new(),
@@ -627,6 +632,30 @@ impl PlayScreen {
         let requests: Vec<_> = self.scripts.state.audio_requests.drain(..).collect();
         for request in requests {
             match request {
+                AudioRequest::PlaySound {
+                    path,
+                    volume,
+                    tag,
+                    looping,
+                } => {
+                    let sound_path = self.resolve_audio_path(&path);
+                    let Some(audio) = &mut self.audio else {
+                        continue;
+                    };
+                    if let Some(sound_path) = sound_path {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.play_tagged_sound(&tag, &sound_path, volume, looping);
+                            self.scripts.state.sound_tags.insert(tag.clone());
+                            self.scripts.state.sound_volumes.insert(tag.clone(), volume);
+                            self.scripts.state.sound_times.insert(tag.clone(), 0.0);
+                            self.scripts.state.sound_pitches.entry(tag).or_insert(1.0);
+                        } else if looping {
+                            audio.play_loop_music_vol(&sound_path, volume);
+                        } else {
+                            audio.play_sound(&sound_path, volume);
+                        }
+                    }
+                }
                 AudioRequest::PlayMusic {
                     path,
                     volume,
@@ -663,6 +692,177 @@ impl PlayScreen {
                 AudioRequest::SetMusicTime(time) => {
                     if let Some(audio) = &mut self.audio {
                         audio.seek_loop_music(time);
+                    }
+                }
+                AudioRequest::StopSound(tag) => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.stop_tagged_sound(&tag);
+                            self.scripts.state.sound_tags.remove(&tag);
+                            self.scripts.state.sound_volumes.remove(&tag);
+                            self.scripts.state.sound_times.remove(&tag);
+                            self.scripts.state.sound_pitches.remove(&tag);
+                        } else {
+                            audio.stop_loop_music();
+                            audio.stop_all_tagged_sounds();
+                            self.scripts.state.sound_tags.clear();
+                            self.scripts.state.sound_volumes.clear();
+                            self.scripts.state.sound_times.clear();
+                            self.scripts.state.sound_pitches.clear();
+                        }
+                    }
+                }
+                AudioRequest::PauseSound(tag) => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.pause_tagged_sound(&tag);
+                        } else {
+                            audio.pause_loop_music();
+                            audio.pause_all_tagged_sounds();
+                        }
+                    }
+                }
+                AudioRequest::ResumeSound(tag) => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.resume_tagged_sound(&tag);
+                        } else {
+                            audio.resume_loop_music();
+                            audio.resume_all_tagged_sounds();
+                        }
+                    }
+                }
+                AudioRequest::SetSoundVolume { tag, volume } => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.set_tagged_sound_volume(&tag, volume);
+                            self.scripts.state.sound_volumes.insert(tag, volume);
+                        } else {
+                            audio.set_loop_music_volume(volume);
+                        }
+                    }
+                }
+                AudioRequest::SetSoundTime { tag, time } => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.seek_tagged_sound(&tag, time);
+                            self.scripts.state.sound_times.insert(tag, time);
+                        } else {
+                            audio.seek_loop_music(time);
+                        }
+                    }
+                }
+                AudioRequest::SoundFade {
+                    tag,
+                    from,
+                    to,
+                    duration,
+                    stop_when_done,
+                } => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            if stop_when_done {
+                                audio.fade_out_tagged_sound(&tag, duration);
+                            } else {
+                                audio.fade_tagged_sound(&tag, from, to, duration);
+                            }
+                            self.scripts.state.sound_volumes.insert(tag, to);
+                        } else if stop_when_done {
+                            audio.fade_out_loop_music(duration);
+                        } else {
+                            audio.fade_loop_music(from, to, duration);
+                        }
+                    }
+                }
+                AudioRequest::SetSoundPitch { tag, pitch } => {
+                    if let Some(audio) = &mut self.audio {
+                        if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
+                            audio.set_tagged_sound_pitch(&tag, pitch);
+                            self.scripts.state.sound_pitches.insert(tag, pitch);
+                        } else {
+                            audio.set_loop_music_pitch(pitch);
+                        }
+                    }
+                }
+            }
+        }
+        self.sync_script_sound_times();
+    }
+
+    fn sync_script_sound_times(&mut self) {
+        let Some(audio) = &self.audio else {
+            return;
+        };
+        let tags: Vec<String> = self.scripts.state.sound_tags.iter().cloned().collect();
+        for tag in tags {
+            if audio.tagged_sound_exists(&tag) {
+                if let Some(time) = audio.tagged_sound_position_ms(&tag) {
+                    self.scripts.state.sound_times.insert(tag, time);
+                }
+            } else {
+                self.scripts.state.sound_tags.remove(&tag);
+                self.scripts.state.sound_volumes.remove(&tag);
+                self.scripts.state.sound_times.remove(&tag);
+                self.scripts.state.sound_pitches.remove(&tag);
+            }
+        }
+    }
+
+    pub(super) fn process_precache_requests(&mut self, gpu: &GpuState) {
+        let requests: Vec<_> = self.scripts.state.precache_requests.drain(..).collect();
+        for request in requests {
+            match request {
+                PrecacheRequest::Image { name, allow_gpu } => {
+                    let key = format!("image:{name}");
+                    if self.precached_assets.contains(&key) {
+                        continue;
+                    }
+                    if let Some(path) = self.paths.image(&name).or_else(|| self.paths.find(&name)) {
+                        if allow_gpu {
+                            let tex = gpu.load_texture_from_path(&path);
+                            self.precached_textures.insert(key.clone(), tex);
+                        }
+                        self.precached_assets.insert(key);
+                    } else {
+                        log::warn!("precacheImage: missing '{}'", name);
+                    }
+                }
+                PrecacheRequest::Sound { name } => {
+                    let key = format!("sound:{name}");
+                    if self.precached_assets.contains(&key) {
+                        continue;
+                    }
+                    if let Some(path) = self.paths.sound(&name).or_else(|| self.paths.find(&name)) {
+                        let _ = AudioEngine::sound_duration_ms(&path);
+                        self.precached_assets.insert(key);
+                    } else {
+                        log::warn!("precacheSound: missing '{}'", name);
+                    }
+                }
+                PrecacheRequest::Music { name } => {
+                    let key = format!("music:{name}");
+                    if self.precached_assets.contains(&key) {
+                        continue;
+                    }
+                    if let Some(path) = self.paths.music(&name).or_else(|| self.paths.find(&name)) {
+                        let _ = AudioEngine::sound_duration_ms(&path);
+                        self.precached_assets.insert(key);
+                    } else {
+                        log::warn!("precacheMusic: missing '{}'", name);
+                    }
+                }
+                PrecacheRequest::Character {
+                    name,
+                    character_type,
+                } => {
+                    let key = format!("character:{character_type}:{name}");
+                    if self.precached_assets.contains(&key) {
+                        continue;
+                    }
+                    if self.paths.character_json(&name).is_some() {
+                        self.precached_assets.insert(key);
+                    } else {
+                        log::warn!("addCharacterToList: missing character '{}'", name);
                     }
                 }
             }
@@ -804,6 +1004,82 @@ impl PlayScreen {
             self.reflections_enabled = enabled;
         }
 
+        let control_reqs: Vec<_> = self.scripts.state.control_requests.drain(..).collect();
+        for req in control_reqs {
+            match req {
+                SongControlRequest::StartCountdown => {
+                    if !self.game.song_started {
+                        self.game.conductor.song_position = -self.game.conductor.crochet * 5.0;
+                        self.game.countdown_timer = self.game.conductor.crochet * 5.0;
+                        self.countdown_swag = -1;
+                        self.countdown_alpha = 0.0;
+                    }
+                }
+                SongControlRequest::EndSong => {
+                    self.completed_song = true;
+                    self.game.song_ended = true;
+                }
+                SongControlRequest::ExitSong => {
+                    self.completed_song = false;
+                    self.game.song_ended = true;
+                }
+                SongControlRequest::RestartSong => {
+                    self.wants_restart = true;
+                }
+                SongControlRequest::LoadSong { song, difficulty } => {
+                    self.song_name = song;
+                    if let Some(difficulty) = difficulty {
+                        self.difficulty = match difficulty {
+                            0 => "Easy",
+                            1 => "Normal",
+                            2 => "Hard",
+                            _ => self.difficulty.as_str(),
+                        }
+                        .to_string();
+                    }
+                    self.wants_restart = true;
+                }
+                SongControlRequest::StartDialogue { dialogue, music } => {
+                    log::debug!("Lua requested dialogue '{}' music {:?}", dialogue, music);
+                }
+                SongControlRequest::OpenCustomSubstate { name, pause_game } => {
+                    self.scripts.state.custom_vars.insert(
+                        "__customSubstate".to_string(),
+                        rustic_scripting::LuaValue::String(name.clone()),
+                    );
+                    self.scripts.set_str_on_all("__customSubstate", &name);
+                    self.scripts
+                        .set_bool_on_all("__customSubstatePaused", pause_game);
+                    if self.scripts.has_scripts() {
+                        self.scripts
+                            .call_lua_function("onCustomSubstateCreate", &name);
+                        self.scripts
+                            .call_lua_function("onCustomSubstateCreatePost", &name);
+                    }
+                }
+                SongControlRequest::CloseCustomSubstate => {
+                    let name = self
+                        .scripts
+                        .state
+                        .custom_vars
+                        .get("__customSubstate")
+                        .and_then(|v| match v {
+                            rustic_scripting::LuaValue::String(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    if self.scripts.has_scripts() {
+                        self.scripts
+                            .call_lua_function("onCustomSubstateDestroy", &name);
+                    }
+                    self.scripts.state.custom_vars.remove("__customSubstate");
+                    self.scripts.set_str_on_all("__customSubstate", "");
+                    self.scripts
+                        .set_bool_on_all("__customSubstatePaused", false);
+                }
+            }
+        }
+
         // Custom health bar color requests
         // Accumulate targets so multiple requests in the same frame don't overwrite each other
         let hb_reqs: Vec<_> = self
@@ -851,9 +1127,12 @@ impl PlayScreen {
                 if p.exists() {
                     log::info!("Dynamic loading Lua script '{}': {:?}", req, p);
                     self.scripts.load_script(&p);
-                    // Inform the script it was dynamically loaded
-                    self.scripts.call("onCreate");
-                    self.scripts.call("onCreatePost");
+                    // Inform only the newly loaded script it was created.
+                    // Re-calling on all scripts would re-fire onCreate on the stage
+                    // script whose original onCreate queued this load, and trigger
+                    // cascading re-loads (freeze).
+                    self.scripts.call_on_last_script("onCreate");
+                    self.scripts.call_on_last_script("onCreatePost");
                     loaded = true;
                     break;
                 }
@@ -1174,6 +1453,44 @@ impl PlayScreen {
                         self.game.score.health = v.clamp(0.0, 2.0);
                     }
                 }
+                "score" => {
+                    if let Some(v) = as_f32 {
+                        self.game.score.score = v as i32;
+                    }
+                }
+                "misses" => {
+                    if let Some(v) = as_f32 {
+                        self.game.score.misses = (v as i32).max(0);
+                        self.game.score.total_notes_played = self
+                            .game
+                            .score
+                            .total_notes_played
+                            .max(self.game.score.misses);
+                    }
+                }
+                "hits" => {
+                    if let Some(v) = as_f32 {
+                        let hits = (v as i32).max(0);
+                        self.game.score.total_notes_played = hits + self.game.score.misses;
+                        self.game.score.total_notes_hit =
+                            self.game.score.total_notes_hit.min(hits as f64);
+                    }
+                }
+                "rating" => {
+                    if let Some(v) = as_f32 {
+                        self.scripts.state.rating_override = Some(v.clamp(0.0, 1.0) as f64);
+                    }
+                }
+                "ratingName" => {
+                    if let LuaValue::String(s) = &val {
+                        self.scripts.state.rating_name_override = Some(s.clone());
+                    }
+                }
+                "ratingFC" => {
+                    if let LuaValue::String(s) = &val {
+                        self.scripts.state.rating_fc_override = Some(s.clone());
+                    }
+                }
                 "isCameraOnForcedPos" => {
                     if let LuaValue::Bool(b) = &val {
                         self.camera_forced_pos = *b;
@@ -1204,8 +1521,57 @@ impl PlayScreen {
                         self.hud_zoom = v;
                     }
                 }
+                "camHUD.visible" | "hud.visible" => {
+                    if let LuaValue::Bool(b) = &val {
+                        self.hud_visible = *b;
+                    }
+                }
                 "camGame.visible" => {
                     // TODO: toggle game camera visibility
+                }
+                _ if prop.starts_with("__charScroll.") => {
+                    let tag = &prop["__charScroll.".len()..];
+                    if let LuaValue::Array(arr) = &val {
+                        if arr.len() == 2 {
+                            if let (LuaValue::Float(x), LuaValue::Float(y)) = (&arr[0], &arr[1]) {
+                                if tag == "boyfriendGroup" || tag == "bf" || tag == "boyfriend" {
+                                    if let Some(bf) = &mut self.char_bf {
+                                        bf.set_scroll_factor(*x as f32, *y as f32);
+                                    }
+                                } else if tag == "dadGroup" || tag == "dad" || tag == "opponent" {
+                                    if let Some(dad) = &mut self.char_dad {
+                                        dad.set_scroll_factor(*x as f32, *y as f32);
+                                    }
+                                } else if tag == "gfGroup" || tag == "gf" || tag == "girlfriend" {
+                                    if let Some(gf) = &mut self.char_gf {
+                                        gf.set_scroll_factor(*x as f32, *y as f32);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ if prop.starts_with("__object_order.") => {
+                    if let Some(order_f32) = as_f32 {
+                        let tag = &prop["__object_order.".len()..];
+                        let layer = if tag == "boyfriendGroup" || tag == "bf" {
+                            DrawLayer::Bf
+                        } else if tag == "dadGroup" || tag == "dad" {
+                            DrawLayer::Dad
+                        } else if tag == "gfGroup" || tag == "gf" {
+                            DrawLayer::Gf
+                        } else if let Some(i) = tag.strip_prefix("stage_bg_") {
+                            DrawLayer::StageBg(i.parse().unwrap_or(0))
+                        } else {
+                            DrawLayer::LuaSprite(tag.to_string())
+                        };
+
+                        self.draw_order.retain(|l| l != &layer);
+                        let max_idx = self.draw_order.len();
+                        let idx = (order_f32 as usize).min(max_idx);
+                        self.draw_order.insert(idx, layer);
+                        self.sync_draw_order_to_lua();
+                    }
                 }
                 "__charPlayAnim.dad" | "__charPlayAnim.opponent" => {
                     if let LuaValue::String(anim) = &val {
@@ -1487,9 +1853,25 @@ impl PlayScreen {
         );
     }
 
+    pub(super) fn sync_draw_order_to_lua(&mut self) {
+        let mut tags = Vec::new();
+        for layer in &self.draw_order {
+            let tag = match layer {
+                DrawLayer::StageBg(i) => format!("stage_bg_{}", i),
+                DrawLayer::Gf => "gfGroup".to_string(),
+                DrawLayer::Dad => "dadGroup".to_string(),
+                DrawLayer::Bf => "boyfriendGroup".to_string(),
+                DrawLayer::LuaSprite(tag) => tag.clone(),
+            };
+            tags.push(tag);
+        }
+        self.scripts.set_object_orders(&tags);
+    }
+
     /// Process pending Lua sprite additions: load textures and add to draw lists.
     pub(super) fn process_lua_sprites(&mut self, gpu: &GpuState) {
         let adds: Vec<(String, bool)> = self.scripts.state.sprites_to_add.drain(..).collect();
+        let has_adds = !adds.is_empty();
         for (tag, in_front) in adds {
             // Skip if already added
             if self.lua_textures.contains_key(&tag) {
@@ -1576,9 +1958,17 @@ impl PlayScreen {
 
             self.lua_textures.insert(tag.clone(), tex);
             if in_front {
-                self.lua_front.push(tag);
+                self.draw_order.push(DrawLayer::LuaSprite(tag.clone()));
             } else {
-                self.lua_behind.push(tag);
+                let mut pos = self.draw_order.len();
+                for (i, layer) in self.draw_order.iter().enumerate() {
+                    if matches!(layer, DrawLayer::Gf | DrawLayer::Dad | DrawLayer::Bf) {
+                        pos = i;
+                        break;
+                    }
+                }
+                self.draw_order
+                    .insert(pos, DrawLayer::LuaSprite(tag.clone()));
             }
         }
 
@@ -1587,9 +1977,13 @@ impl PlayScreen {
         for tag in &removes {
             self.lua_textures.remove(tag);
             self.lua_atlases.remove(tag);
-            self.lua_behind.retain(|t| t != tag);
-            self.lua_front.retain(|t| t != tag);
+            self.draw_order
+                .retain(|l| l != &DrawLayer::LuaSprite(tag.clone()));
             self.scripts.state.lua_sprites.remove(tag);
+        }
+
+        if has_adds || !removes.is_empty() {
+            self.sync_draw_order_to_lua();
         }
 
         // Register any new animations on existing atlases (for late addAnimationByPrefix calls)
@@ -1673,16 +2067,70 @@ fn parse_key_code(value: &str, fallback: KeyCode) -> KeyCode {
     }
 }
 
+fn lua_key_names(key: KeyCode) -> Vec<String> {
+    let code = format!("{key:?}");
+    let mut names = vec![code.clone(), code.to_ascii_uppercase()];
+    if let Some(letter) = code.strip_prefix("Key") {
+        names.push(letter.to_ascii_uppercase());
+    }
+    if let Some(digit) = code.strip_prefix("Digit") {
+        names.push(digit.to_string());
+        names.push(
+            match digit {
+                "0" => "ZERO",
+                "1" => "ONE",
+                "2" => "TWO",
+                "3" => "THREE",
+                "4" => "FOUR",
+                "5" => "FIVE",
+                "6" => "SIX",
+                "7" => "SEVEN",
+                "8" => "EIGHT",
+                "9" => "NINE",
+                _ => digit,
+            }
+            .to_string(),
+        );
+    }
+    match key {
+        KeyCode::ArrowLeft => names.push("LEFT".to_string()),
+        KeyCode::ArrowDown => names.push("DOWN".to_string()),
+        KeyCode::ArrowUp => names.push("UP".to_string()),
+        KeyCode::ArrowRight => names.push("RIGHT".to_string()),
+        KeyCode::Enter => names.push("ACCEPT".to_string()),
+        KeyCode::Escape => names.push("BACK".to_string()),
+        KeyCode::Space => names.push("SPACE".to_string()),
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => names.push("SHIFT".to_string()),
+        KeyCode::ControlLeft | KeyCode::ControlRight => names.push("CONTROL".to_string()),
+        KeyCode::AltLeft | KeyCode::AltRight => names.push("ALT".to_string()),
+        KeyCode::Delete => names.push("DELETE".to_string()),
+        KeyCode::Backspace => names.push("BACKSPACE".to_string()),
+        KeyCode::Tab => names.push("TAB".to_string()),
+        _ => {}
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 impl Screen for PlayScreen {
     fn init(&mut self, gpu: &GpuState) {
         self.init_inner(gpu);
     }
 
     fn handle_key(&mut self, key: KeyCode) {
+        for name in lua_key_names(key) {
+            self.scripts.state.input_pressed.insert(name.clone());
+            self.scripts.state.input_just_pressed.insert(name);
+        }
         self.handle_key_inner(key);
     }
 
     fn handle_key_release(&mut self, key: KeyCode) {
+        for name in lua_key_names(key) {
+            self.scripts.state.input_pressed.remove(&name);
+            self.scripts.state.input_just_released.insert(name);
+        }
         if self.pause_menu.is_some()
             && matches!(
                 key,
@@ -1702,8 +2150,39 @@ impl Screen for PlayScreen {
         }
     }
 
+    fn handle_cursor_move(&mut self, x: f64, y: f64) {
+        self.scripts.state.mouse_position = (x as f32, y as f32);
+    }
+
+    fn handle_mouse_button(&mut self, pressed: bool, x: f64, y: f64) {
+        self.scripts.state.mouse_position = (x as f32, y as f32);
+        if pressed {
+            if !self.scripts.state.mouse_pressed {
+                self.scripts.state.mouse_just_pressed = true;
+            }
+            self.scripts.state.mouse_pressed = true;
+        } else {
+            if self.scripts.state.mouse_pressed {
+                self.scripts.state.mouse_just_released = true;
+            }
+            self.scripts.state.mouse_pressed = false;
+        }
+    }
+
     fn handle_touch(&mut self, _id: u64, phase: TouchPhase, x: f64, y: f64) {
         let (x, y) = (x as f32, y as f32);
+        self.scripts.state.mouse_position = (x, y);
+        match phase {
+            TouchPhase::Started => {
+                self.scripts.state.mouse_pressed = true;
+                self.scripts.state.mouse_just_pressed = true;
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.scripts.state.mouse_pressed = false;
+                self.scripts.state.mouse_just_released = true;
+            }
+            _ => {}
+        }
 
         if let Some(CutsceneState::Video {
             skippable,

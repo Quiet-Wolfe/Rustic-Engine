@@ -177,6 +177,23 @@ impl LuaScript {
         self.lua.globals().set(name, value.to_string()).ok();
     }
 
+    pub fn set_global_value(&self, name: &str, value: &crate::script_state::LuaValue) {
+        if let Ok(value) = script_value_to_lua(&self.lua, value) {
+            self.lua.globals().set(name, value).ok();
+        }
+    }
+
+    /// Sync object order mapping to this script's Lua VM.
+    pub fn set_object_orders(&self, tags: &[String]) {
+        let globals = self.lua.globals();
+        if let Ok(tbl) = self.lua.create_table() {
+            for (i, tag) in tags.iter().enumerate() {
+                tbl.set(tag.as_str(), i as i32).ok();
+            }
+            globals.set("__object_orders", tbl).ok();
+        }
+    }
+
     /// Sync shared game state from Rust into this Lua VM before a callback.
     /// Ensures all scripts see consistent strum positions, camera state, etc.
     fn sync_shared_state(&self, state: &ScriptState) {
@@ -190,6 +207,13 @@ impl LuaScript {
             .ok();
         globals.set("cameraSpeed", state.camera_speed as f64).ok();
         globals.set("__health", state.health as f64).ok();
+        globals.set("score", state.score).ok();
+        globals.set("misses", state.misses).ok();
+        globals.set("hits", state.hits).ok();
+        globals.set("combo", state.combo).ok();
+        globals.set("rating", state.rating).ok();
+        globals.set("ratingName", state.rating_name.as_str()).ok();
+        globals.set("ratingFC", state.rating_fc.as_str()).ok();
         globals
             .set("__dad_anim_name", state.dad_anim_name.as_str())
             .ok();
@@ -212,6 +236,22 @@ impl LuaScript {
             }
             globals.set("__running_scripts", running).ok();
         }
+        self.sync_string_set("__input_pressed", &state.input_pressed);
+        self.sync_string_set("__input_just_pressed", &state.input_just_pressed);
+        self.sync_string_set("__input_just_released", &state.input_just_released);
+        globals.set("__mouse_x", state.mouse_position.0 as f64).ok();
+        globals.set("__mouse_y", state.mouse_position.1 as f64).ok();
+        globals.set("__mouse_pressed", state.mouse_pressed).ok();
+        globals
+            .set("__mouse_just_pressed", state.mouse_just_pressed)
+            .ok();
+        globals
+            .set("__mouse_just_released", state.mouse_just_released)
+            .ok();
+        self.sync_number_map("__sound_volumes", &state.sound_volumes);
+        self.sync_number_map("__sound_times", &state.sound_times);
+        self.sync_number_map("__sound_pitches", &state.sound_pitches);
+        self.sync_string_set("__sound_exists", &state.sound_tags);
 
         // Sync shared custom variables so all scripts see each other's setProperty values
         if let Ok(custom) = globals.get::<LuaTable>("__custom_vars") {
@@ -492,6 +532,24 @@ impl LuaScript {
         }
         // Set the note count as a global for getProperty('unspawnNotes.length')
         globals.set("__unspawnNotesLength", notes.len() as i64).ok();
+    }
+
+    fn sync_string_set(&self, global_name: &str, values: &std::collections::HashSet<String>) {
+        if let Ok(tbl) = self.lua.create_table() {
+            for value in values {
+                tbl.set(value.as_str(), true).ok();
+            }
+            self.lua.globals().set(global_name, tbl).ok();
+        }
+    }
+
+    fn sync_number_map(&self, global_name: &str, values: &std::collections::HashMap<String, f64>) {
+        if let Ok(tbl) = self.lua.create_table() {
+            for (key, value) in values {
+                tbl.set(key.as_str(), *value).ok();
+            }
+            self.lua.globals().set(global_name, tbl).ok();
+        }
     }
 
     /// Transfer sprite creation/property data from Lua's internal tables to ScriptState.
@@ -982,6 +1040,97 @@ impl LuaScript {
                                     },
                                 );
                             }
+                            "set_global" => {
+                                let name: String = tbl.get("name").unwrap_or_default();
+                                if !name.is_empty() {
+                                    let value = tbl_to_lua_value(&tbl, "value");
+                                    state.script_global_sets.push((name.clone(), value.clone()));
+                                    state.custom_vars.insert(name, value);
+                                }
+                            }
+                            "song_control" => {
+                                let action: String = tbl.get("action").unwrap_or_default();
+                                match action.as_str() {
+                                    "start_countdown" => state.control_requests.push(
+                                        crate::script_state::SongControlRequest::StartCountdown,
+                                    ),
+                                    "end_song" => state
+                                        .control_requests
+                                        .push(crate::script_state::SongControlRequest::EndSong),
+                                    "exit_song" => state
+                                        .control_requests
+                                        .push(crate::script_state::SongControlRequest::ExitSong),
+                                    "restart_song" => state
+                                        .control_requests
+                                        .push(crate::script_state::SongControlRequest::RestartSong),
+                                    "load_song" => {
+                                        let song: String = tbl.get("song").unwrap_or_default();
+                                        let difficulty: Option<i32> = tbl.get("difficulty").ok();
+                                        if !song.is_empty() {
+                                            state.control_requests.push(
+                                                crate::script_state::SongControlRequest::LoadSong {
+                                                    song,
+                                                    difficulty,
+                                                },
+                                            );
+                                        }
+                                    }
+                                    "start_dialogue" => {
+                                        let dialogue: String =
+                                            tbl.get("dialogue").unwrap_or_default();
+                                        let music: Option<String> = tbl.get("music").ok();
+                                        state.control_requests.push(
+                                            crate::script_state::SongControlRequest::StartDialogue {
+                                                dialogue,
+                                                music,
+                                            },
+                                        );
+                                    }
+                                    "open_substate" => {
+                                        let name: String = tbl.get("name").unwrap_or_default();
+                                        let pause_game: bool = tbl.get("pause_game").unwrap_or(true);
+                                        state.control_requests.push(
+                                            crate::script_state::SongControlRequest::OpenCustomSubstate {
+                                                name,
+                                                pause_game,
+                                            },
+                                        );
+                                    }
+                                    "close_substate" => state.control_requests.push(
+                                        crate::script_state::SongControlRequest::CloseCustomSubstate,
+                                    ),
+                                    _ => {}
+                                }
+                            }
+                            "precache" => {
+                                let kind: String = tbl.get("kind").unwrap_or_default();
+                                let name: String = tbl.get("name").unwrap_or_default();
+                                if !name.is_empty() {
+                                    match kind.as_str() {
+                                        "image" => state.precache_requests.push(
+                                            crate::script_state::PrecacheRequest::Image {
+                                                name,
+                                                allow_gpu: tbl.get("allow_gpu").unwrap_or(true),
+                                            },
+                                        ),
+                                        "sound" => state.precache_requests.push(
+                                            crate::script_state::PrecacheRequest::Sound { name },
+                                        ),
+                                        "music" => state.precache_requests.push(
+                                            crate::script_state::PrecacheRequest::Music { name },
+                                        ),
+                                        "character" => state.precache_requests.push(
+                                            crate::script_state::PrecacheRequest::Character {
+                                                name,
+                                                character_type: tbl
+                                                    .get("character_type")
+                                                    .unwrap_or_else(|_| "dad".to_string()),
+                                            },
+                                        ),
+                                        _ => {}
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     } else if let Ok(prop) = tbl.get::<String>("prop") {
@@ -1078,6 +1227,20 @@ impl LuaScript {
                 if let Ok(tbl) = pending.get::<LuaTable>(i) {
                     let kind: String = tbl.get("kind").unwrap_or_default();
                     match kind.as_str() {
+                        "play_sound" => {
+                            let path: String = tbl.get("path").unwrap_or_default();
+                            let volume: f64 = tbl.get("volume").unwrap_or(1.0);
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            let looping: bool = tbl.get("looping").unwrap_or(false);
+                            state.audio_requests.push(
+                                crate::script_state::AudioRequest::PlaySound {
+                                    path,
+                                    volume,
+                                    tag,
+                                    looping,
+                                },
+                            );
+                        }
                         "play_music" => {
                             let path: String = tbl.get("path").unwrap_or_default();
                             let volume: f64 = tbl.get("volume").unwrap_or(1.0);
@@ -1110,6 +1273,61 @@ impl LuaScript {
                             state
                                 .audio_requests
                                 .push(crate::script_state::AudioRequest::SetMusicTime(time));
+                        }
+                        "stop_sound" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            state
+                                .audio_requests
+                                .push(crate::script_state::AudioRequest::StopSound(tag));
+                        }
+                        "pause_sound" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            state
+                                .audio_requests
+                                .push(crate::script_state::AudioRequest::PauseSound(tag));
+                        }
+                        "resume_sound" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            state
+                                .audio_requests
+                                .push(crate::script_state::AudioRequest::ResumeSound(tag));
+                        }
+                        "set_sound_volume" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            let volume: f64 = tbl.get("volume").unwrap_or(1.0);
+                            state.audio_requests.push(
+                                crate::script_state::AudioRequest::SetSoundVolume { tag, volume },
+                            );
+                        }
+                        "set_sound_time" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            let time: f64 = tbl.get("time").unwrap_or(0.0);
+                            state.audio_requests.push(
+                                crate::script_state::AudioRequest::SetSoundTime { tag, time },
+                            );
+                        }
+                        "sound_fade" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            let from: Option<f64> = tbl.get("from").ok();
+                            let to: f64 = tbl.get("to").unwrap_or(1.0);
+                            let duration: f64 = tbl.get("duration").unwrap_or(0.0);
+                            let stop_when_done: bool = tbl.get("stop_when_done").unwrap_or(false);
+                            state.audio_requests.push(
+                                crate::script_state::AudioRequest::SoundFade {
+                                    tag,
+                                    from,
+                                    to,
+                                    duration,
+                                    stop_when_done,
+                                },
+                            );
+                        }
+                        "set_sound_pitch" => {
+                            let tag: Option<String> = tbl.get("tag").ok();
+                            let pitch: f64 = tbl.get("pitch").unwrap_or(1.0);
+                            state.audio_requests.push(
+                                crate::script_state::AudioRequest::SetSoundPitch { tag, pitch },
+                            );
                         }
                         _ => {}
                     }
@@ -1598,7 +1816,7 @@ fn script_value_to_lua(lua: &Lua, value: &crate::script_state::LuaValue) -> LuaR
     }
 }
 
-fn script_target_matches(path: &Path, script_name: &str, target: &str) -> bool {
+pub(crate) fn script_target_matches(path: &Path, script_name: &str, target: &str) -> bool {
     fn normalize(value: &str) -> String {
         value
             .replace('\\', "/")

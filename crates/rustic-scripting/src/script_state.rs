@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::tweens::TweenManager;
@@ -24,6 +24,12 @@ pub struct NoteTypeRegistration {
 
 #[derive(Debug, Clone)]
 pub enum AudioRequest {
+    PlaySound {
+        path: String,
+        volume: f64,
+        tag: Option<String>,
+        looping: bool,
+    },
     PlayMusic {
         path: String,
         volume: f64,
@@ -34,6 +40,67 @@ pub enum AudioRequest {
     ResumeMusic,
     SetMusicVolume(f64),
     SetMusicTime(f64),
+    StopSound(Option<String>),
+    PauseSound(Option<String>),
+    ResumeSound(Option<String>),
+    SetSoundVolume {
+        tag: Option<String>,
+        volume: f64,
+    },
+    SetSoundTime {
+        tag: Option<String>,
+        time: f64,
+    },
+    SoundFade {
+        tag: Option<String>,
+        from: Option<f64>,
+        to: f64,
+        duration: f64,
+        stop_when_done: bool,
+    },
+    SetSoundPitch {
+        tag: Option<String>,
+        pitch: f64,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum SongControlRequest {
+    StartCountdown,
+    EndSong,
+    ExitSong,
+    RestartSong,
+    LoadSong {
+        song: String,
+        difficulty: Option<i32>,
+    },
+    StartDialogue {
+        dialogue: String,
+        music: Option<String>,
+    },
+    OpenCustomSubstate {
+        name: String,
+        pause_game: bool,
+    },
+    CloseCustomSubstate,
+}
+
+#[derive(Debug, Clone)]
+pub enum PrecacheRequest {
+    Image {
+        name: String,
+        allow_gpu: bool,
+    },
+    Sound {
+        name: String,
+    },
+    Music {
+        name: String,
+    },
+    Character {
+        name: String,
+        character_type: String,
+    },
 }
 
 /// A queued Psych `callScript` / `callOnLuas` request.
@@ -109,6 +176,16 @@ pub struct ScriptState {
 
     /// Current health value (0..2, synced from game).
     pub health: f32,
+    pub score: i32,
+    pub misses: i32,
+    pub hits: i32,
+    pub combo: i32,
+    pub rating: f64,
+    pub rating_name: String,
+    pub rating_fc: String,
+    pub rating_override: Option<f64>,
+    pub rating_name_override: Option<String>,
+    pub rating_fc_override: Option<String>,
 
     /// Pending camera target changes: "dad"/"bf"/"gf".
     pub camera_target_requests: Vec<String>,
@@ -206,10 +283,27 @@ pub struct ScriptState {
     pub script_load_requests: Vec<String>,
     pub script_remove_requests: Vec<String>,
     pub script_call_requests: Vec<ScriptCallRequest>,
+    pub script_global_sets: Vec<(String, LuaValue)>,
     pub running_scripts: Vec<String>,
 
     /// Pending audio control requests from Lua.
     pub audio_requests: Vec<AudioRequest>,
+    pub control_requests: Vec<SongControlRequest>,
+    pub precache_requests: Vec<PrecacheRequest>,
+
+    pub input_pressed: HashSet<String>,
+    pub input_just_pressed: HashSet<String>,
+    pub input_just_released: HashSet<String>,
+
+    pub mouse_position: (f32, f32),
+    pub mouse_pressed: bool,
+    pub mouse_just_pressed: bool,
+    pub mouse_just_released: bool,
+
+    pub sound_tags: HashSet<String>,
+    pub sound_volumes: HashMap<String, f64>,
+    pub sound_times: HashMap<String, f64>,
+    pub sound_pitches: HashMap<String, f64>,
 
     /// Global downscroll setting (used as fallback when per-strum down_scroll is None).
     pub downscroll: bool,
@@ -436,6 +530,16 @@ impl ScriptState {
             default_cam_zoom: 1.0,
             camera_speed: 1.0,
             health: 1.0,
+            score: 0,
+            misses: 0,
+            hits: 0,
+            combo: 0,
+            rating: 0.0,
+            rating_name: "?".to_string(),
+            rating_fc: "?".to_string(),
+            rating_override: None,
+            rating_name_override: None,
+            rating_fc_override: None,
             camera_target_requests: Vec::new(),
             triggered_events: Vec::new(),
             custom_vars: HashMap::new(),
@@ -474,8 +578,22 @@ impl ScriptState {
             script_load_requests: Vec::new(),
             script_remove_requests: Vec::new(),
             script_call_requests: Vec::new(),
+            script_global_sets: Vec::new(),
             running_scripts: Vec::new(),
             audio_requests: Vec::new(),
+            control_requests: Vec::new(),
+            precache_requests: Vec::new(),
+            input_pressed: HashSet::new(),
+            input_just_pressed: HashSet::new(),
+            input_just_released: HashSet::new(),
+            mouse_position: (0.0, 0.0),
+            mouse_pressed: false,
+            mouse_just_pressed: false,
+            mouse_just_released: false,
+            sound_tags: HashSet::new(),
+            sound_volumes: HashMap::new(),
+            sound_times: HashMap::new(),
+            sound_pitches: HashMap::new(),
             downscroll: false,
         }
     }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
@@ -28,6 +28,7 @@ pub struct App {
     gpu: Option<GpuState>,
     current_screen: Box<dyn Screen>,
     last_frame: Instant,
+    last_cursor_game: Option<(f64, f64)>,
 }
 
 impl App {
@@ -37,6 +38,7 @@ impl App {
             gpu: None,
             current_screen: screen,
             last_frame: Instant::now(),
+            last_cursor_game: None,
         }
     }
 }
@@ -110,6 +112,7 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = &self.gpu {
                     if let Some((gx, gy)) = gpu.physical_to_game(touch.location.x, touch.location.y)
                     {
+                        self.last_cursor_game = Some((gx as f64, gy as f64));
                         self.current_screen.handle_touch(
                             touch.id,
                             touch.phase,
@@ -117,6 +120,24 @@ impl ApplicationHandler for App {
                             gy as f64,
                         );
                     }
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(gpu) = &self.gpu {
+                    if let Some((gx, gy)) = gpu.physical_to_game(position.x, position.y) {
+                        let pos = (gx as f64, gy as f64);
+                        self.last_cursor_game = Some(pos);
+                        self.current_screen.handle_cursor_move(pos.0, pos.1);
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left {
+                    let (x, y) = self.last_cursor_game.unwrap_or((0.0, 0.0));
+                    self.current_screen
+                        .handle_mouse_button(state == ElementState::Pressed, x, y);
                 }
             }
 

@@ -9,6 +9,8 @@ pub trait Screen {
     fn handle_key(&mut self, key: KeyCode);
     fn handle_key_release(&mut self, _key: KeyCode) {}
     fn handle_touch(&mut self, _id: u64, _phase: TouchPhase, _x: f64, _y: f64) {}
+    fn handle_cursor_move(&mut self, _x: f64, _y: f64) {}
+    fn handle_mouse_button(&mut self, _pressed: bool, _x: f64, _y: f64) {}
     fn update(&mut self, dt: f32);
     fn draw(&mut self, gpu: &mut GpuState);
     /// Return a new screen to transition to (e.g. retry).

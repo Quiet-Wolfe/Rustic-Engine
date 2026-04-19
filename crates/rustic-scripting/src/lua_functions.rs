@@ -70,6 +70,42 @@ fn read_png_dimensions(path: &std::path::Path) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
+fn resolve_case_insensitive(root: &std::path::Path, relative: &str) -> Option<std::path::PathBuf> {
+    let mut current = root.to_path_buf();
+    if !current.exists() {
+        return None;
+    }
+
+    let relative = relative.replace('\\', "/");
+    let components: Vec<&str> = relative.split('/').filter(|s| !s.is_empty()).collect();
+
+    for comp in components {
+        let direct = current.join(comp);
+        if direct.exists() {
+            current = direct;
+            continue;
+        }
+
+        // Try case-insensitive
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            return None;
+        };
+        let mut found = false;
+        let comp_lower = comp.to_lowercase();
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().to_lowercase() == comp_lower {
+                current.push(entry.file_name());
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return None;
+        }
+    }
+    Some(current)
+}
+
 /// Resolve an image name to a full path using the stored search roots.
 fn resolve_image_path(lua: &Lua, image: &str) -> Option<std::path::PathBuf> {
     let roots: LuaTable = lua.globals().get("__image_roots").ok()?;
@@ -79,6 +115,11 @@ fn resolve_image_path(lua: &Lua, image: &str) -> Option<std::path::PathBuf> {
         let p = std::path::PathBuf::from(&root).join(format!("images/{image}.png"));
         if p.exists() {
             return Some(p);
+        }
+        if let Some(ci) =
+            resolve_case_insensitive(std::path::Path::new(&root), &format!("images/{image}.png"))
+        {
+            return Some(ci);
         }
     }
     None
@@ -124,6 +165,17 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__pending_char_positions", lua.create_table()?)?;
     g.set("__pending_audio", lua.create_table()?)?;
     g.set("__shader_data", lua.create_table()?)?;
+    g.set("__instances", lua.create_table()?)?;
+    g.set("__camera_values", lua.create_table()?)?;
+    g.set("__sound_volumes", lua.create_table()?)?;
+    g.set("__sound_times", lua.create_table()?)?;
+    g.set("__sound_pitches", lua.create_table()?)?;
+    g.set("__sound_exists", lua.create_table()?)?;
+    g.set("__mouse_x", 0.0)?;
+    g.set("__mouse_y", 0.0)?;
+    g.set("__mouse_pressed", false)?;
+    g.set("__mouse_just_pressed", false)?;
+    g.set("__mouse_just_released", false)?;
 
     // Global variables scripts expect
     g.set("Function_Stop", 1)?;
@@ -435,10 +487,21 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         "setScrollFactor",
         lua.create_function(|lua, (tag, x, y): (String, f64, f64)| {
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                 tbl.set("scroll_x", x as f32)?;
                 tbl.set("scroll_y", y as f32)?;
             }
+
+            // Queue for rust to process characters (which aren't in sprite_data)
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let len = pending.len()? as i64;
+            let tbl = lua.create_table()?;
+            tbl.set("prop", format!("__charScroll.{}", tag))?;
+            let val = lua.create_table()?;
+            val.set(1, x)?;
+            val.set(2, y)?;
+            tbl.set("value", val)?;
+            pending.set(len + 1, tbl)?;
             Ok(())
         })?,
     )?;
@@ -448,9 +511,17 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         "setObjectOrder",
         lua.create_function(|lua, (tag, order): (String, i32)| {
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                 tbl.set("order", order)?;
             }
+
+            // Queue for rust to process
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let len = pending.len()? as i64;
+            let tbl = lua.create_table()?;
+            tbl.set("prop", format!("__object_order.{}", tag))?;
+            tbl.set("value", order)?;
+            pending.set(len + 1, tbl)?;
             Ok(())
         })?,
     )?;
@@ -459,6 +530,11 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "getObjectOrder",
         lua.create_function(|lua, tag: String| -> LuaResult<i32> {
+            if let Ok(orders) = lua.globals().get::<LuaTable>("__object_orders") {
+                if let Ok(order) = orders.get::<i32>(tag.clone()) {
+                    return Ok(order);
+                }
+            }
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
             if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
                 return Ok(tbl.get::<i32>("order").unwrap_or(0));
@@ -1516,8 +1592,8 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
         "getPropertyFromClass",
         lua.create_function(
             |lua, (class, var): (String, String)| -> LuaResult<LuaValue> {
+                let g = lua.globals();
                 if class.contains("PlayState") {
-                    let g = lua.globals();
                     match var.as_str() {
                         "bfVersion" => {
                             // Return the boyfriend character name (e.g., "bf-wind")
@@ -1538,6 +1614,36 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         "endedCatastro" => {
                             let custom: LuaTable = g.get("__custom_vars")?;
                             return Ok(custom.get::<LuaValue>("endedCatastro").unwrap_or(LuaNil));
+                        }
+                        "SONG.needsVoices" => {
+                            return Ok(LuaValue::Boolean(
+                                g.get::<bool>("__songNeedsVoices").unwrap_or(false),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                if class.contains("FlxG") {
+                    match var.as_str() {
+                        "sound.music.time" | "sound.music.position" => {
+                            return Ok(LuaValue::Number(
+                                g.get::<f64>("__songPosition").unwrap_or(0.0),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                if class.contains("Conductor") {
+                    match var.as_str() {
+                        "offset" | "songOffset" => {
+                            return Ok(LuaValue::Number(
+                                g.get::<f64>("__conductorOffset").unwrap_or(0.0),
+                            ));
+                        }
+                        "songPosition" => {
+                            return Ok(LuaValue::Number(
+                                g.get::<f64>("__songPosition").unwrap_or(0.0),
+                            ));
                         }
                         _ => {}
                     }
@@ -2165,13 +2271,9 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
-    // Input (stubs)
-    for name in ["keyJustPressed", "keyPressed", "keyReleased"] {
-        globals.set(
-            name,
-            lua.create_function(|_lua, _key: String| -> LuaResult<bool> { Ok(false) })?,
-        )?;
-    }
+    register_keyboard_query(lua, "keyJustPressed", "__input_just_pressed")?;
+    register_keyboard_query(lua, "keyPressed", "__input_pressed")?;
+    register_keyboard_query(lua, "keyReleased", "__input_just_released")?;
 
     // getMidpointX/Y — returns center of sprite or game character
     globals.set(
@@ -2376,23 +2478,56 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
             Ok(())
         })?,
     )?;
-    globals.set("addScore", lua.create_function(|_lua, _v: i32| Ok(()))?)?;
-    globals.set("setScore", lua.create_function(|_lua, _v: i32| Ok(()))?)?;
-    globals.set("addMisses", lua.create_function(|_lua, _v: i32| Ok(()))?)?;
-    globals.set("setMisses", lua.create_function(|_lua, _v: i32| Ok(()))?)?;
-    globals.set("addHits", lua.create_function(|_lua, _v: i32| Ok(()))?)?;
-    globals.set("setHits", lua.create_function(|_lua, _v: i32| Ok(()))?)?;
+    globals.set(
+        "addScore",
+        lua.create_function(|lua, v: Option<i32>| {
+            let cur = lua.globals().get::<i32>("score").unwrap_or(0);
+            queue_score_property(lua, "score", cur + v.unwrap_or(0))
+        })?,
+    )?;
+    globals.set(
+        "setScore",
+        lua.create_function(|lua, v: Option<i32>| {
+            queue_score_property(lua, "score", v.unwrap_or(0))
+        })?,
+    )?;
+    globals.set(
+        "addMisses",
+        lua.create_function(|lua, v: Option<i32>| {
+            let cur = lua.globals().get::<i32>("misses").unwrap_or(0);
+            queue_score_property(lua, "misses", cur + v.unwrap_or(0))
+        })?,
+    )?;
+    globals.set(
+        "setMisses",
+        lua.create_function(|lua, v: Option<i32>| {
+            queue_score_property(lua, "misses", v.unwrap_or(0))
+        })?,
+    )?;
+    globals.set(
+        "addHits",
+        lua.create_function(|lua, v: Option<i32>| {
+            let cur = lua.globals().get::<i32>("hits").unwrap_or(0);
+            queue_score_property(lua, "hits", cur + v.unwrap_or(0))
+        })?,
+    )?;
+    globals.set(
+        "setHits",
+        lua.create_function(|lua, v: Option<i32>| {
+            queue_score_property(lua, "hits", v.unwrap_or(0))
+        })?,
+    )?;
     globals.set(
         "setRatingPercent",
-        lua.create_function(|_lua, _v: f64| Ok(()))?,
+        lua.create_function(|lua, v: f64| queue_score_property(lua, "rating", v))?,
     )?;
     globals.set(
         "setRatingName",
-        lua.create_function(|_lua, _v: String| Ok(()))?,
+        lua.create_function(|lua, v: String| queue_score_property(lua, "ratingName", v))?,
     )?;
     globals.set(
         "setRatingFC",
-        lua.create_function(|_lua, _v: String| Ok(()))?,
+        lua.create_function(|lua, v: String| queue_score_property(lua, "ratingFC", v))?,
     )?;
     globals.set("updateScoreText", lua.create_function(|_lua, ()| Ok(()))?)?;
 
@@ -2876,6 +3011,20 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
     Ok(())
 }
 
+fn queue_score_property<V>(lua: &Lua, prop: &str, value: V) -> LuaResult<()>
+where
+    V: IntoLua,
+{
+    let lua_value = value.into_lua(lua)?;
+    lua.globals().set(prop, lua_value.clone())?;
+    let pending: LuaTable = lua.globals().get("__pending_props")?;
+    let tbl = lua.create_table()?;
+    tbl.set("prop", prop)?;
+    tbl.set("value", lua_value)?;
+    pending.set(pending.len()? + 1, tbl)?;
+    Ok(())
+}
+
 fn push_tween(
     lua: &Lua,
     tag: &str,
@@ -2903,10 +3052,29 @@ fn register_sound_functions(lua: &Lua) -> LuaResult<()> {
 
     globals.set("__music_volume", 1.0)?;
     globals.set("__music_time", 0.0)?;
+    globals.set("__sound_pitch", 1.0)?;
 
     globals.set(
         "playSound",
-        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+        lua.create_function(
+            |lua,
+             (path, volume, tag, looping): (String, Option<f64>, Option<String>, Option<bool>)| {
+                let pending: LuaTable = lua.globals().get("__pending_audio")?;
+                let tbl = lua.create_table()?;
+                tbl.set("kind", "play_sound")?;
+                tbl.set("path", path)?;
+                tbl.set("volume", volume.unwrap_or(1.0))?;
+                if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                    tbl.set("tag", tag.clone())?;
+                    set_sound_table_value(lua, "__sound_volumes", &tag, volume.unwrap_or(1.0))?;
+                    set_sound_table_value(lua, "__sound_times", &tag, 0.0)?;
+                    set_sound_table_bool(lua, "__sound_exists", &tag, true)?;
+                }
+                tbl.set("looping", looping.unwrap_or(false))?;
+                pending.set(pending.len()? + 1, tbl)?;
+                Ok(())
+            },
+        )?,
     )?;
     globals.set(
         "playMusic",
@@ -2926,61 +3094,90 @@ fn register_sound_functions(lua: &Lua) -> LuaResult<()> {
     )?;
     globals.set(
         "stopSound",
-        lua.create_function(|lua, _tag: Option<String>| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "stop_music")?;
-            pending.set(pending.len()? + 1, tbl)?;
+        lua.create_function(|lua, tag: Option<String>| {
+            queue_sound_tag_request(lua, "stop_sound", tag.as_deref(), &[])?;
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                set_sound_table_bool(lua, "__sound_exists", &tag, false)?;
+            }
             Ok(())
         })?,
     )?;
     globals.set(
         "pauseSound",
-        lua.create_function(|lua, _tag: Option<String>| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "pause_music")?;
-            pending.set(pending.len()? + 1, tbl)?;
+        lua.create_function(|lua, tag: Option<String>| {
+            queue_sound_tag_request(lua, "pause_sound", tag.as_deref(), &[])?;
             Ok(())
         })?,
     )?;
     globals.set(
         "pauseSounds",
-        lua.create_function(|lua, _tag: Option<String>| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "pause_music")?;
-            pending.set(pending.len()? + 1, tbl)?;
+        lua.create_function(|lua, tag: Option<String>| {
+            queue_sound_tag_request(lua, "pause_sound", tag.as_deref(), &[])?;
             Ok(())
         })?,
     )?;
     globals.set(
         "resumeSound",
-        lua.create_function(|lua, _tag: Option<String>| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "resume_music")?;
-            pending.set(pending.len()? + 1, tbl)?;
+        lua.create_function(|lua, tag: Option<String>| {
+            queue_sound_tag_request(lua, "resume_sound", tag.as_deref(), &[])?;
             Ok(())
         })?,
     )?;
     globals.set(
         "resumeSounds",
-        lua.create_function(|lua, _tag: Option<String>| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "resume_music")?;
-            pending.set(pending.len()? + 1, tbl)?;
+        lua.create_function(|lua, tag: Option<String>| {
+            queue_sound_tag_request(lua, "resume_sound", tag.as_deref(), &[])?;
             Ok(())
         })?,
     )?;
     globals.set(
         "soundFadeIn",
-        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+        lua.create_function(|lua, args: LuaMultiValue| {
+            let tag = multi_string(&args, 0);
+            let duration = multi_number(&args, 1).unwrap_or(1.0);
+            let from = multi_number(&args, 2).unwrap_or(0.0);
+            let to = multi_number(&args, 3).unwrap_or(1.0);
+            queue_sound_tag_request(
+                lua,
+                "sound_fade",
+                tag.as_deref(),
+                &[
+                    ("duration", LuaValue::Number(duration)),
+                    ("from", LuaValue::Number(from)),
+                    ("to", LuaValue::Number(to)),
+                    ("stop_when_done", LuaValue::Boolean(false)),
+                ],
+            )?;
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                set_sound_table_value(lua, "__sound_volumes", &tag, to)?;
+            } else {
+                lua.globals().set("__music_volume", to)?;
+            }
+            Ok(())
+        })?,
     )?;
     globals.set(
         "soundFadeOut",
-        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+        lua.create_function(|lua, args: LuaMultiValue| {
+            let tag = multi_string(&args, 0);
+            let duration = multi_number(&args, 1).unwrap_or(1.0);
+            queue_sound_tag_request(
+                lua,
+                "sound_fade",
+                tag.as_deref(),
+                &[
+                    ("duration", LuaValue::Number(duration)),
+                    ("to", LuaValue::Number(0.0)),
+                    ("stop_when_done", LuaValue::Boolean(true)),
+                ],
+            )?;
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                set_sound_table_value(lua, "__sound_volumes", &tag, 0.0)?;
+            } else {
+                lua.globals().set("__music_volume", 0.0)?;
+            }
+            Ok(())
+        })?,
     )?;
     globals.set(
         "soundFadeCancel",
@@ -2988,48 +3185,146 @@ fn register_sound_functions(lua: &Lua) -> LuaResult<()> {
     )?;
     globals.set(
         "getSoundVolume",
-        lua.create_function(|lua, _tag: Option<String>| -> LuaResult<f64> {
+        lua.create_function(|lua, tag: Option<String>| -> LuaResult<f64> {
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                let tbl: LuaTable = lua.globals().get("__sound_volumes")?;
+                return Ok(tbl.get::<f64>(tag).unwrap_or(1.0));
+            }
             Ok(lua.globals().get::<f64>("__music_volume").unwrap_or(1.0))
         })?,
     )?;
     globals.set(
         "setSoundVolume",
-        lua.create_function(|lua, (_tag, vol): (Option<String>, f64)| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "set_music_volume")?;
-            tbl.set("volume", vol)?;
-            pending.set(pending.len()? + 1, tbl)?;
-            lua.globals().set("__music_volume", vol)?;
+        lua.create_function(|lua, (tag, vol): (Option<String>, f64)| {
+            queue_sound_tag_request(
+                lua,
+                "set_sound_volume",
+                tag.as_deref(),
+                &[("volume", LuaValue::Number(vol))],
+            )?;
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                set_sound_table_value(lua, "__sound_volumes", &tag, vol)?;
+            } else {
+                lua.globals().set("__music_volume", vol)?;
+            }
             Ok(())
         })?,
     )?;
     globals.set(
         "getSoundTime",
-        lua.create_function(|lua, _tag: Option<String>| -> LuaResult<f64> {
+        lua.create_function(|lua, tag: Option<String>| -> LuaResult<f64> {
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                let tbl: LuaTable = lua.globals().get("__sound_times")?;
+                return Ok(tbl.get::<f64>(tag).unwrap_or(0.0));
+            }
             Ok(lua.globals().get::<f64>("__music_time").unwrap_or(0.0))
         })?,
     )?;
     globals.set(
         "setSoundTime",
-        lua.create_function(|lua, (_tag, time): (Option<String>, f64)| {
-            let pending: LuaTable = lua.globals().get("__pending_audio")?;
-            let tbl = lua.create_table()?;
-            tbl.set("kind", "set_music_time")?;
-            tbl.set("time", time)?;
-            pending.set(pending.len()? + 1, tbl)?;
-            lua.globals().set("__music_time", time)?;
+        lua.create_function(|lua, (tag, time): (Option<String>, f64)| {
+            queue_sound_tag_request(
+                lua,
+                "set_sound_time",
+                tag.as_deref(),
+                &[("time", LuaValue::Number(time))],
+            )?;
+            if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+                set_sound_table_value(lua, "__sound_times", &tag, time)?;
+            } else {
+                lua.globals().set("__music_time", time)?;
+            }
             Ok(())
         })?,
     )?;
     globals.set(
         "luaSoundExists",
-        lua.create_function(|lua, _tag: String| -> LuaResult<bool> {
-            Ok(lua.globals().get::<f64>("__music_volume").unwrap_or(0.0) >= 0.0)
+        lua.create_function(|lua, tag: String| -> LuaResult<bool> {
+            if tag.is_empty() {
+                return Ok(lua.globals().get::<f64>("__music_volume").is_ok());
+            }
+            let tbl: LuaTable = lua.globals().get("__sound_exists")?;
+            Ok(tbl.get::<bool>(tag).unwrap_or(false))
         })?,
+    )?;
+    globals.set(
+        "getSoundPitch",
+        lua.create_function(|lua, tag: String| -> LuaResult<f64> {
+            if tag.is_empty() {
+                return Ok(lua.globals().get::<f64>("__sound_pitch").unwrap_or(1.0));
+            }
+            let tbl: LuaTable = lua.globals().get("__sound_pitches")?;
+            Ok(tbl.get::<f64>(tag).unwrap_or(1.0))
+        })?,
+    )?;
+    globals.set(
+        "setSoundPitch",
+        lua.create_function(
+            |lua, (tag, pitch, _do_pause): (String, f64, Option<bool>)| {
+                queue_sound_tag_request(
+                    lua,
+                    "set_sound_pitch",
+                    Some(&tag),
+                    &[("pitch", LuaValue::Number(pitch))],
+                )?;
+                if tag.is_empty() {
+                    lua.globals().set("__sound_pitch", pitch)?;
+                } else {
+                    set_sound_table_value(lua, "__sound_pitches", &tag, pitch)?;
+                }
+                Ok(())
+            },
+        )?,
     )?;
 
     Ok(())
+}
+
+fn queue_sound_tag_request(
+    lua: &Lua,
+    kind: &str,
+    tag: Option<&str>,
+    fields: &[(&str, LuaValue)],
+) -> LuaResult<()> {
+    let pending: LuaTable = lua.globals().get("__pending_audio")?;
+    let tbl = lua.create_table()?;
+    tbl.set("kind", kind)?;
+    if let Some(tag) = tag.filter(|s| !s.is_empty()) {
+        tbl.set("tag", tag)?;
+    }
+    for (key, value) in fields {
+        tbl.set(*key, value.clone())?;
+    }
+    pending.set(pending.len()? + 1, tbl)?;
+    Ok(())
+}
+
+fn set_sound_table_value(lua: &Lua, table: &str, tag: &str, value: f64) -> LuaResult<()> {
+    let tbl: LuaTable = lua.globals().get(table)?;
+    tbl.set(tag, value)
+}
+
+fn set_sound_table_bool(lua: &Lua, table: &str, tag: &str, value: bool) -> LuaResult<()> {
+    let tbl: LuaTable = lua.globals().get(table)?;
+    tbl.set(tag, value)
+}
+
+fn multi_string(args: &LuaMultiValue, index: usize) -> Option<String> {
+    args.get(index).and_then(|value| match value {
+        LuaValue::String(s) => s.to_str().ok().map(|s| s.to_string()),
+        LuaValue::Integer(i) => Some(i.to_string()),
+        LuaValue::Number(n) => Some(n.to_string()),
+        _ => None,
+    })
+}
+
+fn multi_number(args: &LuaMultiValue, index: usize) -> Option<f64> {
+    args.get(index).and_then(|value| match value {
+        LuaValue::Integer(i) => Some(*i as f64),
+        LuaValue::Number(n) => Some(*n),
+        LuaValue::String(s) => s.to_str().ok().and_then(|s| s.parse().ok()),
+        _ => None,
+    })
 }
 
 fn register_window_functions(lua: &Lua) -> LuaResult<()> {
@@ -3426,6 +3721,59 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
             Ok(std::fs::read_to_string(path).unwrap_or_default())
         })?,
     )?;
+    lua.globals().set(
+        "saveFile",
+        lua.create_function(
+            |lua, (path, content, absolute): (String, String, Option<bool>)| -> LuaResult<bool> {
+                let Some(path) = writable_lua_file(lua, &path, absolute.unwrap_or(false)) else {
+                    return Ok(false);
+                };
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                Ok(std::fs::write(path, content).is_ok())
+            },
+        )?,
+    )?;
+    lua.globals().set(
+        "deleteFile",
+        lua.create_function(
+            |lua,
+             (path, ignore_mod_folders, absolute): (String, Option<bool>, Option<bool>)|
+             -> LuaResult<bool> {
+                let resolved = if absolute.unwrap_or(false) {
+                    Some(std::path::PathBuf::from(path))
+                } else if ignore_mod_folders.unwrap_or(false) {
+                    find_rooted_file(lua, &path)
+                } else {
+                    writable_lua_file(lua, &path, false)
+                };
+                let Some(path) = resolved else {
+                    return Ok(false);
+                };
+                Ok(path.is_file() && std::fs::remove_file(path).is_ok())
+            },
+        )?,
+    )?;
+    lua.globals().set(
+        "directoryFileList",
+        lua.create_function(|lua, folder: String| -> LuaResult<LuaTable> {
+            let out = lua.create_table()?;
+            if let Some(path) = find_rooted_dir(lua, &folder) {
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    let mut names: Vec<String> = entries
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().to_string())
+                        .collect();
+                    names.sort();
+                    for (i, name) in names.iter().enumerate() {
+                        out.set(i + 1, name.as_str())?;
+                    }
+                }
+            }
+            Ok(out)
+        })?,
+    )?;
 
     // Shader compatibility: store parameters so scripts can read back values
     // they write, even when the renderer does not implement the shader.
@@ -3450,6 +3798,35 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
     register_shader_scalar(lua, "Float")?;
     register_shader_scalar(lua, "Int")?;
     register_shader_bool(lua)?;
+    register_shader_array(lua, "Float", LuaValue::Number(0.0))?;
+    register_shader_array(lua, "Int", LuaValue::Integer(0))?;
+    register_shader_array(lua, "Bool", LuaValue::Boolean(false))?;
+    lua.globals().set(
+        "removeSpriteShader",
+        lua.create_function(|lua, tag: String| {
+            if let Ok(sprite_data) = lua.globals().get::<LuaTable>("__sprite_data") {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.as_str()) {
+                    tbl.set("shader", LuaNil).ok();
+                }
+            }
+            let vars: LuaTable = lua.globals().get("__custom_vars")?;
+            vars.set(format!("{tag}.shader"), LuaNil)?;
+            Ok(true)
+        })?,
+    )?;
+    lua.globals().set(
+        "setShaderSampler2D",
+        lua.create_function(|lua, (target, field, path): (String, String, String)| {
+            let shaders: LuaTable = lua.globals().get("__shader_data")?;
+            shaders.set(shader_key(&target, &field), path)?;
+            Ok(true)
+        })?,
+    )?;
+
+    register_misc_default_functions(lua)?;
+    register_control_default_functions(lua)?;
+    register_reflection_default_functions(lua)?;
+    register_deprecated_aliases(lua)?;
 
     lua.globals().set(
         "removeLuaScript",
@@ -3457,6 +3834,30 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
             let pending: LuaTable = lua.globals().get("__pending_props")?;
             let entry = lua.create_table()?;
             entry.set("type", "remove_script")?;
+            entry.set("script_name", name)?;
+            let len = pending.len()? + 1;
+            pending.set(len, entry)?;
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "removeHScript",
+        lua.create_function(|lua, name: String| {
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let entry = lua.create_table()?;
+            entry.set("type", "remove_script")?;
+            entry.set("script_name", name)?;
+            let len = pending.len()? + 1;
+            pending.set(len, entry)?;
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set(
+        "addHScript",
+        lua.create_function(|lua, name: String| {
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let entry = lua.create_table()?;
+            entry.set("type", "add_script")?;
             entry.set("script_name", name)?;
             let len = pending.len()? + 1;
             pending.set(len, entry)?;
@@ -3503,6 +3904,28 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
             Ok(LuaNil)
         })?,
     )?;
+    lua.globals().set(
+        "callOnHScript",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            let mut args = args.into_iter();
+            let function = lua_value_to_string(args.next()).unwrap_or_default();
+            if function.is_empty() {
+                return Ok(LuaNil);
+            }
+            let call_args = lua_call_args_to_vec(args.next())?;
+            queue_script_call(lua, None, &function, call_args)?;
+            Ok(LuaNil)
+        })?,
+    )?;
+    for name in ["setOnLuas", "setOnScripts", "setOnHScript"] {
+        lua.globals().set(
+            name,
+            lua.create_function(|lua, (key, value): (String, LuaValue)| {
+                queue_script_global(lua, &key, value)?;
+                Ok(())
+            })?,
+        )?;
+    }
     lua.globals().set(
         "isRunning",
         lua.create_function(|lua, target: String| -> LuaResult<bool> {
@@ -3706,6 +4129,18 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         }
     }
 
+    lua.globals().set(
+        "setHudVisible",
+        lua.create_function(|lua, visible: bool| {
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let entry = lua.create_table()?;
+            entry.set("prop", "camHUD.visible")?;
+            entry.set("value", visible)?;
+            pending.set(pending.len()? + 1, entry)?;
+            Ok(())
+        })?,
+    )?;
+
     // === Rustic extensions: stage overlay, post-processing, health bar ===
 
     // setStageColor(side, hexColor, duration)
@@ -3895,6 +4330,47 @@ fn find_rooted_file(lua: &Lua, relative: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+fn find_rooted_dir(lua: &Lua, relative: &str) -> Option<std::path::PathBuf> {
+    let rel = relative.replace('\\', "/");
+    if rel.starts_with('/') || rel.contains("../") || rel == ".." {
+        let path = std::path::PathBuf::from(relative);
+        return path.is_dir().then_some(path);
+    }
+    let roots: LuaTable = lua.globals().get("__image_roots").ok()?;
+    let len = roots.len().ok()?;
+    for i in 1..=len {
+        let root: String = roots.get(i).ok()?;
+        let root = std::path::PathBuf::from(root);
+        for candidate in [
+            root.join(&rel),
+            root.join(rel.trim_start_matches("assets/")),
+            root.join("assets").join(&rel),
+        ] {
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn writable_lua_file(lua: &Lua, relative: &str, absolute: bool) -> Option<std::path::PathBuf> {
+    let rel = relative.replace('\\', "/");
+    if absolute {
+        return Some(std::path::PathBuf::from(rel));
+    }
+    if rel.starts_with('/') || rel.contains("../") || rel == ".." {
+        return None;
+    }
+    let roots: LuaTable = lua.globals().get("__image_roots").ok()?;
+    let root: String = roots.get(1).ok()?;
+    let mut root = std::path::PathBuf::from(root);
+    if root.file_name().and_then(|n| n.to_str()) == Some("assets") {
+        root.pop();
+    }
+    Some(root.join(rel))
+}
+
 fn lua_call_args_to_vec(value: Option<LuaValue>) -> LuaResult<Vec<LuaValue>> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -3938,6 +4414,58 @@ fn queue_script_call(
         args_table.set(i + 1, arg)?;
     }
     entry.set("args", args_table)?;
+    let len = pending.len()? + 1;
+    pending.set(len, entry)?;
+    Ok(())
+}
+
+fn queue_song_control(
+    lua: &Lua,
+    action: &str,
+    fields: Option<Vec<(&str, LuaValue)>>,
+) -> LuaResult<()> {
+    let pending: LuaTable = lua.globals().get("__pending_props")?;
+    let entry = lua.create_table()?;
+    entry.set("type", "song_control")?;
+    entry.set("action", action)?;
+    if let Some(fields) = fields {
+        for (key, value) in fields {
+            entry.set(key, value)?;
+        }
+    }
+    let len = pending.len()? + 1;
+    pending.set(len, entry)?;
+    Ok(())
+}
+
+fn queue_precache_request(
+    lua: &Lua,
+    kind: &str,
+    name: &str,
+    fields: &[(&str, LuaValue)],
+) -> LuaResult<bool> {
+    if name.is_empty() {
+        return Ok(false);
+    }
+    let pending: LuaTable = lua.globals().get("__pending_props")?;
+    let entry = lua.create_table()?;
+    entry.set("type", "precache")?;
+    entry.set("kind", kind)?;
+    entry.set("name", name)?;
+    for (key, value) in fields {
+        entry.set(*key, value.clone())?;
+    }
+    let len = pending.len()? + 1;
+    pending.set(len, entry)?;
+    Ok(true)
+}
+
+fn queue_script_global(lua: &Lua, name: &str, value: LuaValue) -> LuaResult<()> {
+    let pending: LuaTable = lua.globals().get("__pending_props")?;
+    let entry = lua.create_table()?;
+    entry.set("type", "set_global")?;
+    entry.set("name", name)?;
+    entry.set("value", value)?;
     let len = pending.len()? + 1;
     pending.set(len, entry)?;
     Ok(())
@@ -4099,6 +4627,821 @@ fn register_shader_bool(lua: &Lua) -> LuaResult<()> {
 
 fn shader_key(target: &str, field: &str) -> String {
     format!("{target}.{field}")
+}
+
+fn color_name_or_hex_to_int(value: &str) -> i64 {
+    let upper = value
+        .trim()
+        .trim_start_matches("FlxColor.")
+        .to_ascii_uppercase();
+    let hex = match upper.as_str() {
+        "BLACK" => "000000",
+        "BLUE" => "0000FF",
+        "BROWN" => "8B4513",
+        "CYAN" => "00FFFF",
+        "GRAY" | "GREY" => "808080",
+        "GREEN" => "008000",
+        "LIME" => "00FF00",
+        "MAGENTA" | "PINK" => "FF00FF",
+        "ORANGE" => "FFA500",
+        "PURPLE" => "800080",
+        "RED" => "FF0000",
+        "TRANSPARENT" => "00000000",
+        "WHITE" => "FFFFFF",
+        "YELLOW" => "FFFF00",
+        _ => value,
+    };
+    let hex = hex
+        .trim()
+        .trim_start_matches('#')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    i64::from_str_radix(hex, 16).unwrap_or(0xFFFFFF)
+}
+
+fn register_keyboard_query(lua: &Lua, name: &str, table_name: &'static str) -> LuaResult<()> {
+    lua.globals().set(
+        name,
+        lua.create_function(move |lua, key: String| -> LuaResult<bool> {
+            let tbl: LuaTable = lua.globals().get(table_name)?;
+            Ok(input_table_contains(&tbl, &key))
+        })?,
+    )
+}
+
+fn input_table_contains(tbl: &LuaTable, key: &str) -> bool {
+    let key = key.trim();
+    if key.is_empty() {
+        return false;
+    }
+    let upper = key.to_ascii_uppercase();
+    let variants = [
+        key.to_string(),
+        upper.clone(),
+        format!("KEY{upper}"),
+        format!("DIGIT{upper}"),
+    ];
+    variants
+        .iter()
+        .any(|variant| tbl.get::<bool>(variant.as_str()).unwrap_or(false))
+}
+
+fn text_table(lua: &Lua, tag: &str) -> Option<LuaTable> {
+    lua.globals()
+        .get::<LuaTable>("__text_data")
+        .ok()?
+        .get::<LuaTable>(tag)
+        .ok()
+}
+
+fn object_rect(lua: &Lua, tag: &str) -> Option<(f64, f64, f64, f64)> {
+    if let Ok(sprite_data) = lua.globals().get::<LuaTable>("__sprite_data") {
+        if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            let x: f64 = tbl.get("x").unwrap_or(0.0);
+            let y: f64 = tbl.get("y").unwrap_or(0.0);
+            let w: f64 = tbl
+                .get("tex_w")
+                .unwrap_or_else(|_| tbl.get("width").unwrap_or(0.0));
+            let h: f64 = tbl
+                .get("tex_h")
+                .unwrap_or_else(|_| tbl.get("height").unwrap_or(0.0));
+            let sx: f64 = tbl.get("scale_x").unwrap_or(1.0);
+            let sy: f64 = tbl.get("scale_y").unwrap_or(1.0);
+            return Some((x, y, w * sx.abs(), h * sy.abs()));
+        }
+    }
+
+    if let Some(tbl) = text_table(lua, tag) {
+        let x: f64 = tbl.get("x").unwrap_or(0.0);
+        let y: f64 = tbl.get("y").unwrap_or(0.0);
+        let width: f64 = tbl.get("width").unwrap_or(0.0);
+        let size: f64 = tbl.get("size").unwrap_or(16.0);
+        let text: String = tbl.get("text").unwrap_or_default();
+        let w = if width > 0.0 {
+            width
+        } else {
+            text.chars().count() as f64 * size * 0.6
+        };
+        return Some((x, y, w, size));
+    }
+
+    let globals = lua.globals();
+    match tag {
+        "dad" | "opponent" => Some((
+            globals.get("__dad_x").unwrap_or(0.0),
+            globals.get("__dad_y").unwrap_or(0.0),
+            150.0,
+            300.0,
+        )),
+        "boyfriend" | "bf" => Some((
+            globals.get("__bf_x").unwrap_or(0.0),
+            globals.get("__bf_y").unwrap_or(0.0),
+            150.0,
+            300.0,
+        )),
+        "gf" | "girlfriend" => Some((
+            globals.get("__gf_x").unwrap_or(0.0),
+            globals.get("__gf_y").unwrap_or(0.0),
+            150.0,
+            300.0,
+        )),
+        _ => None,
+    }
+}
+
+fn rects_overlap(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+    ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by
+}
+
+fn register_shader_array(lua: &Lua, kind: &str, default: LuaValue) -> LuaResult<()> {
+    let set_name = format!("setShader{kind}Array");
+    lua.globals().set(
+        set_name,
+        lua.create_function(|lua, (target, field, values): (String, String, LuaValue)| {
+            let shaders: LuaTable = lua.globals().get("__shader_data")?;
+            shaders.set(shader_key(&target, &field), values)?;
+            Ok(true)
+        })?,
+    )?;
+
+    let get_name = format!("getShader{kind}Array");
+    lua.globals().set(
+        get_name,
+        lua.create_function(move |lua, (target, field): (String, String)| {
+            let shaders: LuaTable = lua.globals().get("__shader_data")?;
+            if let Ok(LuaValue::Table(tbl)) = shaders.get::<LuaValue>(shader_key(&target, &field)) {
+                return Ok(tbl);
+            }
+            let tbl = lua.create_table()?;
+            tbl.set(1, default.clone())?;
+            Ok(tbl)
+        })?,
+    )?;
+    Ok(())
+}
+
+fn register_misc_default_functions(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+
+    globals.set(
+        "getColorFromString",
+        lua.create_function(|_lua, value: String| -> LuaResult<i64> {
+            Ok(color_name_or_hex_to_int(&value))
+        })?,
+    )?;
+    globals.set(
+        "getColorFromName",
+        lua.create_function(|_lua, value: String| -> LuaResult<i64> {
+            Ok(color_name_or_hex_to_int(&value))
+        })?,
+    )?;
+    globals.set(
+        "getTextFont",
+        lua.create_function(|lua, tag: String| -> LuaResult<String> {
+            Ok(text_table(lua, &tag)
+                .and_then(|tbl| tbl.get::<String>("font").ok())
+                .unwrap_or_default())
+        })?,
+    )?;
+    globals.set(
+        "getTextSize",
+        lua.create_function(|lua, tag: String| -> LuaResult<f64> {
+            Ok(text_table(lua, &tag)
+                .and_then(|tbl| tbl.get::<f64>("size").ok())
+                .unwrap_or(16.0))
+        })?,
+    )?;
+    globals.set(
+        "getTextWidth",
+        lua.create_function(|lua, tag: String| -> LuaResult<f64> {
+            if let Some(tbl) = text_table(lua, &tag) {
+                let width: f64 = tbl.get("width").unwrap_or(0.0);
+                if width > 0.0 {
+                    return Ok(width);
+                }
+                let text: String = tbl.get("text").unwrap_or_default();
+                let size: f64 = tbl.get("size").unwrap_or(16.0);
+                return Ok(text.chars().count() as f64 * size * 0.6);
+            }
+            Ok(0.0)
+        })?,
+    )?;
+    globals.set(
+        "setTextHeight",
+        lua.create_function(|lua, (tag, height): (String, f64)| {
+            if let Some(tbl) = text_table(lua, &tag) {
+                tbl.set("height", height)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "setTextItalic",
+        lua.create_function(|lua, (tag, italic): (String, bool)| {
+            if let Some(tbl) = text_table(lua, &tag) {
+                tbl.set("italic", italic)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "getScreenPositionX",
+        lua.create_function(
+            |lua, (tag, _camera): (String, Option<String>)| -> LuaResult<f64> {
+                Ok(object_rect(lua, &tag).map(|rect| rect.0).unwrap_or(0.0))
+            },
+        )?,
+    )?;
+    globals.set(
+        "getScreenPositionY",
+        lua.create_function(
+            |lua, (tag, _camera): (String, Option<String>)| -> LuaResult<f64> {
+                Ok(object_rect(lua, &tag).map(|rect| rect.1).unwrap_or(0.0))
+            },
+        )?,
+    )?;
+    globals.set(
+        "objectsOverlap",
+        lua.create_function(|lua, (a, b): (String, String)| -> LuaResult<bool> {
+            let Some(a) = object_rect(lua, &a) else {
+                return Ok(false);
+            };
+            let Some(b) = object_rect(lua, &b) else {
+                return Ok(false);
+            };
+            Ok(rects_overlap(a, b))
+        })?,
+    )?;
+    globals.set(
+        "getPixelColor",
+        lua.create_function(
+            |_lua, (_obj, _x, _y): (String, i32, i32)| -> LuaResult<i64> { Ok(0) },
+        )?,
+    )?;
+    Ok(())
+}
+
+fn register_control_default_functions(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+
+    register_keyboard_query(lua, "keyboardJustPressed", "__input_just_pressed")?;
+    register_keyboard_query(lua, "keyboardPressed", "__input_pressed")?;
+    register_keyboard_query(lua, "keyboardReleased", "__input_just_released")?;
+
+    for (name, key) in [
+        ("mouseClicked", "__mouse_just_pressed"),
+        ("mousePressed", "__mouse_pressed"),
+        ("mouseReleased", "__mouse_just_released"),
+    ] {
+        globals.set(
+            name,
+            lua.create_function(move |lua, _args: LuaMultiValue| -> LuaResult<bool> {
+                Ok(lua.globals().get::<bool>(key).unwrap_or(false))
+            })?,
+        )?;
+    }
+    for name in [
+        "anyGamepadJustPressed",
+        "anyGamepadPressed",
+        "anyGamepadReleased",
+        "gamepadJustPressed",
+        "gamepadPressed",
+        "gamepadReleased",
+    ] {
+        globals.set(
+            name,
+            lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(false) })?,
+        )?;
+    }
+    globals.set(
+        "gamepadAnalogX",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<f64> { Ok(0.0) })?,
+    )?;
+    globals.set(
+        "gamepadAnalogY",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<f64> { Ok(0.0) })?,
+    )?;
+    globals.set(
+        "getMouseX",
+        lua.create_function(|lua, _camera: Option<String>| -> LuaResult<i32> {
+            Ok(lua.globals().get::<f64>("__mouse_x").unwrap_or(0.0) as i32)
+        })?,
+    )?;
+    globals.set(
+        "getMouseY",
+        lua.create_function(|lua, _camera: Option<String>| -> LuaResult<i32> {
+            Ok(lua.globals().get::<f64>("__mouse_y").unwrap_or(0.0) as i32)
+        })?,
+    )?;
+
+    for (name, key) in [
+        ("getCameraScrollX", "scroll_x"),
+        ("getCameraScrollY", "scroll_y"),
+        ("getCameraFollowX", "follow_x"),
+        ("getCameraFollowY", "follow_y"),
+    ] {
+        globals.set(
+            name,
+            lua.create_function(move |lua, ()| -> LuaResult<f64> {
+                let camera: LuaTable = lua.globals().get("__camera_values")?;
+                Ok(camera.get::<f64>(key).unwrap_or(0.0))
+            })?,
+        )?;
+    }
+    globals.set(
+        "setCameraScroll",
+        lua.create_function(|lua, (x, y): (Option<f64>, Option<f64>)| {
+            let camera: LuaTable = lua.globals().get("__camera_values")?;
+            camera.set("scroll_x", x.unwrap_or(0.0))?;
+            camera.set("scroll_y", y.unwrap_or(0.0))?;
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "addCameraScroll",
+        lua.create_function(|lua, (x, y): (Option<f64>, Option<f64>)| {
+            let camera: LuaTable = lua.globals().get("__camera_values")?;
+            let nx = camera.get::<f64>("scroll_x").unwrap_or(0.0) + x.unwrap_or(0.0);
+            let ny = camera.get::<f64>("scroll_y").unwrap_or(0.0) + y.unwrap_or(0.0);
+            camera.set("scroll_x", nx)?;
+            camera.set("scroll_y", ny)?;
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "setCameraFollowPoint",
+        lua.create_function(|lua, (x, y): (Option<f64>, Option<f64>)| {
+            let camera: LuaTable = lua.globals().get("__camera_values")?;
+            camera.set("follow_x", x.unwrap_or(0.0))?;
+            camera.set("follow_y", y.unwrap_or(0.0))?;
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "addCameraFollowPoint",
+        lua.create_function(|lua, (x, y): (Option<f64>, Option<f64>)| {
+            let camera: LuaTable = lua.globals().get("__camera_values")?;
+            let nx = camera.get::<f64>("follow_x").unwrap_or(0.0) + x.unwrap_or(0.0);
+            let ny = camera.get::<f64>("follow_y").unwrap_or(0.0) + y.unwrap_or(0.0);
+            camera.set("follow_x", nx)?;
+            camera.set("follow_y", ny)?;
+            Ok(())
+        })?,
+    )?;
+
+    for (name, action) in [
+        ("startCountdown", "start_countdown"),
+        ("endSong", "end_song"),
+        ("exitSong", "exit_song"),
+        ("restartSong", "restart_song"),
+    ] {
+        globals.set(
+            name,
+            lua.create_function(move |lua, _args: LuaMultiValue| -> LuaResult<bool> {
+                queue_song_control(lua, action, None)?;
+                Ok(true)
+            })?,
+        )?;
+    }
+    globals.set(
+        "startDialogue",
+        lua.create_function(
+            |lua, (dialogue, music): (String, Option<String>)| -> LuaResult<bool> {
+                let mut fields = Vec::new();
+                fields.push(("dialogue", LuaValue::String(lua.create_string(&dialogue)?)));
+                if let Some(music) = music {
+                    fields.push(("music", LuaValue::String(lua.create_string(&music)?)));
+                }
+                queue_song_control(lua, "start_dialogue", Some(fields))?;
+                Ok(true)
+            },
+        )?,
+    )?;
+    globals.set(
+        "openCustomSubstate",
+        lua.create_function(
+            |lua, (name, pause_game): (String, Option<bool>)| -> LuaResult<bool> {
+                queue_song_control(
+                    lua,
+                    "open_substate",
+                    Some(vec![
+                        ("name", LuaValue::String(lua.create_string(&name)?)),
+                        ("pause_game", LuaValue::Boolean(pause_game.unwrap_or(true))),
+                    ]),
+                )?;
+                Ok(true)
+            },
+        )?,
+    )?;
+    globals.set(
+        "closeCustomSubstate",
+        lua.create_function(|lua, _args: LuaMultiValue| -> LuaResult<bool> {
+            queue_song_control(lua, "close_substate", None)?;
+            Ok(true)
+        })?,
+    )?;
+    globals.set(
+        "insertToCustomSubstate",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+    )?;
+    globals.set(
+        "precacheImage",
+        lua.create_function(|lua, (name, allow_gpu): (String, Option<bool>)| {
+            queue_precache_request(
+                lua,
+                "image",
+                &name,
+                &[("allow_gpu", LuaValue::Boolean(allow_gpu.unwrap_or(true)))],
+            )
+        })?,
+    )?;
+    globals.set(
+        "precacheSound",
+        lua.create_function(|lua, name: String| queue_precache_request(lua, "sound", &name, &[]))?,
+    )?;
+    globals.set(
+        "precacheMusic",
+        lua.create_function(|lua, name: String| queue_precache_request(lua, "music", &name, &[]))?,
+    )?;
+    globals.set(
+        "addCharacterToList",
+        lua.create_function(|lua, (name, character_type): (String, Option<String>)| {
+            queue_precache_request(
+                lua,
+                "character",
+                &name,
+                &[(
+                    "character_type",
+                    LuaValue::String(
+                        lua.create_string(character_type.as_deref().unwrap_or("dad"))?,
+                    ),
+                )],
+            )
+        })?,
+    )?;
+    globals.set(
+        "loadSong",
+        lua.create_function(|lua, (song, difficulty): (String, Option<i32>)| {
+            let mut fields = Vec::new();
+            fields.push(("song", LuaValue::String(lua.create_string(&song)?)));
+            if let Some(difficulty) = difficulty {
+                fields.push(("difficulty", LuaValue::Integer(difficulty as i64)));
+            }
+            queue_song_control(lua, "load_song", Some(fields))?;
+            Ok(true)
+        })?,
+    )?;
+    Ok(())
+}
+
+fn register_reflection_default_functions(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+
+    globals.set(
+        "createInstance",
+        lua.create_function(
+            |lua, (name, class_name, args): (String, String, Option<LuaTable>)| {
+                let instances: LuaTable = lua.globals().get("__instances")?;
+                let tbl = lua.create_table()?;
+                tbl.set("class", class_name)?;
+                if let Some(args) = args {
+                    tbl.set("args", args)?;
+                }
+                instances.set(name, tbl)?;
+                Ok(true)
+            },
+        )?,
+    )?;
+    globals.set(
+        "addInstance",
+        lua.create_function(|_lua, (_name, _front): (String, Option<bool>)| Ok(true))?,
+    )?;
+    globals.set(
+        "instanceArg",
+        lua.create_function(|lua, (name, class_name): (String, Option<String>)| {
+            let tbl = lua.create_table()?;
+            tbl.set("instance", name)?;
+            if let Some(class_name) = class_name {
+                tbl.set("class", class_name)?;
+            }
+            Ok(tbl)
+        })?,
+    )?;
+    globals.set(
+        "callMethod",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<LuaValue> {
+            dispatch_reflection_method(lua, args)
+        })?,
+    )?;
+    globals.set(
+        "callMethodFromClass",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<LuaValue> { Ok(LuaNil) })?,
+    )?;
+    globals.set(
+        "addToGroup",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let object = multi_string(&args, 1).or_else(|| multi_string(&args, 0));
+            let Some(object) = object else {
+                return Ok(false);
+            };
+            if lua_sprite_or_text_exists(lua, &object) {
+                if text_table(lua, &object).is_some() {
+                    let func: LuaFunction = lua.globals().get("addLuaText")?;
+                    func.call::<()>((object, true))?;
+                } else {
+                    let func: LuaFunction = lua.globals().get("addLuaSprite")?;
+                    func.call::<()>((object, true))?;
+                }
+                return Ok(true);
+            }
+            Ok(false)
+        })?,
+    )?;
+    globals.set(
+        "removeFromGroup",
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let object = multi_string(&args, 1).or_else(|| multi_string(&args, 0));
+            let Some(object) = object else {
+                return Ok(false);
+            };
+            if lua_sprite_or_text_exists(lua, &object) {
+                let func: LuaFunction = lua.globals().get("removeLuaSprite")?;
+                func.call::<()>((object, false))?;
+                return Ok(true);
+            }
+            Ok(false)
+        })?,
+    )?;
+    Ok(())
+}
+
+fn dispatch_reflection_method(lua: &Lua, args: LuaMultiValue) -> LuaResult<LuaValue> {
+    let method = multi_string(&args, 0).unwrap_or_default();
+    let Some((object, member)) = method.rsplit_once('.') else {
+        return Ok(LuaNil);
+    };
+    let call_args = args.get(1).cloned().unwrap_or(LuaValue::Nil);
+
+    match member {
+        "playAnim" | "playAnimation" | "play" if method.ends_with(".animation.play") => {
+            if let Some(anim) = indexed_arg_string(&call_args, 1) {
+                let forced = indexed_arg_bool(&call_args, 2).unwrap_or(false);
+                let target = object.trim_end_matches(".animation").to_string();
+                let func: LuaFunction = lua.globals().get("playAnim")?;
+                func.call::<()>((target, anim, forced))?;
+                return Ok(LuaValue::Boolean(true));
+            }
+        }
+        "playAnim" | "playAnimation" => {
+            if let Some(anim) = indexed_arg_string(&call_args, 1) {
+                let forced = indexed_arg_bool(&call_args, 2).unwrap_or(false);
+                let func: LuaFunction = lua.globals().get("playAnim")?;
+                func.call::<()>((object.to_string(), anim, forced))?;
+                return Ok(LuaValue::Boolean(true));
+            }
+        }
+        "setPosition" => {
+            if let (Some(x), Some(y)) = (
+                indexed_arg_number(&call_args, 1),
+                indexed_arg_number(&call_args, 2),
+            ) {
+                set_lua_property(lua, &format!("{object}.x"), LuaValue::Number(x))?;
+                set_lua_property(lua, &format!("{object}.y"), LuaValue::Number(y))?;
+                return Ok(LuaValue::Boolean(true));
+            }
+        }
+        "set" if method.ends_with(".scale.set") => {
+            if let (Some(x), Some(y)) = (
+                indexed_arg_number(&call_args, 1),
+                indexed_arg_number(&call_args, 2),
+            ) {
+                let target = object.trim_end_matches(".scale").to_string();
+                let func: LuaFunction = lua.globals().get("scaleObject")?;
+                func.call::<()>((target, x, y, true))?;
+                return Ok(LuaValue::Boolean(true));
+            }
+        }
+        "set" if method.ends_with(".scrollFactor.set") => {
+            if let (Some(x), Some(y)) = (
+                indexed_arg_number(&call_args, 1),
+                indexed_arg_number(&call_args, 2),
+            ) {
+                let target = object.trim_end_matches(".scrollFactor").to_string();
+                let func: LuaFunction = lua.globals().get("setScrollFactor")?;
+                func.call::<()>((target, x, y))?;
+                return Ok(LuaValue::Boolean(true));
+            }
+        }
+        "screenCenter" => {
+            let pos = indexed_arg_string(&call_args, 1).unwrap_or_else(|| "xy".to_string());
+            let func: LuaFunction = lua.globals().get("screenCenter")?;
+            func.call::<()>((object.to_string(), pos))?;
+            return Ok(LuaValue::Boolean(true));
+        }
+        "updateHitbox" => {
+            let func: LuaFunction = lua.globals().get("updateHitbox")?;
+            func.call::<()>(object.to_string())?;
+            return Ok(LuaValue::Boolean(true));
+        }
+        "kill" | "destroy" => {
+            if lua_sprite_or_text_exists(lua, object) {
+                let func: LuaFunction = lua.globals().get("removeLuaSprite")?;
+                func.call::<()>((object.to_string(), true))?;
+                return Ok(LuaValue::Boolean(true));
+            }
+        }
+        _ => {}
+    }
+
+    Ok(LuaNil)
+}
+
+fn indexed_arg_string(value: &LuaValue, index: i64) -> Option<String> {
+    match value {
+        LuaValue::Table(tbl) => tbl.get::<String>(index).ok(),
+        LuaValue::String(s) if index == 1 => s.to_str().ok().map(|s| s.to_string()),
+        _ => None,
+    }
+}
+
+fn indexed_arg_number(value: &LuaValue, index: i64) -> Option<f64> {
+    match value {
+        LuaValue::Table(tbl) => tbl.get::<f64>(index).ok(),
+        LuaValue::Number(n) if index == 1 => Some(*n),
+        LuaValue::Integer(i) if index == 1 => Some(*i as f64),
+        _ => None,
+    }
+}
+
+fn indexed_arg_bool(value: &LuaValue, index: i64) -> Option<bool> {
+    match value {
+        LuaValue::Table(tbl) => tbl.get::<bool>(index).ok(),
+        LuaValue::Boolean(b) if index == 1 => Some(*b),
+        _ => None,
+    }
+}
+
+fn set_lua_property(lua: &Lua, prop: &str, value: LuaValue) -> LuaResult<()> {
+    let func: LuaFunction = lua.globals().get("setProperty")?;
+    func.call::<()>((prop.to_string(), value))
+}
+
+fn lua_sprite_or_text_exists(lua: &Lua, tag: &str) -> bool {
+    let sprite_exists = lua
+        .globals()
+        .get::<LuaTable>("__sprite_data")
+        .ok()
+        .and_then(|tbl| tbl.get::<LuaValue>(tag).ok())
+        .is_some_and(|value| value != LuaNil);
+    sprite_exists || text_table(lua, tag).is_some()
+}
+
+fn register_deprecated_aliases(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+
+    globals.set(
+        "luaSpriteMakeGraphic",
+        lua.create_function(
+            |lua, (tag, width, height, color): (String, i32, i32, String)| {
+                let func: LuaFunction = lua.globals().get("makeGraphic")?;
+                func.call::<()>((tag, width, height, color))
+            },
+        )?,
+    )?;
+    globals.set(
+        "luaSpriteAddAnimationByPrefix",
+        lua.create_function(
+            |lua,
+             (tag, name, prefix, fps, looping): (
+                String,
+                String,
+                String,
+                Option<f64>,
+                Option<bool>,
+            )| {
+                let func: LuaFunction = lua.globals().get("addAnimationByPrefix")?;
+                func.call::<()>((tag, name, prefix, fps, looping))
+            },
+        )?,
+    )?;
+    globals.set(
+        "luaSpriteAddAnimationByIndices",
+        lua.create_function(
+            |lua, (tag, name, prefix, indices, fps): (String, String, String, LuaValue, Option<f64>)| {
+                let func: LuaFunction = lua.globals().get("addAnimationByIndices")?;
+                func.call::<()>((tag, name, prefix, indices, fps, Some(false)))
+            },
+        )?,
+    )?;
+    globals.set(
+        "luaSpritePlayAnimation",
+        lua.create_function(|lua, (tag, name, forced): (String, String, Option<bool>)| {
+            let func: LuaFunction = lua.globals().get("playAnim")?;
+            func.call::<()>((tag, name, forced))
+        })?,
+    )?;
+    globals.set(
+        "setLuaSpriteCamera",
+        lua.create_function(|lua, (tag, camera): (String, Option<String>)| {
+            let func: LuaFunction = lua.globals().get("setObjectCamera")?;
+            func.call::<()>((tag, camera))
+        })?,
+    )?;
+    globals.set(
+        "setLuaSpriteScrollFactor",
+        lua.create_function(|lua, (tag, x, y): (String, f64, f64)| {
+            let func: LuaFunction = lua.globals().get("setScrollFactor")?;
+            func.call::<()>((tag, x, y))
+        })?,
+    )?;
+    globals.set(
+        "scaleLuaSprite",
+        lua.create_function(|lua, (tag, x, y): (String, f64, f64)| {
+            let func: LuaFunction = lua.globals().get("scaleObject")?;
+            func.call::<()>((tag, x, y, Some(true)))
+        })?,
+    )?;
+    globals.set(
+        "getPropertyLuaSprite",
+        lua.create_function(
+            |lua, (tag, prop): (String, String)| -> LuaResult<LuaValue> {
+                let func: LuaFunction = lua.globals().get("getProperty")?;
+                func.call::<LuaValue>(format!("{tag}.{prop}"))
+            },
+        )?,
+    )?;
+    globals.set(
+        "setPropertyLuaSprite",
+        lua.create_function(|lua, (tag, prop, value): (String, String, LuaValue)| {
+            let func: LuaFunction = lua.globals().get("setProperty")?;
+            func.call::<()>((format!("{tag}.{prop}"), value))
+        })?,
+    )?;
+    globals.set(
+        "musicFadeIn",
+        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+    )?;
+    globals.set(
+        "musicFadeOut",
+        lua.create_function(|_lua, _args: LuaMultiValue| Ok(()))?,
+    )?;
+    globals.set(
+        "makeFlxAnimateSprite",
+        lua.create_function(
+            |lua, (tag, x, y, folder): (String, Option<f64>, Option<f64>, Option<String>)| {
+                let func: LuaFunction = lua.globals().get("makeAnimatedLuaSprite")?;
+                func.call::<()>((tag, folder, x, y))
+            },
+        )?,
+    )?;
+    globals.set(
+        "loadAnimateAtlas",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+    )?;
+    globals.set(
+        "loadFrames",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+    )?;
+    globals.set(
+        "loadMultipleFrames",
+        lua.create_function(|_lua, _args: LuaMultiValue| -> LuaResult<bool> { Ok(true) })?,
+    )?;
+    globals.set(
+        "addAnimationBySymbol",
+        lua.create_function(
+            |lua,
+             (tag, name, symbol, fps, looping): (
+                String,
+                String,
+                String,
+                Option<f64>,
+                Option<bool>,
+            )| {
+                let func: LuaFunction = lua.globals().get("addAnimationByPrefix")?;
+                func.call::<()>((tag, name, symbol, fps, looping))
+            },
+        )?,
+    )?;
+    globals.set(
+        "addAnimationBySymbolIndices",
+        lua.create_function(
+            |lua,
+             (tag, name, symbol, indices, fps, looping): (
+                String,
+                String,
+                String,
+                LuaValue,
+                Option<f64>,
+                Option<bool>,
+            )| {
+                let func: LuaFunction = lua.globals().get("addAnimationByIndices")?;
+                func.call::<()>((tag, name, symbol, indices, fps, looping))
+            },
+        )?,
+    )?;
+    Ok(())
 }
 
 /// Parse a hex color string to (r, g, b, a) as 0..1 floats.
