@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::mods::ModLoader;
 
@@ -141,6 +141,14 @@ impl AssetPaths {
         self.find(&format!("stages/{name}.lua"))
     }
 
+    /// Discover stage scripts in Psych/Rustic-supported languages.
+    pub fn stage_scripts(&self, name: &str) -> Vec<PathBuf> {
+        ["lua", "hx", "hscript"]
+            .iter()
+            .filter_map(|ext| self.find(&format!("stages/{name}.{ext}")))
+            .collect()
+    }
+
     /// Find a stage image, checking the stage's directory first.
     /// Psych Engine: stage directory → shared/images → images.
     pub fn stage_image(&self, image: &str, stage_dir: &str) -> Option<PathBuf> {
@@ -169,10 +177,9 @@ impl AssetPaths {
         self.find(&format!("songs/{song_name}/{file}"))
     }
 
-    /// Discover all Lua scripts for a song.
-    /// Psych Engine loads: data/{song}/*.lua (script.lua, modchart.lua, eventScript.lua, etc.)
-    /// Rustic extension: if data/{song}/rustic/{file}.lua exists, it replaces the original.
-    /// Additionally, any .lua files that ONLY exist in rustic/ are also loaded (rustic-only scripts).
+    /// Discover all scripts for a song.
+    /// Psych Engine loads: data/{song}/*.lua; Rustic also accepts .hx/.hscript.
+    /// Rustic overrides use data/{song}/rustic/{file} with the same extension.
     pub fn song_scripts(&self, song_name: &str) -> Vec<PathBuf> {
         let relative_dir = format!("data/{song_name}");
         let mut scripts = Vec::new();
@@ -184,7 +191,7 @@ impl AssetPaths {
                 if let Ok(entries) = std::fs::read_dir(&dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                        if is_script_ext(&path) {
                             let name = entry.file_name().to_string_lossy().to_string();
                             seen_names.insert(name);
                             // Prefer rustic/ override: if data/{song}/rustic/{file}.lua exists, use it
@@ -204,7 +211,7 @@ impl AssetPaths {
                     if let Ok(entries) = std::fs::read_dir(&rustic_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                            if is_script_ext(&path) {
                                 let name = entry.file_name().to_string_lossy().to_string();
                                 if !seen_names.contains(&name) {
                                     eprintln!("[rustic] Loading rustic-only script: {:?}", path);
@@ -221,7 +228,7 @@ impl AssetPaths {
         scripts
     }
 
-    /// Discover custom event Lua scripts.
+    /// Discover custom event scripts.
     pub fn custom_event_scripts(&self) -> Vec<PathBuf> {
         let mut scripts = Vec::new();
         for root in &self.search_roots {
@@ -230,7 +237,7 @@ impl AssetPaths {
                 if let Ok(entries) = std::fs::read_dir(&dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                        if is_script_ext(&path) {
                             scripts.push(path);
                         }
                     }
@@ -386,4 +393,10 @@ impl Default for AssetPaths {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn is_script_ext(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "lua" | "hx" | "hscript"))
 }

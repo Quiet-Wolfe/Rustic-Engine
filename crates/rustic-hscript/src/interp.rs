@@ -519,7 +519,14 @@ impl Interp {
 
     fn field_get(&mut self, target: &Value, field: &str, host: &mut dyn HostBridge) -> EvalResult {
         match target {
-            Value::Object(map) => Ok(map.borrow().get(field).cloned().unwrap_or(Value::Null)),
+            Value::Object(map) => {
+                if let Some(value) = map.borrow().get(field).cloned() {
+                    Ok(value)
+                } else {
+                    host.field_get(target, field)
+                        .map_err(|e| Flow::Err(HScriptError::Runtime(e)))
+                }
+            }
             Value::Array(arr) => match field {
                 "length" => Ok(Value::Int(arr.borrow().len() as i64)),
                 _ => host
@@ -548,6 +555,7 @@ impl Interp {
         match target {
             Value::Object(map) => {
                 map.borrow_mut().insert(field.to_string(), value.clone());
+                let _ = host.field_set(target, field, &value);
                 Ok(value)
             }
             _ => {
@@ -620,10 +628,27 @@ impl Interp {
             .map(|a| self.eval_expr(a, host))
             .collect::<Result<_, _>>()?;
 
+        // Host-backed globals such as `setProperty(...)` are not script
+        // closures. Give the embedder first refusal when the identifier is not
+        // a local/global HScript binding.
+        if let ExprKind::Ident(name) = &callee.kind {
+            if self.scope.get(name).is_none() {
+                if let Some(value) = host
+                    .global_call(name, &arg_values)
+                    .map_err(|e| Flow::Err(HScriptError::Runtime(e)))?
+                {
+                    return Ok(value);
+                }
+            }
+        }
+
         // Method call on a field access (obj.method(args)) — dispatch through the
         // host so it can implement e.g. sprite.playAnim().
         if let ExprKind::Field { expr, field, .. } = &callee.kind {
             let target = self.eval_expr(expr, host)?;
+            if let Some(value) = builtin_method_call(&target, field, &arg_values)? {
+                return Ok(value);
+            }
             if let Value::Object(map) = &target {
                 if let Some(inner) = map.borrow().get(field).cloned() {
                     return self
@@ -786,6 +811,142 @@ impl Interp {
                 "invalid assignment target".into(),
             ))),
         }
+    }
+}
+
+fn builtin_method_call(
+    target: &Value,
+    method: &str,
+    args: &[Value],
+) -> Result<Option<Value>, Flow> {
+    match target {
+        Value::Array(arr) => match method {
+            "push" => {
+                arr.borrow_mut()
+                    .push(args.first().cloned().unwrap_or(Value::Null));
+                Ok(Some(Value::Int(arr.borrow().len() as i64)))
+            }
+            "pop" => Ok(Some(arr.borrow_mut().pop().unwrap_or(Value::Null))),
+            "shift" => {
+                let mut vec = arr.borrow_mut();
+                if vec.is_empty() {
+                    Ok(Some(Value::Null))
+                } else {
+                    Ok(Some(vec.remove(0)))
+                }
+            }
+            "insert" => {
+                let idx = args.first().and_then(Value::as_i64).unwrap_or(0).max(0) as usize;
+                let value = args.get(1).cloned().unwrap_or(Value::Null);
+                let mut vec = arr.borrow_mut();
+                let idx = idx.min(vec.len());
+                vec.insert(idx, value);
+                Ok(Some(Value::Null))
+            }
+            "remove" => {
+                let needle = args.first().cloned().unwrap_or(Value::Null);
+                let mut vec = arr.borrow_mut();
+                if let Some(idx) = vec.iter().position(|v| v.loose_eq(&needle)) {
+                    vec.remove(idx);
+                    Ok(Some(Value::Bool(true)))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "contains" => {
+                let needle = args.first().cloned().unwrap_or(Value::Null);
+                Ok(Some(Value::Bool(
+                    arr.borrow().iter().any(|v| v.loose_eq(&needle)),
+                )))
+            }
+            "indexOf" => {
+                let needle = args.first().cloned().unwrap_or(Value::Null);
+                let idx = arr
+                    .borrow()
+                    .iter()
+                    .position(|v| v.loose_eq(&needle))
+                    .map(|i| i as i64)
+                    .unwrap_or(-1);
+                Ok(Some(Value::Int(idx)))
+            }
+            "join" => {
+                let sep = args.first().and_then(Value::as_str).unwrap_or(",");
+                let out = arr
+                    .borrow()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(sep);
+                Ok(Some(Value::from_str(out)))
+            }
+            _ => Ok(None),
+        },
+        Value::String(s) => {
+            let text = s.as_str();
+            match method {
+                "toLowerCase" => Ok(Some(Value::from_str(text.to_lowercase()))),
+                "toUpperCase" => Ok(Some(Value::from_str(text.to_uppercase()))),
+                "trim" => Ok(Some(Value::from_str(text.trim()))),
+                "split" => {
+                    let sep = args.first().and_then(Value::as_str).unwrap_or("");
+                    let parts = if sep.is_empty() {
+                        text.chars()
+                            .map(|c| Value::from_str(c.to_string()))
+                            .collect()
+                    } else {
+                        text.split(sep).map(Value::from_str).collect()
+                    };
+                    Ok(Some(Value::new_array(parts)))
+                }
+                "startsWith" => Ok(Some(Value::Bool(
+                    text.starts_with(args.first().and_then(Value::as_str).unwrap_or("")),
+                ))),
+                "endsWith" => Ok(Some(Value::Bool(
+                    text.ends_with(args.first().and_then(Value::as_str).unwrap_or("")),
+                ))),
+                "contains" => Ok(Some(Value::Bool(
+                    text.contains(args.first().and_then(Value::as_str).unwrap_or("")),
+                ))),
+                "indexOf" => {
+                    let needle = args.first().and_then(Value::as_str).unwrap_or("");
+                    Ok(Some(Value::Int(
+                        text.find(needle).map(|i| i as i64).unwrap_or(-1),
+                    )))
+                }
+                "substr" => {
+                    let start = args.first().and_then(Value::as_i64).unwrap_or(0).max(0) as usize;
+                    let len = args.get(1).and_then(Value::as_i64).unwrap_or(i64::MAX);
+                    let out: String = text.chars().skip(start).take(len.max(0) as usize).collect();
+                    Ok(Some(Value::from_str(out)))
+                }
+                "substring" => {
+                    let start = args.first().and_then(Value::as_i64).unwrap_or(0).max(0) as usize;
+                    let end = args
+                        .get(1)
+                        .and_then(Value::as_i64)
+                        .unwrap_or(text.chars().count() as i64)
+                        .max(0) as usize;
+                    let (a, b) = if start <= end {
+                        (start, end)
+                    } else {
+                        (end, start)
+                    };
+                    Ok(Some(Value::from_str(
+                        text.chars()
+                            .skip(a)
+                            .take(b.saturating_sub(a))
+                            .collect::<String>(),
+                    )))
+                }
+                "replace" => {
+                    let from = args.first().and_then(Value::as_str).unwrap_or("");
+                    let to = args.get(1).and_then(Value::as_str).unwrap_or("");
+                    Ok(Some(Value::from_str(text.replace(from, to))))
+                }
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
     }
 }
 

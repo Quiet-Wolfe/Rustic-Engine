@@ -148,3 +148,22 @@ fn host_globals_round_trip() {
     assert!(matches!(b, Value::Int(2)), "second: {b:?}");
     assert_eq!(host.counter, 2, "host saw the write");
 }
+
+#[test]
+fn builtin_array_and_string_methods_match_hscript_expectations() {
+    let src = r#"
+        function exercise() {
+            var values = [];
+            values.push("ONE");
+            values.push("two");
+            values.insert(1, "middle");
+            values.remove("two");
+            return values.join("|") + ":" + "  AbC  ".trim().toLowerCase();
+        }
+    "#;
+
+    let (mut interp, mut host) = make();
+    interp.load("test.hx", src, &mut host).expect("load");
+    let out = interp.call("exercise", &[], &mut host).unwrap().unwrap();
+    assert_eq!(out.as_str(), Some("ONE|middle:abc"));
+}

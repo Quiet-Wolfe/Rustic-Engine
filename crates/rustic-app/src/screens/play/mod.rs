@@ -1117,15 +1117,18 @@ impl PlayScreen {
             // Find a script across all image_roots (search roots) matching the relative path
             let mut loaded = false;
             for root in &self.scripts.state.image_roots {
-                let p = root.join(&req);
-                // Psych engine scripts usually omit .lua extension in addLuaScript calls
-                let p = if p.extension().is_none() {
-                    p.with_extension("lua")
+                let base = root.join(&req);
+                let candidates = if base.extension().is_none() {
+                    vec![
+                        base.with_extension("lua"),
+                        base.with_extension("hx"),
+                        base.with_extension("hscript"),
+                    ]
                 } else {
-                    p
+                    vec![base]
                 };
-                if p.exists() {
-                    log::info!("Dynamic loading Lua script '{}': {:?}", req, p);
+                if let Some(p) = candidates.into_iter().find(|p| p.exists()) {
+                    log::info!("Dynamic loading script '{}': {:?}", req, p);
                     self.scripts.load_script(&p);
                     // Inform only the newly loaded script it was created.
                     // Re-calling on all scripts would re-fire onCreate on the stage

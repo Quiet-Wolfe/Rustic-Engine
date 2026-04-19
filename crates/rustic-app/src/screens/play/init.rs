@@ -305,12 +305,12 @@ impl PlayScreen {
             "", // mod_folder — could derive from path if needed
         );
 
-        // Stage Lua script (loaded first — builds stage visuals)
-        if let Some(lua_path) = paths.stage_lua(stage_name) {
-            self.scripts.load_script(&lua_path);
+        // Stage scripts (loaded first — builds stage visuals)
+        for script_path in paths.stage_scripts(stage_name) {
+            self.scripts.load_script(&script_path);
         }
 
-        // Song Lua scripts (script.lua, modchart.lua, etc.)
+        // Song scripts (script.lua, modchart.lua, HScript, etc.)
         for script_path in paths.song_scripts(&self.song_name) {
             self.scripts.load_script(&script_path);
         }

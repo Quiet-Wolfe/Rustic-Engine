@@ -28,6 +28,12 @@ pub trait HostBridge {
         Ok(false)
     }
 
+    /// Invoke a host-provided global function. Returning `Ok(None)` lets the
+    /// interpreter continue normal lookup and produce its usual callable error.
+    fn global_call(&mut self, _name: &str, _args: &[Value]) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+
     /// Read a property/field from a host-owned value (typically a
     /// [`Value::Handle`] — e.g. a sprite id).
     fn field_get(&mut self, _target: &Value, field: &str) -> Result<Value, String> {

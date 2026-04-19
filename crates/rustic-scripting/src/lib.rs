@@ -1,3 +1,4 @@
+mod hscript_bridge;
 mod hscript_engine;
 mod lua_engine;
 mod lua_functions;
@@ -88,7 +89,7 @@ impl ScriptManager {
         let is_hscript = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("hx"))
+            .map(|e| e.eq_ignore_ascii_case("hx") || e.eq_ignore_ascii_case("hscript"))
             .unwrap_or(false);
 
         if is_hscript {
