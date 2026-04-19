@@ -1966,6 +1966,16 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
             Ok(vars.get::<LuaValue>(name).unwrap_or(LuaNil))
         })?,
     )?;
+    globals.set(
+        "removeVar",
+        lua.create_function(|lua, name: String| -> LuaResult<bool> {
+            let vars: LuaTable = lua.globals().get("__custom_vars")?;
+            let existed = vars.get::<LuaValue>(name.as_str()).unwrap_or(LuaNil) != LuaNil;
+            vars.set(name.as_str(), LuaNil)?;
+            lua.globals().set(name, LuaNil).ok();
+            Ok(existed)
+        })?,
+    )?;
 
     globals.set(
         "setGlobalFromScript",
@@ -3984,6 +3994,25 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
             Ok(())
         })?,
     )?;
+    lua.globals().set(
+        "getModSetting",
+        lua.create_function(
+            |lua, (save_tag, mod_name): (String, Option<String>)| -> LuaResult<LuaValue> {
+                let mod_name = mod_name
+                    .filter(|name| !name.trim().is_empty())
+                    .or_else(|| lua.globals().get::<String>("modFolder").ok())
+                    .or_else(|| lua.globals().get::<String>("currentModDirectory").ok())
+                    .unwrap_or_default();
+                let Some(path) = find_mod_settings_file(lua, &mod_name) else {
+                    return Ok(LuaNil);
+                };
+                let Ok(contents) = std::fs::read_to_string(path) else {
+                    return Ok(LuaNil);
+                };
+                parse_mod_setting(lua, &contents, &save_tag)
+            },
+        )?,
+    )?;
 
     lua.globals().set(
         "checkFileExists",
@@ -4227,11 +4256,23 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
-    // startVideo(filename, callback) — queue mid-song video playback
-    // Pauses gameplay, plays video, then resumes on finish
+    // startVideo(videoFile, canSkip=true, forMidSong=false, shouldLoop=false, playOnLoad=true)
+    // Also accepts the older Rustic form startVideo(filename, callbackName).
     lua.globals().set(
         "startVideo",
-        lua.create_function(|lua, (filename, callback): (String, Option<String>)| {
+        lua.create_function(|lua, args: LuaMultiValue| -> LuaResult<bool> {
+            let filename = multi_string(&args, 0).unwrap_or_default();
+            if filename.is_empty() {
+                return Ok(false);
+            }
+            let callback = match args.get(1) {
+                Some(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
+                _ => None,
+            };
+            let for_mid_song = match args.get(2) {
+                Some(LuaValue::Boolean(v)) => *v,
+                _ => false,
+            };
             let pending: LuaTable = lua.globals().get("__pending_props")?;
             let entry = lua.create_table()?;
             entry.set("type", "video")?;
@@ -4239,9 +4280,10 @@ fn register_noop_stubs(lua: &Lua) -> LuaResult<()> {
             if let Some(ref cb) = callback {
                 entry.set("callback", cb.as_str())?;
             }
+            entry.set("blocks_gameplay", !for_mid_song)?;
             let len = pending.len()? + 1;
             pending.set(len, entry)?;
-            Ok(())
+            Ok(true)
         })?,
     )?;
     lua.globals().set(
@@ -4633,6 +4675,52 @@ fn find_rooted_dir(lua: &Lua, relative: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+fn find_mod_settings_file(lua: &Lua, mod_name: &str) -> Option<std::path::PathBuf> {
+    let rels = if mod_name.trim().is_empty() {
+        vec!["data/settings.json".to_string()]
+    } else {
+        vec![
+            "data/settings.json".to_string(),
+            format!("{mod_name}/data/settings.json"),
+            format!("mods/{mod_name}/data/settings.json"),
+        ]
+    };
+    for rel in &rels {
+        if let Some(path) = find_rooted_file(lua, rel) {
+            return Some(path);
+        }
+    }
+
+    let roots: LuaTable = lua.globals().get("__image_roots").ok()?;
+    let len = roots.len().ok()?;
+    for i in 1..=len {
+        let root: String = roots.get(i).ok()?;
+        let mut roots_to_try = vec![std::path::PathBuf::from(&root)];
+        if roots_to_try[0].file_name().and_then(|name| name.to_str()) == Some("assets") {
+            let mut mod_root = roots_to_try[0].clone();
+            mod_root.pop();
+            roots_to_try.push(mod_root);
+        }
+        for root in roots_to_try {
+            let candidates = if mod_name.trim().is_empty() {
+                vec![root.join("data/settings.json")]
+            } else {
+                vec![
+                    root.join("data/settings.json"),
+                    root.join(mod_name).join("data/settings.json"),
+                    root.join("mods").join(mod_name).join("data/settings.json"),
+                ]
+            };
+            for candidate in candidates {
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn writable_lua_file(lua: &Lua, relative: &str, absolute: bool) -> Option<std::path::PathBuf> {
     let rel = relative.replace('\\', "/");
     if absolute {
@@ -4666,6 +4754,229 @@ fn lua_call_args_to_vec(value: Option<LuaValue>) -> LuaResult<Vec<LuaValue>> {
         }
         value => Ok(vec![value]),
     }
+}
+
+fn parse_mod_setting(lua: &Lua, contents: &str, save_tag: &str) -> LuaResult<LuaValue> {
+    for block in json_object_blocks(contents) {
+        let Some(save) = json_string_field(block, "save") else {
+            continue;
+        };
+        if save != save_tag {
+            continue;
+        }
+
+        let setting_type = json_string_field(block, "type").unwrap_or_default();
+        if matches!(setting_type.as_str(), "key" | "keybind") {
+            let table = lua.create_table()?;
+            table.set(
+                "keyboard",
+                json_string_field(block, "keyboard").unwrap_or_else(|| "NONE".to_string()),
+            )?;
+            table.set(
+                "gamepad",
+                json_string_field(block, "gamepad").unwrap_or_else(|| "NONE".to_string()),
+            )?;
+            return Ok(LuaValue::Table(table));
+        }
+
+        if let Some(value) = json_field_value(block, "value") {
+            return parse_json_scalar_or_array(lua, value);
+        }
+    }
+    Ok(LuaNil)
+}
+
+fn json_object_blocks(contents: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    let mut start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in contents.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(idx);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(start) = start.take() {
+                        blocks.push(&contents[start..=idx]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    blocks
+}
+
+fn json_string_field(block: &str, key: &str) -> Option<String> {
+    let value = json_field_value(block, key)?.trim_start();
+    if !value.starts_with('"') {
+        return None;
+    }
+    parse_json_string(value).map(|(value, _)| value)
+}
+
+fn json_field_value<'a>(block: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("\"{key}\"");
+    let key_pos = block.find(&needle)?;
+    let after_key = &block[key_pos + needle.len()..];
+    let colon_pos = after_key.find(':')?;
+    let value_start = key_pos + needle.len() + colon_pos + 1;
+    let tail = &block[value_start..];
+    Some(tail[..json_value_len(tail)].trim())
+}
+
+fn json_value_len(value: &str) -> usize {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in value.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '[' | '{' => depth += 1,
+            ']' | '}' => {
+                if depth == 0 {
+                    return idx;
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => return idx,
+            _ => {}
+        }
+    }
+    value.len()
+}
+
+fn parse_json_scalar_or_array(lua: &Lua, value: &str) -> LuaResult<LuaValue> {
+    let value = value.trim();
+    if value.starts_with('"') {
+        return match parse_json_string(value) {
+            Some((value, _)) => Ok(LuaValue::String(lua.create_string(&value)?)),
+            None => Ok(LuaNil),
+        };
+    }
+    if value.eq_ignore_ascii_case("true") {
+        return Ok(LuaValue::Boolean(true));
+    }
+    if value.eq_ignore_ascii_case("false") {
+        return Ok(LuaValue::Boolean(false));
+    }
+    if value.eq_ignore_ascii_case("null") {
+        return Ok(LuaNil);
+    }
+    if value.starts_with('[') && value.ends_with(']') {
+        let table = lua.create_table()?;
+        for (idx, item) in split_json_array(&value[1..value.len() - 1])
+            .iter()
+            .enumerate()
+        {
+            table.set(idx + 1, parse_json_scalar_or_array(lua, item)?)?;
+        }
+        return Ok(LuaValue::Table(table));
+    }
+    if let Ok(int) = value.parse::<i64>() {
+        return Ok(LuaValue::Integer(int));
+    }
+    if let Ok(float) = value.parse::<f64>() {
+        return Ok(LuaValue::Number(float));
+    }
+    Ok(LuaNil)
+}
+
+fn parse_json_string(value: &str) -> Option<(String, usize)> {
+    let mut out = String::new();
+    let mut escaped = false;
+    let mut chars = value.char_indices();
+    if chars.next()?.1 != '"' {
+        return None;
+    }
+    for (idx, ch) in chars {
+        if escaped {
+            let resolved = match ch {
+                '"' => '"',
+                '\\' => '\\',
+                '/' => '/',
+                'b' => '\u{0008}',
+                'f' => '\u{000c}',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                _ => ch,
+            };
+            out.push(resolved);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            return Some((out, idx + ch.len_utf8()));
+        } else {
+            out.push(ch);
+        }
+    }
+    None
+}
+
+fn split_json_array(value: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in value.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '[' | '{' => depth += 1,
+            ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(value[start..idx].trim());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < value.len() {
+        out.push(value[start..].trim());
+    }
+    out
 }
 
 fn queue_script_call(
