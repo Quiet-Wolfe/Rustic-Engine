@@ -248,6 +248,24 @@ impl LuaScript {
         globals.set("__gf_x", state.gf_pos.0 as f64).ok();
         globals.set("__gf_y", state.gf_pos.1 as f64).ok();
         globals
+            .set("__dad_group_x", state.dad_group_pos.0 as f64)
+            .ok();
+        globals
+            .set("__dad_group_y", state.dad_group_pos.1 as f64)
+            .ok();
+        globals
+            .set("__bf_group_x", state.bf_group_pos.0 as f64)
+            .ok();
+        globals
+            .set("__bf_group_y", state.bf_group_pos.1 as f64)
+            .ok();
+        globals
+            .set("__gf_group_x", state.gf_group_pos.0 as f64)
+            .ok();
+        globals
+            .set("__gf_group_y", state.gf_group_pos.1 as f64)
+            .ok();
+        globals
             .set(
                 "__opponent_camera_offset_x",
                 state.opponent_camera_offset.0 as f64,
@@ -925,9 +943,12 @@ impl LuaScript {
                         ) {
                             // Character/group tween — read current position from synced state
                             let (cx, cy) = match target.as_str() {
-                                "dad" | "dadGroup" => state.dad_pos,
-                                "boyfriend" | "boyfriendGroup" => state.bf_pos,
-                                "gf" | "gfGroup" => state.gf_pos,
+                                "dad" => state.dad_pos,
+                                "dadGroup" => state.dad_group_pos,
+                                "boyfriend" => state.bf_pos,
+                                "boyfriendGroup" => state.bf_group_pos,
+                                "gf" => state.gf_pos,
+                                "gfGroup" => state.gf_group_pos,
                                 _ => (0.0, 0.0),
                             };
                             match &prop {
@@ -2013,17 +2034,13 @@ pub(crate) fn script_target_matches(path: &Path, script_name: &str, target: &str
 }
 
 fn tbl_to_lua_value(tbl: &LuaTable, key: &str) -> crate::script_state::LuaValue {
-    if let Ok(b) = tbl.get::<bool>(key) {
-        return crate::script_state::LuaValue::Bool(b);
+    match tbl.get::<LuaValue>(key) {
+        Ok(LuaValue::Integer(n)) => crate::script_state::LuaValue::Int(n),
+        Ok(LuaValue::Number(n)) => crate::script_state::LuaValue::Float(n),
+        Ok(LuaValue::Boolean(b)) => crate::script_state::LuaValue::Bool(b),
+        Ok(LuaValue::String(s)) => {
+            crate::script_state::LuaValue::String(s.to_string_lossy().to_string())
+        }
+        _ => crate::script_state::LuaValue::Nil,
     }
-    if let Ok(n) = tbl.get::<i64>(key) {
-        return crate::script_state::LuaValue::Int(n);
-    }
-    if let Ok(n) = tbl.get::<f64>(key) {
-        return crate::script_state::LuaValue::Float(n);
-    }
-    if let Ok(s) = tbl.get::<String>(key) {
-        return crate::script_state::LuaValue::String(s);
-    }
-    crate::script_state::LuaValue::Nil
 }

@@ -1513,27 +1513,57 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                             .unwrap_or(LuaValue::Integer(0)))
                     }
                     // Character position reads — synced from game each frame
-                    "dad.x" | "dadGroup.x" => {
+                    "dad.x" => {
                         return Ok(g
                             .get::<LuaValue>("__dad_x")
                             .unwrap_or(LuaValue::Number(0.0)))
                     }
-                    "dad.y" | "dadGroup.y" => {
+                    "dad.y" => {
                         return Ok(g
                             .get::<LuaValue>("__dad_y")
                             .unwrap_or(LuaValue::Number(0.0)))
                     }
-                    "boyfriend.x" | "bf.x" | "boyfriendGroup.x" => {
+                    "dadGroup.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__dad_group_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "dadGroup.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__dad_group_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "boyfriend.x" | "bf.x" => {
                         return Ok(g.get::<LuaValue>("__bf_x").unwrap_or(LuaValue::Number(0.0)))
                     }
-                    "boyfriend.y" | "bf.y" | "boyfriendGroup.y" => {
+                    "boyfriend.y" | "bf.y" => {
                         return Ok(g.get::<LuaValue>("__bf_y").unwrap_or(LuaValue::Number(0.0)))
                     }
-                    "gf.x" | "girlfriend.x" | "gfGroup.x" => {
+                    "boyfriendGroup.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_group_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "boyfriendGroup.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__bf_group_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "gf.x" | "girlfriend.x" => {
                         return Ok(g.get::<LuaValue>("__gf_x").unwrap_or(LuaValue::Number(0.0)))
                     }
-                    "gf.y" | "girlfriend.y" | "gfGroup.y" => {
+                    "gf.y" | "girlfriend.y" => {
                         return Ok(g.get::<LuaValue>("__gf_y").unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "gfGroup.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__gf_group_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "gfGroup.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__gf_group_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
                     }
                     "opponentCameraOffset[0]" | "opponentCameraOffset.x" => {
                         return Ok(g
@@ -1656,6 +1686,19 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
             // Known game properties — read from globals (which Lua scripts may have set)
             let g = lua.globals();
             match prop.as_str() {
+                "opponentCameraOffset" | "boyfriendCameraOffset" | "girlfriendCameraOffset" => {
+                    let (x_key, y_key) = match prop.as_str() {
+                        "opponentCameraOffset" => {
+                            ("__opponent_camera_offset_x", "__opponent_camera_offset_y")
+                        }
+                        "boyfriendCameraOffset" => ("__bf_camera_offset_x", "__bf_camera_offset_y"),
+                        _ => ("__gf_camera_x", "__gf_camera_y"),
+                    };
+                    let tbl = lua.create_table()?;
+                    tbl.set(1, g.get::<f64>(x_key).unwrap_or(0.0))?;
+                    tbl.set(2, g.get::<f64>(y_key).unwrap_or(0.0))?;
+                    return Ok(LuaValue::Table(tbl));
+                }
                 "defaultCamZoom" => Ok(g
                     .get::<LuaValue>("defaultCamZoom")
                     .unwrap_or(LuaValue::Number(0.9))),
@@ -1681,6 +1724,10 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         .get::<LuaTable>("__custom_vars")
                         .unwrap_or(lua.create_table().unwrap());
                     let val = custom.get::<LuaValue>(prop.as_str()).unwrap_or(LuaNil);
+                    if val != LuaNil {
+                        return Ok(val);
+                    }
+                    let val = g.get::<LuaValue>(prop.as_str()).unwrap_or(LuaNil);
                     if val != LuaNil {
                         return Ok(val);
                     }
@@ -2715,6 +2762,23 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
             let tbl = lua.create_table()?;
             tbl.set("prop", target)?;
             tbl.set("value", val)?;
+            pending.set(pending.len()? + 1, tbl)?;
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "setCharacterScale",
+        lua.create_function(|lua, (typ, scale): (String, f64)| {
+            let target = match typ.to_lowercase().as_str() {
+                "dad" | "opponent" | "1" => "dad.scale",
+                "boyfriend" | "bf" | "0" => "boyfriend.scale",
+                "gf" | "girlfriend" | "2" => "gf.scale",
+                _ => "boyfriend.scale",
+            };
+            let pending: LuaTable = lua.globals().get("__pending_props")?;
+            let tbl = lua.create_table()?;
+            tbl.set("prop", target)?;
+            tbl.set("value", scale)?;
             pending.set(pending.len()? + 1, tbl)?;
             Ok(())
         })?,

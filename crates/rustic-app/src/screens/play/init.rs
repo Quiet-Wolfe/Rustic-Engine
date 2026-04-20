@@ -201,6 +201,12 @@ impl PlayScreen {
         self.stage_pos_bf = [stage.boyfriend[0], stage.boyfriend[1]];
         self.stage_pos_dad = [stage.opponent[0], stage.opponent[1]];
         self.stage_pos_gf = [stage.girlfriend[0], stage.girlfriend[1]];
+        self.scripts.state.bf_group_pos =
+            (self.stage_pos_bf[0] as f32, self.stage_pos_bf[1] as f32);
+        self.scripts.state.dad_group_pos =
+            (self.stage_pos_dad[0] as f32, self.stage_pos_dad[1] as f32);
+        self.scripts.state.gf_group_pos =
+            (self.stage_pos_gf[0] as f32, self.stage_pos_gf[1] as f32);
         self.stage_name = stage_name.clone();
         self.camera = rustic_render::camera::GameCamera::new(self.default_cam_zoom);
         self.camera.camera_speed = stage.camera_speed as f32;
@@ -338,14 +344,20 @@ impl PlayScreen {
             .set_on_all("defaultBoyfriendX", stage.boyfriend[0]);
         self.scripts
             .set_on_all("defaultBoyfriendY", stage.boyfriend[1]);
+        self.scripts.set_on_all("BF_X", stage.boyfriend[0]);
+        self.scripts.set_on_all("BF_Y", stage.boyfriend[1]);
         self.scripts
             .set_on_all("defaultOpponentX", stage.opponent[0]);
         self.scripts
             .set_on_all("defaultOpponentY", stage.opponent[1]);
+        self.scripts.set_on_all("DAD_X", stage.opponent[0]);
+        self.scripts.set_on_all("DAD_Y", stage.opponent[1]);
         self.scripts
             .set_on_all("defaultGirlfriendX", stage.girlfriend[0]);
         self.scripts
             .set_on_all("defaultGirlfriendY", stage.girlfriend[1]);
+        self.scripts.set_on_all("GF_X", stage.girlfriend[0]);
+        self.scripts.set_on_all("GF_Y", stage.girlfriend[1]);
 
         // Set character name globals (Psych Engine: boyfriendName, dadName, gfName)
         self.scripts
@@ -623,8 +635,10 @@ impl PlayScreen {
             stage.camera_opponent[1] as f32,
         ];
 
+        self.sync_character_script_state();
         // Apply character position adjustments from runHaxeCode (must be after chars loaded)
         self.process_char_positions();
+        self.sync_character_script_state();
 
         // Camera targets — compute from current character midpoints
         self.recompute_camera_targets();
@@ -792,6 +806,8 @@ impl PlayScreen {
             self.process_property_writes();
             self.process_lua_extensions();
             self.process_char_positions();
+            self.sync_character_script_state();
+            self.recompute_camera_targets();
         }
 
         #[cfg(feature = "rl")]

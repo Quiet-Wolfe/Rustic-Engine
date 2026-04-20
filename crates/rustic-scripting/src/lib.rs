@@ -241,12 +241,7 @@ impl ScriptManager {
                 "dad" | "dadGroup" | "boyfriend" | "boyfriendGroup" | "gf" | "gfGroup"
             );
             if is_char_target {
-                let char_prefix = match target.as_str() {
-                    "dad" | "dadGroup" => "dad",
-                    "boyfriend" | "boyfriendGroup" => "boyfriend",
-                    "gf" | "gfGroup" => "gf",
-                    _ => continue,
-                };
+                let char_prefix = target.as_str();
                 let prop_name = match prop {
                     TweenProperty::X => format!("{}.x", char_prefix),
                     TweenProperty::Y => format!("{}.y", char_prefix),

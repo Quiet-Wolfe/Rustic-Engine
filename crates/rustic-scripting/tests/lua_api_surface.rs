@@ -191,6 +191,7 @@ fn psych_lua_api_callbacks_are_registered() {
         "setCameraFollowPoint",
         "setCameraScroll",
         "setCharacterX",
+        "setCharacterScale",
         "setCharacterY",
         "setDataFromSave",
         "setGraphicSize",
@@ -286,6 +287,63 @@ fn psych_lua_api_callbacks_are_registered() {
         mgr.state.custom_vars.get("apiSurfaceOk"),
         Some(LuaValue::Bool(true))
     ));
+}
+
+#[test]
+fn psych_stage_positions_are_visible_to_lua_callbacks() {
+    let script = write_tmp(
+        "stage_positions.lua",
+        r#"
+        function onCreatePost()
+            local positionsOk = getProperty('BF_X') == 770
+                and getProperty('BF_Y') == 100
+                and getProperty('DAD_X') == 100
+                and getProperty('DAD_Y') == 120
+                and getProperty('dadGroup.x') == 100
+                and getProperty('dadGroup.y') == 120
+                and getProperty('dad.y') == 380
+                and getCharacterY('dad') == 380
+            setProperty('dadGroup.y', getProperty('DAD_Y') + 20)
+            setCharacterScale('dad', 0.85)
+            setVar('stagePositionsOk', positionsOk)
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.state.dad_group_pos = (100.0, 120.0);
+    mgr.state.bf_group_pos = (770.0, 100.0);
+    mgr.state.gf_group_pos = (400.0, 130.0);
+    mgr.state.dad_pos = (50.0, 380.0);
+    mgr.load_script(&script);
+    mgr.set_on_all("BF_X", 770.0);
+    mgr.set_on_all("BF_Y", 100.0);
+    mgr.set_on_all("DAD_X", 100.0);
+    mgr.set_on_all("DAD_Y", 120.0);
+    mgr.call("onCreatePost");
+
+    assert!(matches!(
+        mgr.state.custom_vars.get("stagePositionsOk"),
+        Some(LuaValue::Bool(true))
+    ));
+    assert!(
+        mgr.state
+            .property_writes
+            .iter()
+            .any(|(prop, value)| prop == "dadGroup.y"
+                && (matches!(
+                    value,
+                    LuaValue::Float(v) if (*v - 140.0).abs() < f64::EPSILON
+                ) || matches!(value, LuaValue::Int(140)))),
+        "property writes: {:?}",
+        mgr.state.property_writes
+    );
+    assert!(mgr
+        .state
+        .property_writes
+        .iter()
+        .any(|(prop, value)| prop == "dad.scale"
+            && matches!(value, LuaValue::Float(v) if (*v - 0.85).abs() < f64::EPSILON)));
 }
 
 #[test]

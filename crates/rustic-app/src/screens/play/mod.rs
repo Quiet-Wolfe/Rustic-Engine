@@ -1386,6 +1386,103 @@ impl PlayScreen {
         }
     }
 
+    pub(super) fn sync_character_script_state(&mut self) {
+        self.scripts.state.bf_group_pos =
+            (self.stage_pos_bf[0] as f32, self.stage_pos_bf[1] as f32);
+        self.scripts.state.dad_group_pos =
+            (self.stage_pos_dad[0] as f32, self.stage_pos_dad[1] as f32);
+        self.scripts.state.gf_group_pos =
+            (self.stage_pos_gf[0] as f32, self.stage_pos_gf[1] as f32);
+
+        if let Some(dad) = &self.char_dad {
+            self.scripts.state.dad_anim_name = dad.current_anim_name().to_string();
+            self.scripts.state.dad_anim_frame = dad.anim_frame_index();
+            self.scripts.state.dad_anim_finished = dad.anim_finished();
+            self.scripts.state.dad_pos = (dad.x(), dad.y());
+            let camera_position = dad.camera_position();
+            self.scripts.state.dad_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
+        }
+        if let Some(bf) = &self.char_bf {
+            self.scripts.state.bf_anim_name = bf.current_anim_name().to_string();
+            self.scripts.state.bf_anim_frame = bf.anim_frame_index();
+            self.scripts.state.bf_anim_finished = bf.anim_finished();
+            self.scripts.state.bf_pos = (bf.x(), bf.y());
+            let camera_position = bf.camera_position();
+            self.scripts.state.bf_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
+        }
+        if let Some(gf) = &self.char_gf {
+            self.scripts.state.gf_anim_name = gf.current_anim_name().to_string();
+            self.scripts.state.gf_anim_frame = gf.anim_frame_index();
+            self.scripts.state.gf_anim_finished = gf.anim_finished();
+            self.scripts.state.gf_pos = (gf.x(), gf.y());
+            let camera_position = gf.camera_position();
+            self.scripts.state.gf_camera_position =
+                (camera_position[0] as f32, camera_position[1] as f32);
+        }
+    }
+
+    fn set_character_group_x(&mut self, group: &str, x: f32) {
+        match group {
+            "dad" => {
+                let delta = x - self.stage_pos_dad[0] as f32;
+                self.stage_pos_dad[0] = x as f64;
+                self.scripts.state.dad_group_pos.0 = x;
+                if let Some(ch) = &mut self.char_dad {
+                    ch.set_x(ch.x() + delta);
+                }
+            }
+            "boyfriend" => {
+                let delta = x - self.stage_pos_bf[0] as f32;
+                self.stage_pos_bf[0] = x as f64;
+                self.scripts.state.bf_group_pos.0 = x;
+                if let Some(ch) = &mut self.char_bf {
+                    ch.set_x(ch.x() + delta);
+                }
+            }
+            "gf" => {
+                let delta = x - self.stage_pos_gf[0] as f32;
+                self.stage_pos_gf[0] = x as f64;
+                self.scripts.state.gf_group_pos.0 = x;
+                if let Some(ch) = &mut self.char_gf {
+                    ch.set_x(ch.x() + delta);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_character_group_y(&mut self, group: &str, y: f32) {
+        match group {
+            "dad" => {
+                let delta = y - self.stage_pos_dad[1] as f32;
+                self.stage_pos_dad[1] = y as f64;
+                self.scripts.state.dad_group_pos.1 = y;
+                if let Some(ch) = &mut self.char_dad {
+                    ch.set_y(ch.y() + delta);
+                }
+            }
+            "boyfriend" => {
+                let delta = y - self.stage_pos_bf[1] as f32;
+                self.stage_pos_bf[1] = y as f64;
+                self.scripts.state.bf_group_pos.1 = y;
+                if let Some(ch) = &mut self.char_bf {
+                    ch.set_y(ch.y() + delta);
+                }
+            }
+            "gf" => {
+                let delta = y - self.stage_pos_gf[1] as f32;
+                self.stage_pos_gf[1] = y as f64;
+                self.scripts.state.gf_group_pos.1 = y;
+                if let Some(ch) = &mut self.char_gf {
+                    ch.set_y(ch.y() + delta);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Process game-level property writes from Lua (defaultCamZoom, cameraSpeed, etc.).
     pub(super) fn process_property_writes(&mut self) {
         use rustic_scripting::LuaValue;
@@ -1430,6 +1527,7 @@ impl PlayScreen {
 
         let writes: Vec<(String, LuaValue)> =
             self.scripts.state.property_writes.drain(..).collect();
+        let had_writes = !writes.is_empty();
         let mut camera_offsets_changed = false;
         for (prop, val) in writes {
             let as_f32 = match &val {
@@ -1730,45 +1828,96 @@ impl PlayScreen {
                     }
                 }
                 // Character position/alpha/visibility
-                "dad.x" | "dadGroup.x" => {
+                "dad.x" => {
                     if let Some(v) = as_f32 {
                         if let Some(c) = &mut self.char_dad {
                             c.set_x(v);
                         }
                     }
                 }
-                "dad.y" | "dadGroup.y" => {
+                "dad.y" => {
                     if let Some(v) = as_f32 {
                         if let Some(c) = &mut self.char_dad {
                             c.set_y(v);
                         }
                     }
                 }
-                "boyfriend.x" | "bf.x" | "boyfriendGroup.x" => {
+                "dadGroup.x" => {
+                    if let Some(v) = as_f32 {
+                        self.set_character_group_x("dad", v);
+                    }
+                }
+                "dadGroup.y" => {
+                    if let Some(v) = as_f32 {
+                        self.set_character_group_y("dad", v);
+                    }
+                }
+                "boyfriend.x" | "bf.x" => {
                     if let Some(v) = as_f32 {
                         if let Some(c) = &mut self.char_bf {
                             c.set_x(v);
                         }
                     }
                 }
-                "boyfriend.y" | "bf.y" | "boyfriendGroup.y" => {
+                "boyfriend.y" | "bf.y" => {
                     if let Some(v) = as_f32 {
                         if let Some(c) = &mut self.char_bf {
                             c.set_y(v);
                         }
                     }
                 }
-                "gf.x" | "girlfriend.x" | "gfGroup.x" => {
+                "boyfriendGroup.x" => {
+                    if let Some(v) = as_f32 {
+                        self.set_character_group_x("boyfriend", v);
+                    }
+                }
+                "boyfriendGroup.y" => {
+                    if let Some(v) = as_f32 {
+                        self.set_character_group_y("boyfriend", v);
+                    }
+                }
+                "gf.x" | "girlfriend.x" => {
                     if let Some(v) = as_f32 {
                         if let Some(c) = &mut self.char_gf {
                             c.set_x(v);
                         }
                     }
                 }
-                "gf.y" | "girlfriend.y" | "gfGroup.y" => {
+                "gf.y" | "girlfriend.y" => {
                     if let Some(v) = as_f32 {
                         if let Some(c) = &mut self.char_gf {
                             c.set_y(v);
+                        }
+                    }
+                }
+                "gfGroup.x" => {
+                    if let Some(v) = as_f32 {
+                        self.set_character_group_x("gf", v);
+                    }
+                }
+                "gfGroup.y" => {
+                    if let Some(v) = as_f32 {
+                        self.set_character_group_y("gf", v);
+                    }
+                }
+                "dad.scale" | "dad.scale.x" | "dad.scale.y" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_dad {
+                            c.set_scale(v);
+                        }
+                    }
+                }
+                "boyfriend.scale" | "bf.scale" | "boyfriend.scale.x" | "boyfriend.scale.y" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_bf {
+                            c.set_scale(v);
+                        }
+                    }
+                }
+                "gf.scale" | "girlfriend.scale" | "gf.scale.x" | "gf.scale.y" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(c) = &mut self.char_gf {
+                            c.set_scale(v);
                         }
                     }
                 }
@@ -1804,7 +1953,8 @@ impl PlayScreen {
             }
         }
 
-        if camera_offsets_changed {
+        if camera_offsets_changed || had_writes {
+            self.sync_character_script_state();
             self.recompute_camera_targets();
         }
 

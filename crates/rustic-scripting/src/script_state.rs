@@ -253,6 +253,10 @@ pub struct ScriptState {
     pub dad_pos: (f32, f32),
     pub bf_pos: (f32, f32),
     pub gf_pos: (f32, f32),
+    /// Current character group positions from Psych stage data.
+    pub dad_group_pos: (f32, f32),
+    pub bf_group_pos: (f32, f32),
+    pub gf_group_pos: (f32, f32),
     /// Character cameraPosition values from Psych character JSON.
     pub dad_camera_position: (f32, f32),
     pub bf_camera_position: (f32, f32),
@@ -583,6 +587,9 @@ impl ScriptState {
             dad_pos: (0.0, 0.0),
             bf_pos: (0.0, 0.0),
             gf_pos: (0.0, 0.0),
+            dad_group_pos: (0.0, 0.0),
+            bf_group_pos: (0.0, 0.0),
+            gf_group_pos: (0.0, 0.0),
             dad_camera_position: (0.0, 0.0),
             bf_camera_position: (0.0, 0.0),
             gf_camera_position: (0.0, 0.0),
