@@ -118,6 +118,26 @@ impl ScriptManager {
         }
     }
 
+    pub fn inject_animated_sprite(
+        &mut self,
+        tag: &str,
+        image: &str,
+        x: f32,
+        y: f32,
+        anim: &str,
+        prefix: &str,
+        in_front: bool,
+    ) {
+        for script in &mut self.scripts {
+            if let Script::Lua(lua) = script {
+                if let Err(e) = lua.inject_animated_sprite(tag, image, x, y, anim, prefix, in_front)
+                {
+                    log::warn!("Failed to inject Lua sprite '{}': {}", tag, e);
+                }
+            }
+        }
+    }
+
     /// Call a named callback on all scripts with no arguments.
     pub fn call(&mut self, callback: &str) {
         self.refresh_running_scripts();

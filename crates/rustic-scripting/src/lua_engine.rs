@@ -26,6 +26,114 @@ pub struct LuaScript {
 }
 
 impl LuaScript {
+    /// Inject a Psych-created stage sprite into Lua before `onCreate` runs.
+    /// Stage JSON speakers are regular modchart sprites in several mods, so
+    /// scripts must be able to mutate `speaker.x`, `speaker.visible`, etc.
+    pub fn inject_animated_sprite(
+        &self,
+        tag: &str,
+        image: &str,
+        x: f32,
+        y: f32,
+        anim: &str,
+        prefix: &str,
+        in_front: bool,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let tbl = self
+            .lua
+            .create_table()
+            .map_err(|e| format!("Failed to create sprite table: {}", e))?;
+        tbl.set("tag", tag)
+            .map_err(|e| format!("Failed to set tag: {}", e))?;
+        tbl.set("kind", "animated")
+            .map_err(|e| format!("Failed to set kind: {}", e))?;
+        tbl.set("image", image)
+            .map_err(|e| format!("Failed to set image: {}", e))?;
+        tbl.set("x", x)
+            .map_err(|e| format!("Failed to set x: {}", e))?;
+        tbl.set("y", y)
+            .map_err(|e| format!("Failed to set y: {}", e))?;
+        tbl.set("scale_x", 1.0)
+            .map_err(|e| format!("Failed to set scale_x: {}", e))?;
+        tbl.set("scale_y", 1.0)
+            .map_err(|e| format!("Failed to set scale_y: {}", e))?;
+        tbl.set("scroll_x", 1.0)
+            .map_err(|e| format!("Failed to set scroll_x: {}", e))?;
+        tbl.set("scroll_y", 1.0)
+            .map_err(|e| format!("Failed to set scroll_y: {}", e))?;
+        tbl.set("alpha", 1.0)
+            .map_err(|e| format!("Failed to set alpha: {}", e))?;
+        tbl.set("visible", true)
+            .map_err(|e| format!("Failed to set visible: {}", e))?;
+        tbl.set("flip_x", false)
+            .map_err(|e| format!("Failed to set flip_x: {}", e))?;
+        tbl.set("antialiasing", true)
+            .map_err(|e| format!("Failed to set antialiasing: {}", e))?;
+
+        let anims = self
+            .lua
+            .create_table()
+            .map_err(|e| format!("Failed to create anim table: {}", e))?;
+        let def = self
+            .lua
+            .create_table()
+            .map_err(|e| format!("Failed to create anim def: {}", e))?;
+        def.set("prefix", prefix)
+            .map_err(|e| format!("Failed to set anim prefix: {}", e))?;
+        def.set("fps", 24.0)
+            .map_err(|e| format!("Failed to set anim fps: {}", e))?;
+        def.set("looping", true)
+            .map_err(|e| format!("Failed to set anim looping: {}", e))?;
+        def.set(
+            "indices",
+            self.lua
+                .create_table()
+                .map_err(|e| format!("Failed to create anim indices: {}", e))?,
+        )
+        .map_err(|e| format!("Failed to set anim indices: {}", e))?;
+        anims
+            .set(anim, def)
+            .map_err(|e| format!("Failed to set animation: {}", e))?;
+        tbl.set("__anims", anims)
+            .map_err(|e| format!("Failed to set anims: {}", e))?;
+        tbl.set("current_anim", anim)
+            .map_err(|e| format!("Failed to set current anim: {}", e))?;
+
+        let sprite_data: LuaTable = globals
+            .get("__sprite_data")
+            .map_err(|e| format!("Failed to get __sprite_data: {}", e))?;
+        sprite_data
+            .set(tag, tbl.clone())
+            .map_err(|e| format!("Failed to register sprite data: {}", e))?;
+
+        let pending_sprites: LuaTable = globals
+            .get("__pending_sprites")
+            .map_err(|e| format!("Failed to get __pending_sprites: {}", e))?;
+        pending_sprites
+            .set(pending_sprites.len().unwrap_or(0) + 1, tbl)
+            .map_err(|e| format!("Failed to queue sprite: {}", e))?;
+
+        let pending_adds: LuaTable = globals
+            .get("__pending_adds")
+            .map_err(|e| format!("Failed to get __pending_adds: {}", e))?;
+        let add_tbl = self
+            .lua
+            .create_table()
+            .map_err(|e| format!("Failed to create add table: {}", e))?;
+        add_tbl
+            .set("tag", tag)
+            .map_err(|e| format!("Failed to set add tag: {}", e))?;
+        add_tbl
+            .set("in_front", in_front)
+            .map_err(|e| format!("Failed to set add front: {}", e))?;
+        pending_adds
+            .set(pending_adds.len().unwrap_or(0) + 1, add_tbl)
+            .map_err(|e| format!("Failed to queue add: {}", e))?;
+
+        Ok(())
+    }
+
     /// Load and execute a Lua script file.
     /// Sets up built-in variables and functions, then executes the file.
     pub fn load(path: &Path, state: &mut ScriptState) -> Result<Self, String> {

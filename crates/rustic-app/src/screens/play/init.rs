@@ -393,6 +393,23 @@ impl PlayScreen {
                 .set_on_all(&format!("defaultOpponentStrumY{}", i), 0.0);
         }
 
+        if !stage.speaker_image.is_empty()
+            && stage.speaker_image != "nothing"
+            && paths
+                .image(&format!("girlfriends/speaker/{}", stage.speaker_image))
+                .is_some()
+        {
+            self.scripts.inject_animated_sprite(
+                "speaker",
+                &format!("girlfriends/speaker/{}", stage.speaker_image),
+                (stage.girlfriend[0] + stage.speaker_position[0]) as f32,
+                (stage.girlfriend[1] + stage.speaker_position[1]) as f32,
+                "idle",
+                "GF Dancing Beat",
+                false,
+            );
+        }
+
         // Call onCreate on all loaded scripts
         if self.scripts.has_scripts() {
             self.scripts.call("onCreate");

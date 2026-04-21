@@ -39,6 +39,12 @@ pub struct StageFile {
     #[serde(default, rename = "disableZooming")]
     pub disable_zooming: bool,
 
+    /// Retrospecter/Psych-style animated speaker sprite shown behind GF.
+    #[serde(default, rename = "speaker_image")]
+    pub speaker_image: String,
+    #[serde(default, rename = "speaker_position")]
+    pub speaker_position: [f64; 2],
+
     #[serde(default)]
     pub objects: Vec<StageObjectDef>,
 }
@@ -151,6 +157,8 @@ impl StageFile {
             camera_speed: 1.0,
             camera_start: None,
             disable_zooming: false,
+            speaker_image: String::new(),
+            speaker_position: [0.0, 0.0],
             objects: Vec::new(),
         }
     }

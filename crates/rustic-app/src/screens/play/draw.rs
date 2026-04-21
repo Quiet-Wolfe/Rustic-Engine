@@ -1017,8 +1017,8 @@ impl PlayScreen {
                 if let Some(frame) = atlas.get_frame(anim, sprite.anim_frame) {
                     let (off_x, off_y) =
                         sprite.anim_offsets.get(anim).copied().unwrap_or((0.0, 0.0));
-                    let world_x = sprite.x - off_x;
-                    let world_y = sprite.y - off_y;
+                    let world_x = sprite.x - sprite.offset_x - off_x;
+                    let world_y = sprite.y - sprite.offset_y - off_y;
                     let buf_x = world_x - scroll_x * sprite.scroll_x;
                     let buf_y = world_y - scroll_y * sprite.scroll_y;
                     let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
@@ -1039,13 +1039,14 @@ impl PlayScreen {
                     return;
                 }
             }
+            return;
         }
 
         // Static sprite: draw full texture
         let w = tex.width as f32 * sprite.scale_x;
         let h = tex.height as f32 * sprite.scale_y;
-        let buf_x = sprite.x - scroll_x * sprite.scroll_x;
-        let buf_y = sprite.y - scroll_y * sprite.scroll_y;
+        let buf_x = sprite.x - sprite.offset_x - scroll_x * sprite.scroll_x;
+        let buf_y = sprite.y - sprite.offset_y - scroll_y * sprite.scroll_y;
         let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
         let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
         let dw = w * zoom;
@@ -1125,8 +1126,10 @@ impl PlayScreen {
                     if let Some(frame) = atlas.get_frame(anim, sprite.anim_frame) {
                         let (off_x, off_y) =
                             sprite.anim_offsets.get(anim).copied().unwrap_or((0.0, 0.0));
-                        let dx = (sprite.x - off_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
-                        let dy = (sprite.y - off_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+                        let dx = (sprite.x - sprite.offset_x - off_x - GAME_W / 2.0) * zoom
+                            + GAME_W / 2.0;
+                        let dy = (sprite.y - sprite.offset_y - off_y - GAME_H / 2.0) * zoom
+                            + GAME_H / 2.0;
                         let scale = sprite.scale_x * zoom;
                         gpu.draw_sprite_frame(
                             frame,
@@ -1142,13 +1145,14 @@ impl PlayScreen {
                         continue;
                     }
                 }
+                continue;
             }
 
             // Static sprite
             let w = tex.width as f32 * sprite.scale_x;
             let h = tex.height as f32 * sprite.scale_y;
-            let dx = (sprite.x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
-            let dy = (sprite.y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+            let dx = (sprite.x - sprite.offset_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
+            let dy = (sprite.y - sprite.offset_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
             let dw = w * zoom;
             let dh = h * zoom;
             gpu.push_texture_region(
