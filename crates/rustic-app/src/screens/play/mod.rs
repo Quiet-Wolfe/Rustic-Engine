@@ -1397,6 +1397,14 @@ impl PlayScreen {
     pub(super) fn sync_character_script_state(&mut self) {
         self.scripts.state.camera_scroll =
             (self.camera.x - GAME_W / 2.0, self.camera.y - GAME_H / 2.0);
+        self.scripts.state.custom_vars.insert(
+            "camFollow.x".into(),
+            rustic_scripting::LuaValue::Float(self.camera.x as f64),
+        );
+        self.scripts.state.custom_vars.insert(
+            "camFollow.y".into(),
+            rustic_scripting::LuaValue::Float(self.camera.y as f64),
+        );
         self.scripts.state.bf_group_pos =
             (self.stage_pos_bf[0] as f32, self.stage_pos_bf[1] as f32);
         self.scripts.state.dad_group_pos =

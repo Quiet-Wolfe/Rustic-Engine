@@ -702,6 +702,7 @@ impl PlayScreen {
         } else {
             self.camera.snap_to(self.cam_dad[0], self.cam_dad[1]);
         }
+        self.sync_character_script_state();
 
         // Disable beat zooming if stage specifies it
         self.disable_zooming = stage.disable_zooming;
