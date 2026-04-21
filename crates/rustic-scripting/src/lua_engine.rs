@@ -37,6 +37,7 @@ impl LuaScript {
         y: f32,
         anim: &str,
         prefix: &str,
+        scale: f32,
         in_front: bool,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
@@ -54,9 +55,9 @@ impl LuaScript {
             .map_err(|e| format!("Failed to set x: {}", e))?;
         tbl.set("y", y)
             .map_err(|e| format!("Failed to set y: {}", e))?;
-        tbl.set("scale_x", 1.0)
+        tbl.set("scale_x", scale)
             .map_err(|e| format!("Failed to set scale_x: {}", e))?;
-        tbl.set("scale_y", 1.0)
+        tbl.set("scale_y", scale)
             .map_err(|e| format!("Failed to set scale_y: {}", e))?;
         tbl.set("scroll_x", 1.0)
             .map_err(|e| format!("Failed to set scroll_x: {}", e))?;

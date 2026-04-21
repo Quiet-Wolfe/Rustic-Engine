@@ -399,6 +399,12 @@ impl PlayScreen {
                 .image(&format!("girlfriends/speaker/{}", stage.speaker_image))
                 .is_some()
         {
+            let speaker_scale = paths
+                .character_json(&parsed.song.gf_version)
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|json| CharacterFile::from_json(&json).ok())
+                .and_then(|gf| gf.stage_scale.get(stage_name).copied())
+                .unwrap_or(1.0) as f32;
             self.scripts.inject_animated_sprite(
                 "speaker",
                 &format!("girlfriends/speaker/{}", stage.speaker_image),
@@ -406,6 +412,7 @@ impl PlayScreen {
                 (stage.girlfriend[1] + stage.speaker_position[1]) as f32,
                 "idle",
                 "GF Dancing Beat",
+                speaker_scale,
                 false,
             );
         }

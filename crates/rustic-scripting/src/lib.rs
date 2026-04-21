@@ -126,11 +126,13 @@ impl ScriptManager {
         y: f32,
         anim: &str,
         prefix: &str,
+        scale: f32,
         in_front: bool,
     ) {
         for script in &mut self.scripts {
             if let Script::Lua(lua) = script {
-                if let Err(e) = lua.inject_animated_sprite(tag, image, x, y, anim, prefix, in_front)
+                if let Err(e) =
+                    lua.inject_animated_sprite(tag, image, x, y, anim, prefix, scale, in_front)
                 {
                     log::warn!("Failed to inject Lua sprite '{}': {}", tag, e);
                 }
