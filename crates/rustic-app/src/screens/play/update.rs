@@ -818,6 +818,10 @@ impl PlayScreen {
             gf.update(dt);
         }
 
+        for instance in self.lua_characters.values_mut() {
+            instance.character.update(dt);
+        }
+
         if let Some(dad) = &self.char_dad {
             self.scripts.state.dad_anim_name = dad.current_anim_name().to_string();
             self.scripts.state.dad_anim_frame = dad.anim_frame_index();

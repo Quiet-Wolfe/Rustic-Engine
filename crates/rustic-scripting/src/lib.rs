@@ -8,8 +8,9 @@ pub mod tweens;
 pub use hscript_engine::HScriptEngine;
 pub use lua_engine::LuaScript;
 pub use script_state::{
-    AudioRequest, LuaSprite, LuaSpriteKind, LuaValue, NoteTypeRegistration, PrecacheRequest,
-    ScriptCallRequest, ScriptState, SongControlRequest, StrumProps,
+    AudioRequest, CharacterInstanceCreate, LuaSprite, LuaSpriteKind, LuaValue,
+    NoteTypeRegistration, PrecacheRequest, ScriptCallRequest, ScriptState, SongControlRequest,
+    StrumProps,
 };
 pub use tweens::{EaseFunc, LuaTimer, Tween, TweenManager, TweenProperty};
 
@@ -249,6 +250,25 @@ impl ScriptManager {
                     TweenProperty::Angle => format!("{}.angle", char_prefix),
                     _ => continue,
                 };
+                self.state
+                    .property_writes
+                    .push((prop_name, LuaValue::Float(val as f64)));
+                continue;
+            }
+
+            let prop_name = match prop {
+                TweenProperty::X => Some(format!("{}.x", target)),
+                TweenProperty::Y => Some(format!("{}.y", target)),
+                TweenProperty::Alpha => Some(format!("{}.alpha", target)),
+                TweenProperty::Angle => Some(format!("{}.angle", target)),
+                TweenProperty::ScaleX => Some(format!("{}.scale.x", target)),
+                TweenProperty::ScaleY => Some(format!("{}.scale.y", target)),
+                _ => None,
+            };
+            if let Some(prop_name) = prop_name {
+                self.state
+                    .custom_vars
+                    .insert(prop_name.clone(), LuaValue::Float(val as f64));
                 self.state
                     .property_writes
                     .push((prop_name, LuaValue::Float(val as f64)));

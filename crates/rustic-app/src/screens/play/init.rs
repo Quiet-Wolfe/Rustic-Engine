@@ -396,6 +396,7 @@ impl PlayScreen {
         // Call onCreate on all loaded scripts
         if self.scripts.has_scripts() {
             self.scripts.call("onCreate");
+            self.process_lua_characters(gpu);
             self.process_lua_sprites(gpu);
             self.process_property_writes();
             self.process_lua_extensions();
@@ -802,6 +803,7 @@ impl PlayScreen {
         // Call onCreatePost after everything is initialized
         if self.scripts.has_scripts() {
             self.scripts.call("onCreatePost");
+            self.process_lua_characters(gpu);
             self.process_lua_sprites(gpu);
             self.process_property_writes();
             self.process_lua_extensions();

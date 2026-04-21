@@ -248,6 +248,12 @@ impl LuaScript {
         globals.set("__gf_x", state.gf_pos.0 as f64).ok();
         globals.set("__gf_y", state.gf_pos.1 as f64).ok();
         globals
+            .set("__cam_game_scroll_x", state.camera_scroll.0 as f64)
+            .ok();
+        globals
+            .set("__cam_game_scroll_y", state.camera_scroll.1 as f64)
+            .ok();
+        globals
             .set("__dad_group_x", state.dad_group_pos.0 as f64)
             .ok();
         globals
@@ -831,6 +837,47 @@ impl LuaScript {
             }
             if let Ok(new_tbl) = self.lua.create_table() {
                 globals.set("__pending_texts", new_tbl).ok();
+            }
+        }
+
+        // Drain reflection-created Character instances.
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_character_instances") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(character)) =
+                        (tbl.get::<String>("tag"), tbl.get::<String>("character"))
+                    {
+                        state.character_instances_to_create.push(
+                            crate::script_state::CharacterInstanceCreate {
+                                tag,
+                                character,
+                                x: tbl.get::<f32>("x").unwrap_or(0.0),
+                                y: tbl.get::<f32>("y").unwrap_or(0.0),
+                                is_player: tbl.get::<bool>("is_player").unwrap_or(false),
+                            },
+                        );
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_character_instances", new_tbl).ok();
+            }
+        }
+
+        if let Ok(pending) = globals.get::<LuaTable>("__pending_character_adds") {
+            let len = pending.len().unwrap_or(0);
+            for i in 1..=len {
+                if let Ok(tbl) = pending.get::<LuaTable>(i) {
+                    if let (Ok(tag), Ok(in_front)) =
+                        (tbl.get::<String>("tag"), tbl.get::<bool>("in_front"))
+                    {
+                        state.character_instances_to_add.push((tag, in_front));
+                    }
+                }
+            }
+            if let Ok(new_tbl) = self.lua.create_table() {
+                globals.set("__pending_character_adds", new_tbl).ok();
             }
         }
 

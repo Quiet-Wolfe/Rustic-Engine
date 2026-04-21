@@ -111,6 +111,16 @@ pub struct ScriptCallRequest {
     pub args: Vec<LuaValue>,
 }
 
+/// A Psych reflection-created `objects.Character` instance.
+#[derive(Debug, Clone)]
+pub struct CharacterInstanceCreate {
+    pub tag: String,
+    pub character: String,
+    pub x: f32,
+    pub y: f32,
+    pub is_player: bool,
+}
+
 /// Shared mutable state accessible from Lua scripts.
 /// This is the bridge between Lua and the Rust game engine.
 pub struct ScriptState {
@@ -168,6 +178,9 @@ pub struct ScriptState {
     /// Current camera zoom (updated each frame by the game, used for tween start values).
     pub camera_zoom: f32,
 
+    /// Current camGame top-left scroll position.
+    pub camera_scroll: (f32, f32),
+
     /// Default camera zoom (target zoom, synced across all scripts).
     pub default_cam_zoom: f32,
 
@@ -215,6 +228,11 @@ pub struct ScriptState {
     pub lua_texts: HashMap<String, LuaText>,
     /// Text objects pending addition to the scene. (tag, in_front)
     pub texts_to_add: Vec<(String, bool)>,
+
+    /// Character instances created by reflection (`createInstance(..., "objects.Character", ...)`).
+    pub character_instances_to_create: Vec<CharacterInstanceCreate>,
+    /// Character instances pending addition to the scene. (tag, in_front)
+    pub character_instances_to_add: Vec<(String, bool)>,
 
     /// Camera shake requests: (camera_name, intensity, duration_seconds).
     pub camera_shake_requests: Vec<(String, f32, f32)>,
@@ -543,6 +561,7 @@ impl ScriptState {
             sprites_to_remove: Vec::new(),
             song_position: 0.0,
             camera_zoom: 1.0,
+            camera_scroll: (0.0, 0.0),
             default_cam_zoom: 1.0,
             camera_speed: 1.0,
             health: 1.0,
@@ -565,6 +584,8 @@ impl ScriptState {
             camera_section_requests: Vec::new(),
             lua_texts: HashMap::new(),
             texts_to_add: Vec::new(),
+            character_instances_to_create: Vec::new(),
+            character_instances_to_add: Vec::new(),
             camera_shake_requests: Vec::new(),
             camera_flash_requests: Vec::new(),
             camera_fade_requests: Vec::new(),

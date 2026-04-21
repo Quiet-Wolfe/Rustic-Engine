@@ -3,6 +3,7 @@ use std::path::Path;
 
 use rustanimate::FlxAnimate;
 use rustic_core::character::{self, CharacterFile};
+use rustic_core::paths::AssetPaths;
 use rustic_render::camera::GameCamera;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
@@ -762,6 +763,47 @@ pub enum Character {
 }
 
 impl Character {
+    pub fn load_instance_from_paths(
+        paths: &AssetPaths,
+        gpu: &GpuState,
+        name: &str,
+        stage_x: f64,
+        stage_y: f64,
+        is_player: bool,
+        stage_name: &str,
+    ) -> Option<Self> {
+        let json_path = paths.character_json(name)?;
+        let json_str = std::fs::read_to_string(&json_path).ok()?;
+        let char_def = CharacterFile::from_json(&json_str).ok()?;
+        let effective_image = char_def.effective_image();
+        if effective_image.is_empty() {
+            log::warn!("Character '{}' has empty image field", name);
+            return None;
+        }
+
+        // Psych's reflected `new Character(x, y, name)` constructor does not call
+        // PlayState.startCharacterPos, so JSON `position` offsets are not applied.
+        let ctor_x = stage_x - char_def.position[0];
+        let ctor_y = stage_y - char_def.position[1];
+
+        if let Some(animate_dir) = paths.character_animate_dir(effective_image) {
+            let mut sprite =
+                AtlasCharacterSprite::load(gpu, &char_def, &animate_dir, ctor_x, ctor_y, is_player);
+            if let Some(&stage_scale) = char_def.stage_scale.get(stage_name) {
+                sprite.scale = stage_scale as f32;
+            }
+            return Some(Character::Atlas(sprite));
+        }
+
+        let atlas_dir = paths.character_atlas_dir(effective_image)?;
+        let mut sprite =
+            CharacterSprite::load(gpu, &json_path, &atlas_dir, ctor_x, ctor_y, is_player);
+        if let Some(&stage_scale) = char_def.stage_scale.get(stage_name) {
+            sprite.scale = stage_scale as f32;
+        }
+        Some(Character::Sparrow(sprite))
+    }
+
     pub fn play_anim(&mut self, name: &str, force: bool) {
         match self {
             Character::Sparrow(s) => s.play_anim(name, force),

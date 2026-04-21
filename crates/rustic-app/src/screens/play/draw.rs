@@ -86,6 +86,7 @@ impl PlayScreen {
         }
 
         // Process any pending Lua sprite adds (may have been queued during update)
+        self.process_lua_characters(gpu);
         self.process_lua_sprites(gpu);
 
         // Load any pending custom note skins (queued from Lua registerNoteType)
@@ -249,6 +250,16 @@ impl PlayScreen {
                 DrawLayer::LuaSprite(tag) => {
                     if !is_death {
                         self.draw_single_lua_sprite(gpu, tag);
+                    }
+                }
+                DrawLayer::LuaCharacter(tag) => {
+                    if !is_death {
+                        if let Some(instance) = self.lua_characters.get(tag) {
+                            if instance.visible {
+                                instance.character.draw(gpu, &self.camera);
+                                gpu.draw_batch(Some(instance.character.texture()));
+                            }
+                        }
                     }
                 }
             }
@@ -1081,6 +1092,7 @@ impl PlayScreen {
         for layer in &self.draw_order {
             let tag = match layer {
                 DrawLayer::LuaSprite(tag) => tag,
+                DrawLayer::LuaCharacter(_) => continue,
                 _ => continue,
             };
             let tex = match self.lua_textures.get(tag) {

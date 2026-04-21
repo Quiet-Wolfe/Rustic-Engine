@@ -148,6 +148,12 @@ pub(super) enum DrawLayer {
     Dad,
     Bf,
     LuaSprite(String),
+    LuaCharacter(String),
+}
+
+pub(super) struct LuaCharacterInstance {
+    pub character: Character,
+    pub visible: bool,
 }
 
 /// Generic stage overlay: split left/right color tint system.
@@ -383,6 +389,7 @@ pub struct PlayScreen {
     pub(super) scripts: ScriptManager,
     pub(super) lua_textures: HashMap<String, GpuTexture>,
     pub(super) lua_atlases: HashMap<String, SpriteAtlas>,
+    pub(super) lua_characters: HashMap<String, LuaCharacterInstance>,
     pub(super) precached_textures: HashMap<String, GpuTexture>,
     pub(super) precached_assets: HashSet<String>,
     pub(super) paths: AssetPaths,
@@ -509,6 +516,7 @@ impl PlayScreen {
             scripts: ScriptManager::new(),
             lua_textures: HashMap::new(),
             lua_atlases: HashMap::new(),
+            lua_characters: HashMap::new(),
             precached_textures: HashMap::new(),
             precached_assets: HashSet::new(),
             paths: AssetPaths::platform_default(),
@@ -1387,6 +1395,8 @@ impl PlayScreen {
     }
 
     pub(super) fn sync_character_script_state(&mut self) {
+        self.scripts.state.camera_scroll =
+            (self.camera.x - GAME_W / 2.0, self.camera.y - GAME_H / 2.0);
         self.scripts.state.bf_group_pos =
             (self.stage_pos_bf[0] as f32, self.stage_pos_bf[1] as f32);
         self.scripts.state.dad_group_pos =
@@ -1611,6 +1621,16 @@ impl PlayScreen {
                         self.camera.follow(self.camera.x, v);
                     }
                 }
+                "camGame.scroll.x" => {
+                    if let Some(v) = as_f32 {
+                        self.camera.follow(v + GAME_W / 2.0, self.camera.y);
+                    }
+                }
+                "camGame.scroll.y" => {
+                    if let Some(v) = as_f32 {
+                        self.camera.follow(self.camera.x, v + GAME_H / 2.0);
+                    }
+                }
                 "camZooming" => {
                     if let LuaValue::Bool(b) = &val {
                         self.cam_zooming = *b;
@@ -1667,6 +1687,8 @@ impl PlayScreen {
                             DrawLayer::Gf
                         } else if let Some(i) = tag.strip_prefix("stage_bg_") {
                             DrawLayer::StageBg(i.parse().unwrap_or(0))
+                        } else if self.lua_characters.contains_key(tag) {
+                            DrawLayer::LuaCharacter(tag.to_string())
                         } else {
                             DrawLayer::LuaSprite(tag.to_string())
                         };
@@ -1733,6 +1755,71 @@ impl PlayScreen {
                 "__charDance.gf" | "__charDance.girlfriend" => {
                     if let Some(gf) = &mut self.char_gf {
                         gf.dance();
+                    }
+                }
+                _ if prop.starts_with("__luaCharacterPlayAnim.") => {
+                    let tag = &prop["__luaCharacterPlayAnim.".len()..];
+                    if let (Some(instance), LuaValue::String(anim)) =
+                        (self.lua_characters.get_mut(tag), &val)
+                    {
+                        instance.character.play_anim(anim, true);
+                    }
+                }
+                _ if prop.starts_with("__luaCharacterPlayAnimSoft.") => {
+                    let tag = &prop["__luaCharacterPlayAnimSoft.".len()..];
+                    if let (Some(instance), LuaValue::String(anim)) =
+                        (self.lua_characters.get_mut(tag), &val)
+                    {
+                        instance.character.play_anim(anim, false);
+                    }
+                }
+                _ if prop
+                    .find('.')
+                    .map(|idx| self.lua_characters.contains_key(&prop[..idx]))
+                    .unwrap_or(false) =>
+                {
+                    let mut parts = prop.splitn(2, '.');
+                    let tag = parts.next().unwrap_or_default();
+                    let field = parts.next().unwrap_or_default();
+                    if let Some(instance) = self.lua_characters.get_mut(tag) {
+                        match field {
+                            "x" => {
+                                if let Some(v) = as_f32 {
+                                    instance.character.set_x(v);
+                                }
+                            }
+                            "y" => {
+                                if let Some(v) = as_f32 {
+                                    instance.character.set_y(v);
+                                }
+                            }
+                            "visible" => {
+                                if let LuaValue::Bool(b) = &val {
+                                    instance.visible = *b;
+                                }
+                            }
+                            "alpha" => {
+                                if let Some(v) = as_f32 {
+                                    instance.character.set_alpha(v.clamp(0.0, 1.0));
+                                }
+                            }
+                            "scale.x" | "scale.y" | "scaleX" | "scaleY" => {
+                                if let Some(v) = as_f32 {
+                                    instance.character.set_scale(v);
+                                }
+                            }
+                            "holdTimer" | "hold_timer" => {
+                                if let Some(v) = as_f32 {
+                                    instance.character.set_hold_timer(v as f64);
+                                }
+                            }
+                            "animation.name" | "animation.curAnim.name" => {
+                                if let LuaValue::String(anim) = &val {
+                                    instance.character.play_anim(anim, true);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 "dad.animation.curAnim.curFrame" | "opponent.animation.curAnim.curFrame" => {
@@ -2048,10 +2135,81 @@ impl PlayScreen {
                 DrawLayer::Dad => "dadGroup".to_string(),
                 DrawLayer::Bf => "boyfriendGroup".to_string(),
                 DrawLayer::LuaSprite(tag) => tag.clone(),
+                DrawLayer::LuaCharacter(tag) => tag.clone(),
             };
             tags.push(tag);
         }
         self.scripts.set_object_orders(&tags);
+    }
+
+    /// Process Psych reflection-created Character instances.
+    pub(super) fn process_lua_characters(&mut self, gpu: &GpuState) {
+        let creates: Vec<_> = self
+            .scripts
+            .state
+            .character_instances_to_create
+            .drain(..)
+            .collect();
+        let adds: Vec<(String, bool)> = self
+            .scripts
+            .state
+            .character_instances_to_add
+            .drain(..)
+            .collect();
+        let mut order_changed = false;
+
+        for create in creates {
+            self.draw_order
+                .retain(|l| l != &DrawLayer::LuaCharacter(create.tag.clone()));
+            if let Some(character) = Character::load_instance_from_paths(
+                &self.paths,
+                gpu,
+                &create.character,
+                create.x as f64,
+                create.y as f64,
+                create.is_player,
+                &self.stage_name,
+            ) {
+                self.lua_characters.insert(
+                    create.tag,
+                    LuaCharacterInstance {
+                        character,
+                        visible: true,
+                    },
+                );
+            } else {
+                log::warn!(
+                    "Lua Character instance '{}': character '{}' not found",
+                    create.tag,
+                    create.character
+                );
+            }
+        }
+
+        for (tag, in_front) in adds {
+            if !self.lua_characters.contains_key(&tag) {
+                continue;
+            }
+            self.draw_order
+                .retain(|l| l != &DrawLayer::LuaCharacter(tag.clone()));
+            if in_front {
+                self.draw_order.push(DrawLayer::LuaCharacter(tag));
+            } else {
+                let mut pos = self.draw_order.len();
+                for (i, layer) in self.draw_order.iter().enumerate() {
+                    if matches!(layer, DrawLayer::Gf | DrawLayer::Dad | DrawLayer::Bf) {
+                        pos = i;
+                        break;
+                    }
+                }
+                self.draw_order.insert(pos, DrawLayer::LuaCharacter(tag));
+            }
+            order_changed = true;
+        }
+
+        if order_changed {
+            self.sync_draw_order_to_lua();
+        }
     }
 
     /// Process pending Lua sprite additions: load textures and add to draw lists.

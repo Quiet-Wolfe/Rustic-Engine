@@ -189,6 +189,9 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("__text_data", lua.create_table()?)?;
     g.set("__pending_texts", lua.create_table()?)?;
     g.set("__pending_text_adds", lua.create_table()?)?;
+    g.set("__character_instances", lua.create_table()?)?;
+    g.set("__pending_character_instances", lua.create_table()?)?;
+    g.set("__pending_character_adds", lua.create_table()?)?;
     g.set("__pending_cam_fx", lua.create_table()?)?;
     g.set("__pending_subtitles", lua.create_table()?)?;
     g.set("__pending_char_positions", lua.create_table()?)?;
@@ -484,7 +487,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 let new_w = lua_to_f32(&width);
                 let new_h = lua_to_f32(&height);
                 let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                     let tex_w: f32 = tbl.get("tex_w").unwrap_or(1.0);
                     let tex_h: f32 = tbl.get("tex_h").unwrap_or(1.0);
                     if tex_w > 0.0 && tex_h > 0.0 {
@@ -566,7 +569,11 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 }
             }
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
+                return Ok(tbl.get::<i32>("order").unwrap_or(0));
+            }
+            let character_instances: LuaTable = lua.globals().get("__character_instances")?;
+            if let Ok(tbl) = character_instances.get::<LuaTable>(tag) {
                 return Ok(tbl.get::<i32>("order").unwrap_or(0));
             }
             Ok(0)
@@ -588,7 +595,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 let fps = fps.unwrap_or(24.0);
                 let looping = looping.unwrap_or(true);
                 let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                     let anims = match tbl.get::<LuaTable>("__anims") {
                         Ok(t) => t,
                         Err(_) => {
@@ -624,7 +631,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 let fps = fps.unwrap_or(24.0);
                 let looping = looping.unwrap_or(true);
                 let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                     let anims = match tbl.get::<LuaTable>("__anims") {
                         Ok(t) => t,
                         Err(_) => {
@@ -715,7 +722,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 let fps = fps.unwrap_or(24.0);
                 let looping = looping.unwrap_or(true);
                 let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                     let anims = match tbl.get::<LuaTable>("__anims") {
                         Ok(t) => t,
                         Err(_) => {
@@ -791,7 +798,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
             )| {
                 let forced = forced.unwrap_or(false);
                 let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                     let play_tbl = lua.create_table()?;
                     play_tbl.set("anim", anim)?;
                     play_tbl.set("forced", forced)?;
@@ -799,6 +806,31 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                         play_tbl.set("frame", frame)?;
                     }
                     tbl.set("__pending_anim", play_tbl)?;
+                    return Ok(());
+                }
+                let character_instances: LuaTable = lua.globals().get("__character_instances")?;
+                if let Ok(tbl) = character_instances.get::<LuaTable>(tag.clone()) {
+                    tbl.set("current_anim", anim.clone())?;
+                    tbl.set("anim_finished", false)?;
+                    set_sprite_animation_value(
+                        lua,
+                        &tbl,
+                        "name",
+                        LuaValue::String(lua.create_string(&anim)?),
+                    )?;
+                    set_sprite_animation_value(lua, &tbl, "finished", LuaValue::Boolean(false))?;
+                    let pending: LuaTable = lua.globals().get("__pending_props")?;
+                    let queued = lua.create_table()?;
+                    queued.set(
+                        "prop",
+                        format!(
+                            "__luaCharacterPlayAnim{}{}",
+                            if forced { "." } else { "Soft." },
+                            tag
+                        ),
+                    )?;
+                    queued.set("value", anim)?;
+                    pending.set(pending.len()? + 1, queued)?;
                 }
                 Ok(())
             },
@@ -811,11 +843,36 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         lua.create_function(|lua, (tag, anim, forced): (String, String, Option<bool>)| {
             let forced = forced.unwrap_or(false);
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag) {
+            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                 let play_tbl = lua.create_table()?;
                 play_tbl.set("anim", anim)?;
                 play_tbl.set("forced", forced)?;
                 tbl.set("__pending_anim", play_tbl)?;
+                return Ok(());
+            }
+            let character_instances: LuaTable = lua.globals().get("__character_instances")?;
+            if let Ok(tbl) = character_instances.get::<LuaTable>(tag.clone()) {
+                tbl.set("current_anim", anim.clone())?;
+                tbl.set("anim_finished", false)?;
+                set_sprite_animation_value(
+                    lua,
+                    &tbl,
+                    "name",
+                    LuaValue::String(lua.create_string(&anim)?),
+                )?;
+                set_sprite_animation_value(lua, &tbl, "finished", LuaValue::Boolean(false))?;
+                let pending: LuaTable = lua.globals().get("__pending_props")?;
+                let queued = lua.create_table()?;
+                queued.set(
+                    "prop",
+                    format!(
+                        "__luaCharacterPlayAnim{}{}",
+                        if forced { "." } else { "Soft." },
+                        tag
+                    ),
+                )?;
+                queued.set("value", anim)?;
+                pending.set(pending.len()? + 1, queued)?;
             }
             Ok(())
         })?,
@@ -1222,6 +1279,73 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     }
                     return Ok(());
                 }
+                // Reflection-created Character instances (e.g. objects.Character).
+                let character_instances: LuaTable = lua.globals().get("__character_instances")?;
+                if let Ok(tbl) = character_instances.get::<LuaTable>(tag.to_string()) {
+                    match field {
+                        "alpha" => {
+                            if let Some(n) = lua_val_to_f32(&value) {
+                                tbl.set("alpha", n)?;
+                            }
+                        }
+                        "visible" => {
+                            if let LuaValue::Boolean(b) = &value {
+                                tbl.set("visible", *b)?;
+                            }
+                        }
+                        "x" => {
+                            if let Some(n) = lua_val_to_f32(&value) {
+                                tbl.set("x", n)?;
+                            }
+                        }
+                        "y" => {
+                            if let Some(n) = lua_val_to_f32(&value) {
+                                tbl.set("y", n)?;
+                            }
+                        }
+                        "scale.x" | "scaleX" => {
+                            if let Some(n) = lua_val_to_f32(&value) {
+                                tbl.set("scale_x", n)?;
+                            }
+                        }
+                        "scale.y" | "scaleY" => {
+                            if let Some(n) = lua_val_to_f32(&value) {
+                                tbl.set("scale_y", n)?;
+                            }
+                        }
+                        "animation.name" | "animation.curAnim.name" => {
+                            tbl.set("current_anim", value.clone())?;
+                            tbl.set("anim_finished", false)?;
+                            set_sprite_animation_value(lua, &tbl, "name", value.clone())?;
+                        }
+                        "animation.finished" | "animation.curAnim.finished" => {
+                            if let LuaValue::Boolean(b) = &value {
+                                tbl.set("anim_finished", *b)?;
+                                set_sprite_animation_value(
+                                    lua,
+                                    &tbl,
+                                    "finished",
+                                    LuaValue::Boolean(*b),
+                                )?;
+                            }
+                        }
+                        "holdTimer" | "hold_timer" => {
+                            if let Some(n) = lua_val_to_f32(&value) {
+                                tbl.set("holdTimer", n)?;
+                            }
+                        }
+                        _ => {
+                            tbl.set(format!("_prop_{field}"), value.clone())?;
+                        }
+                    }
+
+                    let pending: LuaTable = lua.globals().get("__pending_props")?;
+                    let queued = lua.create_table()?;
+                    queued.set("prop", prop)?;
+                    queued.set("value", value)?;
+                    pending.set(pending.len()? + 1, queued)?;
+                    return Ok(());
+                }
             }
 
             let g = lua.globals();
@@ -1438,6 +1562,53 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                             .unwrap_or(LuaNil)),
                     };
                 }
+                let character_instances: LuaTable = lua.globals().get("__character_instances")?;
+                if let Ok(tbl) = character_instances.get::<LuaTable>(tag.to_string()) {
+                    let full_prop = format!("{tag}.{field}");
+                    if let Ok(custom) = lua.globals().get::<LuaTable>("__custom_vars") {
+                        if let Ok(value) = custom.get::<LuaValue>(full_prop.as_str()) {
+                            if value != LuaNil {
+                                return Ok(value);
+                            }
+                        }
+                    }
+                    return match field {
+                        "x" => Ok(tbl.get::<LuaValue>("x").unwrap_or(LuaValue::Number(0.0))),
+                        "y" => Ok(tbl.get::<LuaValue>("y").unwrap_or(LuaValue::Number(0.0))),
+                        "alpha" => Ok(tbl
+                            .get::<LuaValue>("alpha")
+                            .unwrap_or(LuaValue::Number(1.0))),
+                        "visible" => Ok(tbl
+                            .get::<LuaValue>("visible")
+                            .unwrap_or(LuaValue::Boolean(true))),
+                        "scale.x" | "scaleX" => Ok(tbl
+                            .get::<LuaValue>("scale_x")
+                            .unwrap_or(LuaValue::Number(1.0))),
+                        "scale.y" | "scaleY" => Ok(tbl
+                            .get::<LuaValue>("scale_y")
+                            .unwrap_or(LuaValue::Number(1.0))),
+                        "animation.name" | "animation.curAnim.name" => Ok(sprite_animation_value(
+                            lua,
+                            &tbl,
+                            "name",
+                            LuaValue::String(lua.create_string("")?),
+                        )?),
+                        "animation.finished" | "animation.curAnim.finished" => {
+                            Ok(sprite_animation_value(
+                                lua,
+                                &tbl,
+                                "finished",
+                                LuaValue::Boolean(false),
+                            )?)
+                        }
+                        "holdTimer" | "hold_timer" => Ok(tbl
+                            .get::<LuaValue>("holdTimer")
+                            .unwrap_or(LuaValue::Number(0.0))),
+                        _ => Ok(tbl
+                            .get::<LuaValue>(format!("_prop_{field}"))
+                            .unwrap_or(LuaNil)),
+                    };
+                }
             }
             // Character properties (animation name, position, alpha, etc.)
             {
@@ -1563,6 +1734,16 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     "gfGroup.y" => {
                         return Ok(g
                             .get::<LuaValue>("__gf_group_y")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "camGame.scroll.x" => {
+                        return Ok(g
+                            .get::<LuaValue>("__cam_game_scroll_x")
+                            .unwrap_or(LuaValue::Number(0.0)))
+                    }
+                    "camGame.scroll.y" => {
+                        return Ok(g
+                            .get::<LuaValue>("__cam_game_scroll_y")
                             .unwrap_or(LuaValue::Number(0.0)))
                     }
                     "opponentCameraOffset[0]" | "opponentCameraOffset.x" => {
@@ -5881,8 +6062,40 @@ fn register_reflection_default_functions(lua: &Lua) -> LuaResult<()> {
             |lua, (name, class_name, args): (String, String, Option<LuaTable>)| {
                 let instances: LuaTable = lua.globals().get("__instances")?;
                 let tbl = lua.create_table()?;
-                tbl.set("class", class_name)?;
+                tbl.set("class", class_name.as_str())?;
                 if let Some(args) = args {
+                    if class_name.ends_with("objects.Character") || class_name == "Character" {
+                        let x: f64 = args.get(1).unwrap_or(0.0);
+                        let y: f64 = args.get(2).unwrap_or(0.0);
+                        let character: String = args.get(3).unwrap_or_default();
+                        let is_player: bool = args.get(4).unwrap_or(false);
+
+                        let characters: LuaTable = lua.globals().get("__character_instances")?;
+                        let char_tbl = lua.create_table()?;
+                        char_tbl.set("tag", name.as_str())?;
+                        char_tbl.set("class", class_name.as_str())?;
+                        char_tbl.set("character", character.as_str())?;
+                        char_tbl.set("x", x)?;
+                        char_tbl.set("y", y)?;
+                        char_tbl.set("scale_x", 1.0)?;
+                        char_tbl.set("scale_y", 1.0)?;
+                        char_tbl.set("alpha", 1.0)?;
+                        char_tbl.set("visible", true)?;
+                        char_tbl.set("is_player", is_player)?;
+                        char_tbl.set("current_anim", "")?;
+                        char_tbl.set("anim_finished", false)?;
+                        characters.set(name.as_str(), char_tbl)?;
+
+                        let pending: LuaTable =
+                            lua.globals().get("__pending_character_instances")?;
+                        let create_tbl = lua.create_table()?;
+                        create_tbl.set("tag", name.as_str())?;
+                        create_tbl.set("character", character)?;
+                        create_tbl.set("x", x)?;
+                        create_tbl.set("y", y)?;
+                        create_tbl.set("is_player", is_player)?;
+                        pending.set(pending.len()? + 1, create_tbl)?;
+                    }
                     tbl.set("args", args)?;
                 }
                 instances.set(name, tbl)?;
@@ -5902,6 +6115,15 @@ fn register_reflection_default_functions(lua: &Lua) -> LuaResult<()> {
                 if lua_sprite_or_text_exists(lua, &name) {
                     let func: LuaFunction = lua.globals().get("addLuaSprite")?;
                     func.call::<()>((name, in_front))?;
+                    return Ok(true);
+                }
+                let character_instances: LuaTable = lua.globals().get("__character_instances")?;
+                if character_instances.get::<LuaValue>(name.as_str())? != LuaNil {
+                    let pending: LuaTable = lua.globals().get("__pending_character_adds")?;
+                    let add_tbl = lua.create_table()?;
+                    add_tbl.set("tag", name)?;
+                    add_tbl.set("in_front", in_front.unwrap_or(true))?;
+                    pending.set(pending.len()? + 1, add_tbl)?;
                     return Ok(true);
                 }
                 let instances: LuaTable = lua.globals().get("__instances")?;
