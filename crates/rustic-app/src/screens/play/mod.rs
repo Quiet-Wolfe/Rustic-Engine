@@ -1288,6 +1288,7 @@ impl PlayScreen {
 
         let requests: Vec<(String, String)> = self.char_change_requests.drain(..).collect();
         for (target, char_name) in requests {
+            let target_key = target.trim().to_ascii_lowercase();
             let json_path = match self.paths.character_json(&char_name) {
                 Some(p) => p,
                 None => {
@@ -1311,10 +1312,10 @@ impl PlayScreen {
             };
 
             let effective_image = char_def.effective_image().to_string();
-            let is_player = matches!(target.as_str(), "bf" | "boyfriend" | "0");
+            let is_player = matches!(target_key.as_str(), "bf" | "boyfriend" | "0");
 
             // Use the stored stage positions for the target slot
-            let (stage_x, stage_y) = match target.as_str() {
+            let (stage_x, stage_y) = match target_key.as_str() {
                 "bf" | "boyfriend" | "0" => (self.stage_pos_bf[0], self.stage_pos_bf[1]),
                 "gf" | "girlfriend" | "2" => (self.stage_pos_gf[0], self.stage_pos_gf[1]),
                 _ => (self.stage_pos_dad[0], self.stage_pos_dad[1]),
@@ -1362,12 +1363,22 @@ impl PlayScreen {
             };
 
             if let Some(ch) = new_char {
-                match target.as_str() {
-                    "bf" | "boyfriend" | "0" => self.char_bf = Some(ch),
-                    "gf" | "girlfriend" | "2" => self.char_gf = Some(ch),
-                    _ => self.char_dad = Some(ch),
+                match target_key.as_str() {
+                    "bf" | "boyfriend" | "0" => {
+                        self.scripts.set_str_on_all("boyfriendName", &char_name);
+                        self.char_bf = Some(ch);
+                    }
+                    "gf" | "girlfriend" | "2" => {
+                        self.scripts.set_str_on_all("gfName", &char_name);
+                        self.char_gf = Some(ch);
+                    }
+                    _ => {
+                        self.scripts.set_str_on_all("dadName", &char_name);
+                        self.char_dad = Some(ch);
+                    }
                 }
                 // Recompute camera targets with new character
+                self.sync_character_script_state();
                 self.recompute_camera_targets();
             }
         }

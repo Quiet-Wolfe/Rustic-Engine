@@ -1007,6 +1007,11 @@ impl PlayScreen {
         let events: Vec<(String, String, String)> =
             self.scripts.state.triggered_events.drain(..).collect();
         for (name, v1, v2) in events {
+            if self.scripts.has_scripts() {
+                self.scripts.call_event(&name, &v1, &v2);
+                self.process_property_writes();
+            }
+
             match name.as_str() {
                 "Add Camera Zoom" => {
                     let game_zoom: f32 = v1.parse().unwrap_or(0.015);
@@ -1014,6 +1019,39 @@ impl PlayScreen {
                     if !self.disable_zooming && self.camera.zoom < 1.35 {
                         self.camera.zoom += game_zoom;
                         self.hud_zoom += hud_zoom;
+                    }
+                }
+                "Change Scroll Speed" => {
+                    let multiplier: f64 = v1.parse().unwrap_or(1.0);
+                    self.game.song_speed = self.game.base_song_speed * multiplier;
+                }
+                "Set GF Speed" => {
+                    self.gf_dance_freq = v1.parse::<i32>().unwrap_or(0);
+                }
+                "Play Animation" => {
+                    let target = if v2.is_empty() { "dad" } else { v2.as_str() };
+                    match target.to_ascii_lowercase().as_str() {
+                        "dad" | "opponent" | "1" => {
+                            if let Some(dad) = &mut self.char_dad {
+                                dad.play_anim(&v1, true);
+                            }
+                        }
+                        "bf" | "boyfriend" | "0" => {
+                            if let Some(bf) = &mut self.char_bf {
+                                bf.play_anim(&v1, true);
+                            }
+                        }
+                        "gf" | "girlfriend" | "2" => {
+                            if let Some(gf) = &mut self.char_gf {
+                                gf.play_anim(&v1, true);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                "Change Character" => {
+                    if !v2.is_empty() {
+                        self.char_change_requests.push((v1.clone(), v2.clone()));
                     }
                 }
                 _ => {
