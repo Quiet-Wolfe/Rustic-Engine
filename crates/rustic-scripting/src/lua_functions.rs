@@ -1503,6 +1503,8 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
             match prop.as_str() {
                 "defaultCamZoom"
                 | "cameraSpeed"
+                | "camGame.followLerp"
+                | "camera.followLerp"
                 | "camZooming"
                 | "camZoomingMult"
                 | "camZoomingDecay"
@@ -2044,6 +2046,16 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 "cameraSpeed" => Ok(g
                     .get::<LuaValue>("cameraSpeed")
                     .unwrap_or(LuaValue::Number(1.0))),
+                "camGame.followLerp" | "camera.followLerp" => Ok(g
+                    .get::<LuaValue>(prop.as_str())
+                    .unwrap_or_else(|_| {
+                        let speed = match g.get::<LuaValue>("cameraSpeed") {
+                            Ok(LuaValue::Number(v)) => v,
+                            Ok(LuaValue::Integer(v)) => v as f64,
+                            _ => 1.0,
+                        };
+                        LuaValue::Number(speed * 0.04)
+                    })),
                 "camZooming" | "camZoomingMult" | "camZoomingDecay" | "gameZoomingDecay" => Ok(g
                     .get::<LuaValue>(prop.as_str())
                     .unwrap_or(LuaValue::Number(1.0))),

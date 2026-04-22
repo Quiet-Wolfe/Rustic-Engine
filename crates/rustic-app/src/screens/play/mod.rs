@@ -1581,6 +1581,13 @@ impl PlayScreen {
                         self.camera.camera_speed = v;
                     }
                 }
+                "camGame.followLerp" | "camera.followLerp" => {
+                    if let Some(v) = as_f32 {
+                        // PsychCamera uses followLerp = 0.04 * cameraSpeed; scripts
+                        // sometimes write followLerp directly for instant camera moves.
+                        self.camera.camera_speed = if v <= 0.0 { 0.0 } else { v / 0.04 };
+                    }
+                }
                 "camera.zoom" => {
                     if let Some(v) = as_f32 {
                         self.camera.zoom = v;
@@ -1646,12 +1653,14 @@ impl PlayScreen {
                 }
                 "camGame.scroll.x" => {
                     if let Some(v) = as_f32 {
-                        self.camera.follow(v + GAME_W / 2.0, self.camera.y);
+                        self.camera.x = v + GAME_W / 2.0;
+                        self.scripts.state.camera_scroll.0 = v;
                     }
                 }
                 "camGame.scroll.y" => {
                     if let Some(v) = as_f32 {
-                        self.camera.follow(self.camera.x, v + GAME_H / 2.0);
+                        self.camera.y = v + GAME_H / 2.0;
+                        self.scripts.state.camera_scroll.1 = v;
                     }
                 }
                 "camZooming" => {

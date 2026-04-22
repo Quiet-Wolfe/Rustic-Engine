@@ -2,7 +2,7 @@ use rustic_core::rating;
 use rustic_gameplay::events::GameEvent;
 
 use super::{
-    DeathPhase, DeathState, NoteSplash, PlayScreen, RatingPopup, GAME_W, HEALTH_BAR_H,
+    DeathPhase, DeathState, NoteSplash, PlayScreen, RatingPopup, GAME_H, GAME_W, HEALTH_BAR_H,
     HEALTH_BAR_W, HEALTH_BAR_X, HEALTH_BAR_Y, RATING_ACCEL, RATING_FADE_SECS, RATING_VEL_Y,
     SPLASH_FPS, SPLASH_FRAMES,
 };
@@ -152,6 +152,10 @@ impl PlayScreen {
         // Sync game state to scripting layer before callbacks
         self.scripts.state.song_position = self.game.conductor.song_position;
         self.scripts.state.camera_zoom = self.camera.zoom;
+        self.scripts.state.camera_scroll = (
+            self.camera.x - GAME_W / 2.0,
+            self.camera.y - GAME_H / 2.0,
+        );
         self.scripts.state.default_cam_zoom = self.default_cam_zoom;
         self.scripts.state.camera_speed = self.camera.camera_speed;
         self.scripts.state.health = self.game.score.health;
