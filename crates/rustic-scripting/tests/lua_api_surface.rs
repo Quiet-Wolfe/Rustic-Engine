@@ -151,6 +151,7 @@ fn psych_lua_api_callbacks_are_registered() {
         "makeGraphic",
         "makeLuaSprite",
         "makeLuaText",
+        "makeVideoSprite",
         "mouseClicked",
         "mousePressed",
         "mouseReleased",
@@ -518,8 +519,8 @@ fn psych_tween_on_complete_and_health_aliases_work() {
             startTween('swing', 'scythe', {x = 12}, 0.01, {ease = 'linear', onComplete = 'afterSwing'})
         end
 
-        function afterSwing()
-            setVar('tweenCallbackOk', getProperty('scythe.x') == 12)
+        function afterSwing(tag, vars)
+            setVar('tweenCallbackOk', tag == 'swing' and vars == 'scythe' and getProperty('scythe.x') == 12)
         end
         "#,
     );
@@ -540,6 +541,77 @@ fn psych_tween_on_complete_and_health_aliases_work() {
         mgr.state.custom_vars.get("healthAliasOk"),
         Some(LuaValue::Bool(true))
     ));
+}
+
+#[test]
+fn psych_start_tween_callback_can_chain_with_target_arg() {
+    let script = write_tmp(
+        "tween_callback_target.lua",
+        r#"
+        function onCreate()
+            makeLuaSprite('warrow0', nil, 0, 0)
+            makeGraphic('warrow0', 2, 2, 'FFFFFF')
+            addLuaSprite('warrow0', true)
+            startTween('var0', 'warrow0', {alpha = 1}, 0.01, {ease = 'linear', onComplete = 'handleArrow'})
+        end
+
+        function handleArrow(tag, we)
+            setVar('firstCallbackOk', tag == 'var0' and we == 'warrow0')
+            startTween(tag, we, {alpha = 0}, 0.01, {ease = 'linear', onComplete = 'delete'})
+        end
+
+        function delete(tag, we)
+            setVar('deleteCallbackOk', tag == 'var0' and we == 'warrow0')
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&script);
+    mgr.call("onCreate");
+    mgr.update_tweens(0.02);
+    mgr.update_tweens(0.02);
+
+    assert!(matches!(
+        mgr.state.custom_vars.get("firstCallbackOk"),
+        Some(LuaValue::Bool(true))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("deleteCallbackOk"),
+        Some(LuaValue::Bool(true))
+    ));
+}
+
+#[test]
+fn psych_make_video_sprite_exposes_video_tag() {
+    let script = write_tmp(
+        "make_video_sprite.lua",
+        r#"
+        function onCreate()
+            makeVideoSprite('cutscene-1', 'propaganda-cutscene-1', -50, -200, nil, false)
+            setProperty('cutscene-1_video.alpha', 1)
+            setObjectCamera('cutscene-1_video', 'hud')
+            setVar('videoSpriteOk', luaSpriteExists('cutscene-1_video'))
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&script);
+    mgr.call("onCreate");
+
+    assert!(matches!(
+        mgr.state.custom_vars.get("videoSpriteOk"),
+        Some(LuaValue::Bool(true))
+    ));
+    let sprite = mgr
+        .state
+        .lua_sprites
+        .get("cutscene-1_video")
+        .expect("video placeholder sprite");
+    assert!((sprite.x + 50.0).abs() < f32::EPSILON);
+    assert!((sprite.y + 200.0).abs() < f32::EPSILON);
+    assert_eq!(sprite.camera, "camHUD");
 }
 
 #[test]

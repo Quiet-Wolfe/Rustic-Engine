@@ -5,6 +5,8 @@ use std::f32::consts::PI;
 #[derive(Debug, Clone)]
 pub struct Tween {
     pub tag: String,
+    /// Psych's original tween tag before Rustic splits multi-property tweens.
+    pub original_tag: String,
     /// Target object identifier (sprite tag, "camGame", etc.)
     pub target: String,
     /// Which property to tween (x, y, alpha, angle, zoom).
@@ -416,7 +418,7 @@ pub struct TweenManager {
     /// Completed tween tags + their target vars, to fire onTweenCompleted callbacks.
     pub completed_tweens: Vec<(String, String)>,
     /// Completed direct callback names requested by startTween options.
-    pub completed_callbacks: Vec<String>,
+    pub completed_callbacks: Vec<(String, String, String)>,
     /// Completed timer ticks: (tag, loops_done, loops_remaining).
     pub completed_timers: Vec<(String, i32, i32)>,
     /// Tags of tweens that finished on the previous frame, pending removal.
@@ -438,6 +440,7 @@ impl TweenManager {
     }
 
     pub fn add_tween(&mut self, tween: Tween) {
+        self.pending_removal.retain(|tag| tag != &tween.tag);
         self.tweens.insert(tween.tag.clone(), tween);
     }
 
@@ -473,9 +476,13 @@ impl TweenManager {
             if tween.advance(dt) {
                 self.pending_removal.push(tag.clone());
                 self.completed_tweens
-                    .push((tag.clone(), tween.target.clone()));
+                    .push((tween.original_tag.clone(), tween.target.clone()));
                 if let Some(callback) = tween.on_complete.clone() {
-                    self.completed_callbacks.push(callback);
+                    self.completed_callbacks.push((
+                        callback,
+                        tween.original_tag.clone(),
+                        tween.target.clone(),
+                    ));
                 }
             }
         }

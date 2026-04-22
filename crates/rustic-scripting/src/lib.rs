@@ -336,12 +336,17 @@ impl ScriptManager {
             }
         }
 
-        let callbacks: Vec<String> = self.state.tweens.completed_callbacks.drain(..).collect();
-        for callback in callbacks {
+        let callbacks: Vec<(String, String, String)> =
+            self.state.tweens.completed_callbacks.drain(..).collect();
+        for (callback, tag, vars) in callbacks {
             for script in &mut self.scripts {
                 let result = match script {
-                    Script::Lua(s) => s.call_callback(&callback, &mut self.state, &[]),
-                    Script::HScript(s) => s.call_callback(&callback, &mut self.state, &[]),
+                    Script::Lua(s) => {
+                        s.call_callback_str(&callback, &mut self.state, &[&tag, &vars])
+                    }
+                    Script::HScript(s) => {
+                        s.call_callback_str(&callback, &mut self.state, &[&tag, &vars])
+                    }
                 };
                 if let Err(e) = result {
                     log::error!("tween onComplete '{}' error: {}", callback, e);

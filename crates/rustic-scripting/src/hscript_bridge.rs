@@ -966,6 +966,7 @@ fn add_tween(state: &mut ScriptState, args: &[HValue], property: TweenProperty) 
         .as_f64()
         .unwrap_or(0.0) as f32;
     state.tweens.add_tween(Tween {
+        original_tag: tag.clone(),
         tag,
         target,
         property,

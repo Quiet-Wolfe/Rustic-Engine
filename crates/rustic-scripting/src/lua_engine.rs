@@ -1164,6 +1164,7 @@ impl LuaScript {
                         };
                         let tween = crate::tweens::Tween {
                             tag: tag.clone(),
+                            original_tag: tbl.get::<String>("originalTag").unwrap_or(tag),
                             target,
                             property: prop,
                             start_value: start,

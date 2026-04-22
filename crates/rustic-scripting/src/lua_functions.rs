@@ -516,6 +516,70 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
+    // makeVideoSprite(tag, videoFile, x, y, camera, shouldLoop)
+    //
+    // Psych mods address the created object as "{tag}_video". Rustic does not
+    // yet render videos as positioned Lua sprites, but exposing the sprite tag
+    // keeps mod scripts alive and lets their order/camera/alpha mutations land
+    // on a real object instead of aborting the callback.
+    globals.set(
+        "makeVideoSprite",
+        lua.create_function(
+            |lua,
+             (tag, video_file, x, y, camera, should_loop): (
+                String,
+                String,
+                Option<f64>,
+                Option<f64>,
+                Option<String>,
+                Option<bool>,
+            )| {
+                let sprite_tag = format!("{}_video", tag);
+                let x = x.unwrap_or(0.0) as f32;
+                let y = y.unwrap_or(0.0) as f32;
+                let camera = camera
+                    .as_deref()
+                    .map(normalize_lua_camera_name)
+                    .unwrap_or_else(|| "camGame".to_string());
+
+                let tbl = lua.create_table()?;
+                tbl.set("tag", sprite_tag.clone())?;
+                tbl.set("kind", "graphic")?;
+                tbl.set("width", 1)?;
+                tbl.set("height", 1)?;
+                tbl.set("color", "000000")?;
+                tbl.set("tex_w", 1.0)?;
+                tbl.set("tex_h", 1.0)?;
+                tbl.set("x", x)?;
+                tbl.set("y", y)?;
+                tbl.set("scale_x", 1.0)?;
+                tbl.set("scale_y", 1.0)?;
+                tbl.set("scroll_x", 1.0)?;
+                tbl.set("scroll_y", 1.0)?;
+                tbl.set("alpha", 0.0)?;
+                tbl.set("visible", true)?;
+                tbl.set("flip_x", false)?;
+                tbl.set("antialiasing", true)?;
+                tbl.set("camera", camera)?;
+                tbl.set("video_file", video_file)?;
+                tbl.set("should_loop", should_loop.unwrap_or(false))?;
+
+                let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+                sprite_data.set(sprite_tag.clone(), tbl.clone())?;
+
+                let pending_sprites: LuaTable = lua.globals().get("__pending_sprites")?;
+                pending_sprites.set(pending_sprites.len()? + 1, tbl)?;
+
+                let pending_adds: LuaTable = lua.globals().get("__pending_adds")?;
+                let add_tbl = lua.create_table()?;
+                add_tbl.set("tag", sprite_tag)?;
+                add_tbl.set("in_front", true)?;
+                pending_adds.set(pending_adds.len()? + 1, add_tbl)?;
+                Ok(true)
+            },
+        )?,
+    )?;
+
     // removeLuaSprite(tag, destroy)
     globals.set(
         "removeLuaSprite",
@@ -3570,6 +3634,7 @@ fn register_tween_functions(lua: &Lua) -> LuaResult<()> {
                     };
                     let tbl = lua.create_table()?;
                     tbl.set("tag", tween_tag)?;
+                    tbl.set("originalTag", tag.as_str())?;
                     tbl.set("target", resolved_target.as_str())?;
                     tbl.set("property", prop)?;
                     tbl.set("value", end_val)?;
@@ -3700,6 +3765,7 @@ fn push_tween(
     let tweens: LuaTable = lua.globals().get("__pending_tweens")?;
     let tbl = lua.create_table()?;
     tbl.set("tag", tag.to_string())?;
+    tbl.set("originalTag", tag.to_string())?;
     tbl.set("target", target.to_string())?;
     tbl.set("property", property.to_string())?;
     tbl.set("value", value)?;
