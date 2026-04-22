@@ -336,6 +336,19 @@ impl ScriptManager {
             }
         }
 
+        let callbacks: Vec<String> = self.state.tweens.completed_callbacks.drain(..).collect();
+        for callback in callbacks {
+            for script in &mut self.scripts {
+                let result = match script {
+                    Script::Lua(s) => s.call_callback(&callback, &mut self.state, &[]),
+                    Script::HScript(s) => s.call_callback(&callback, &mut self.state, &[]),
+                };
+                if let Err(e) = result {
+                    log::error!("tween onComplete '{}' error: {}", callback, e);
+                }
+            }
+        }
+
         // Fire onTimerCompleted callbacks
         let timer_completed: Vec<(String, i32, i32)> =
             self.state.tweens.completed_timers.drain(..).collect();

@@ -456,6 +456,14 @@ impl PlayScreen {
 
         // === Health bar ===
         let health_pct = self.game.score.health_percent();
+        let hud_prop = |name: &str, default: f32| -> f32 {
+            match self.scripts.state.custom_vars.get(name) {
+                Some(rustic_scripting::LuaValue::Float(v)) => *v as f32,
+                Some(rustic_scripting::LuaValue::Int(v)) => *v as f32,
+                Some(rustic_scripting::LuaValue::String(v)) => v.parse::<f32>().unwrap_or(default),
+                _ => default,
+            }
+        };
 
         if let Some(chb) = &self.custom_healthbar {
             if chb.alpha > 0.001 {
@@ -467,13 +475,23 @@ impl PlayScreen {
                 let bw = chb.bar_texture.width as f32 * scale;
                 let bh = chb.bar_texture.height as f32 * scale;
 
-                // Center overlay on screen; keep at the bottom in both scroll modes so
-                // the bar does not overlap the note path in downscroll.
-                let overlay_x = (GAME_W * hz - ow) / 2.0;
-                let overlay_y = hud_y(HEALTH_BAR_Y) - oh / 2.0;
-                // Bar centered within overlay
-                let bar_x = overlay_x + (ow - bw) / 2.0;
-                let bar_y = overlay_y + (oh - bh) / 2.0;
+                let base_overlay_x = (GAME_W - chb.overlay_texture.width as f32 * chb.scale) / 2.0;
+                let base_overlay_y =
+                    HEALTH_BAR_Y - chb.overlay_texture.height as f32 * chb.scale / 2.0;
+                let base_bar_x = base_overlay_x
+                    + (chb.overlay_texture.width as f32 * chb.scale
+                        - chb.bar_texture.width as f32 * chb.scale)
+                        / 2.0;
+                let base_bar_y = base_overlay_y
+                    + (chb.overlay_texture.height as f32 * chb.scale
+                        - chb.bar_texture.height as f32 * chb.scale)
+                        / 2.0;
+                let overlay_x = hud_x(hud_prop("bar.overlay.x", base_overlay_x));
+                let overlay_y = hud_y(hud_prop("bar.overlay.y", base_overlay_y));
+                let left_bar_x = hud_x(hud_prop("bar.leftBar.x", base_bar_x));
+                let left_bar_y = hud_y(hud_prop("bar.leftBar.y", base_bar_y));
+                let right_bar_x = hud_x(hud_prop("bar.rightBar.x", base_bar_x));
+                let right_bar_y = hud_y(hud_prop("bar.rightBar.y", base_bar_y));
 
                 // Smoothed health for fill (capped at 1.7/2 = 0.85)
                 let vida = (chb.health_lerp.clamp(0.0, 1.7)) / 2.0;
@@ -495,8 +513,8 @@ impl PlayScreen {
                     0.0,
                     opp_clip_w,
                     bar_src_h,
-                    bar_x,
-                    bar_y,
+                    left_bar_x,
+                    left_bar_y,
                     opp_clip_w * scale,
                     bh,
                     false,
@@ -520,8 +538,8 @@ impl PlayScreen {
                     0.0,
                     player_clip_w,
                     bar_src_h,
-                    bar_x + bw - player_clip_w * scale,
-                    bar_y,
+                    right_bar_x + bw - player_clip_w * scale,
+                    right_bar_y,
                     player_clip_w * scale,
                     bh,
                     false,
@@ -548,7 +566,7 @@ impl PlayScreen {
                 gpu.draw_batch(Some(&chb.overlay_texture));
 
                 // Cut point for icons
-                let cut_x = bar_x + bw * (1.0 - vida);
+                let cut_x = right_bar_x + bw * (1.0 - vida);
 
                 if self.game.song_ended {
                     gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, [0.0, 0.0, 0.0, 0.6]);
@@ -560,11 +578,17 @@ impl PlayScreen {
                 let dad_losing = health_pct > 0.8;
                 let icon_size = 150.0 * 0.75;
                 let icon_spacing = -20.0 * scale;
+                let icon_alpha_bf = hud_prop("iconP1.alpha", 1.0).clamp(0.0, 1.0) * a;
+                let icon_alpha_dad = hud_prop("iconP2.alpha", 1.0).clamp(0.0, 1.0) * a;
 
                 if let Some(icon) = &self.icon_dad {
                     let s = self.icon_scale_dad;
                     let draw_size = hud_s(icon_size) * s;
-                    let icon_y = overlay_y + oh / 2.0 - draw_size / 2.0;
+                    let default_icon_y = base_overlay_y
+                        + chb.overlay_texture.height as f32 * chb.scale / 2.0
+                        - icon_size / 2.0;
+                    let icon_y = hud_y(hud_prop("iconP2.y", default_icon_y));
+                    let icon_x = hud_x(hud_prop("iconP2.x", cut_x - draw_size + icon_spacing));
                     let src_x = if dad_losing { 150.0 } else { 0.0 };
                     gpu.push_texture_region(
                         icon.width as f32,
@@ -573,12 +597,17 @@ impl PlayScreen {
                         0.0,
                         150.0,
                         150.0,
-                        cut_x - draw_size + icon_spacing,
+                        icon_x,
                         icon_y,
                         draw_size,
                         draw_size,
                         false,
-                        [a, a, a, a],
+                        [
+                            icon_alpha_dad,
+                            icon_alpha_dad,
+                            icon_alpha_dad,
+                            icon_alpha_dad,
+                        ],
                     );
                     gpu.draw_batch(Some(icon));
                 }
@@ -586,7 +615,11 @@ impl PlayScreen {
                 if let Some(icon) = &self.icon_bf {
                     let s = self.icon_scale_bf;
                     let draw_size = hud_s(icon_size) * s;
-                    let icon_y = overlay_y + oh / 2.0 - draw_size / 2.0;
+                    let default_icon_y = base_overlay_y
+                        + chb.overlay_texture.height as f32 * chb.scale / 2.0
+                        - icon_size / 2.0;
+                    let icon_y = hud_y(hud_prop("iconP1.y", default_icon_y));
+                    let icon_x = hud_x(hud_prop("iconP1.x", cut_x - icon_spacing));
                     let src_x = if bf_losing { 150.0 } else { 0.0 };
                     gpu.push_texture_region(
                         icon.width as f32,
@@ -595,12 +628,12 @@ impl PlayScreen {
                         0.0,
                         150.0,
                         150.0,
-                        cut_x - icon_spacing,
+                        icon_x,
                         icon_y,
                         draw_size,
                         draw_size,
                         true,
-                        [a, a, a, a],
+                        [icon_alpha_bf, icon_alpha_bf, icon_alpha_bf, icon_alpha_bf],
                     );
                     gpu.draw_batch(Some(icon));
                 }
@@ -1062,18 +1095,26 @@ impl PlayScreen {
         let dh = h * zoom;
 
         if sprite.angle.abs() > 0.01 {
-            // Rotated sprite: draw around center
-            let cx = dx + dw / 2.0;
-            let cy = dy + dh / 2.0;
+            let origin_x = sprite.origin_x.unwrap_or(sx + sw / 2.0);
+            let origin_y = sprite.origin_y.unwrap_or(sy + sh / 2.0);
+            let object_dx = dx - sx * sprite.scale_x * zoom;
+            let object_dy = dy - sy * sprite.scale_y * zoom;
+            let pivot_x = object_dx + origin_x * sprite.scale_x * zoom;
+            let pivot_y = object_dy + origin_y * sprite.scale_y * zoom;
+            let rel_x = (sx + sw / 2.0 - origin_x) * sprite.scale_x * zoom;
+            let rel_y = (sy + sh / 2.0 - origin_y) * sprite.scale_y * zoom;
+            let (sin, cos) = sprite.angle.to_radians().sin_cos();
+            let cx = pivot_x + rel_x * cos - rel_y * sin;
+            let cy = pivot_y + rel_x * sin + rel_y * cos;
             gpu.push_quad_rotated(
                 cx,
                 cy,
                 dw,
                 dh,
-                0.0,
-                0.0,
-                1.0,
-                1.0,
+                sx / tex_w,
+                sy / tex_h,
+                (sx + sw) / tex_w,
+                (sy + sh) / tex_h,
                 sprite.angle.to_radians(),
                 sprite.flip_x,
                 color,
@@ -1175,20 +1216,47 @@ impl PlayScreen {
                 + GAME_H / 2.0;
             let dw = w * zoom;
             let dh = h * zoom;
-            gpu.push_texture_region(
-                tex_w,
-                tex_h,
-                sx,
-                sy,
-                sw,
-                sh,
-                dx,
-                dy,
-                dw,
-                dh,
-                sprite.flip_x,
-                color,
-            );
+            if sprite.angle.abs() > 0.01 {
+                let origin_x = sprite.origin_x.unwrap_or(sx + sw / 2.0);
+                let origin_y = sprite.origin_y.unwrap_or(sy + sh / 2.0);
+                let object_dx = dx - sx * sprite.scale_x * zoom;
+                let object_dy = dy - sy * sprite.scale_y * zoom;
+                let pivot_x = object_dx + origin_x * sprite.scale_x * zoom;
+                let pivot_y = object_dy + origin_y * sprite.scale_y * zoom;
+                let rel_x = (sx + sw / 2.0 - origin_x) * sprite.scale_x * zoom;
+                let rel_y = (sy + sh / 2.0 - origin_y) * sprite.scale_y * zoom;
+                let (sin, cos) = sprite.angle.to_radians().sin_cos();
+                let cx = pivot_x + rel_x * cos - rel_y * sin;
+                let cy = pivot_y + rel_x * sin + rel_y * cos;
+                gpu.push_quad_rotated(
+                    cx,
+                    cy,
+                    dw,
+                    dh,
+                    sx / tex_w,
+                    sy / tex_h,
+                    (sx + sw) / tex_w,
+                    (sy + sh) / tex_h,
+                    sprite.angle.to_radians(),
+                    sprite.flip_x,
+                    color,
+                );
+            } else {
+                gpu.push_texture_region(
+                    tex_w,
+                    tex_h,
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                    dx,
+                    dy,
+                    dw,
+                    dh,
+                    sprite.flip_x,
+                    color,
+                );
+            }
             gpu.draw_batch(Some(tex));
         }
     }

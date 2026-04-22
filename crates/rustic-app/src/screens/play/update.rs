@@ -2,8 +2,9 @@ use rustic_core::rating;
 use rustic_gameplay::events::GameEvent;
 
 use super::{
-    DeathPhase, DeathState, NoteSplash, PlayScreen, RatingPopup, GAME_W, RATING_ACCEL,
-    RATING_FADE_SECS, RATING_VEL_Y, SPLASH_FPS, SPLASH_FRAMES,
+    DeathPhase, DeathState, NoteSplash, PlayScreen, RatingPopup, GAME_W, HEALTH_BAR_H,
+    HEALTH_BAR_W, HEALTH_BAR_X, HEALTH_BAR_Y, RATING_ACCEL, RATING_FADE_SECS, RATING_VEL_Y,
+    SPLASH_FPS, SPLASH_FRAMES,
 };
 
 /// Convert an sRGB component (0..1) to linear space.
@@ -183,9 +184,38 @@ impl PlayScreen {
         // Push game object properties that scripts commonly read
         use rustic_scripting::LuaValue as SLV;
         let health_pct = self.game.score.health / 2.0;
-        let hbx = (GAME_W - 601.0) / 2.0;
-        let hbw = 601.0;
-        let divider_x = hbx + hbw * (1.0 - health_pct as f32);
+        let (bar_x, bar_y, overlay_x, overlay_y, overlay_w, overlay_h, bar_w, bar_h, icon_y) =
+            if let Some(chb) = &self.custom_healthbar {
+                let scale = chb.scale;
+                let overlay_w = chb.overlay_texture.width as f32 * scale;
+                let overlay_h = chb.overlay_texture.height as f32 * scale;
+                let bar_w = chb.bar_texture.width as f32 * scale;
+                let bar_h = chb.bar_texture.height as f32 * scale;
+                let overlay_x = (GAME_W - overlay_w) / 2.0;
+                let overlay_y = HEALTH_BAR_Y - overlay_h / 2.0;
+                let bar_x = overlay_x + (overlay_w - bar_w) / 2.0;
+                let bar_y = overlay_y + (overlay_h - bar_h) / 2.0;
+                let icon_size = 150.0 * 0.75;
+                let icon_y = overlay_y + overlay_h / 2.0 - icon_size / 2.0;
+                (
+                    bar_x, bar_y, overlay_x, overlay_y, overlay_w, overlay_h, bar_w, bar_h, icon_y,
+                )
+            } else {
+                let icon_size = 150.0 * 0.75;
+                let icon_y = HEALTH_BAR_Y + HEALTH_BAR_H / 2.0 - icon_size / 2.0;
+                (
+                    HEALTH_BAR_X,
+                    HEALTH_BAR_Y,
+                    HEALTH_BAR_X,
+                    HEALTH_BAR_Y,
+                    HEALTH_BAR_W,
+                    HEALTH_BAR_H,
+                    HEALTH_BAR_W,
+                    HEALTH_BAR_H,
+                    icon_y,
+                )
+            };
+        let divider_x = bar_x + bar_w * (1.0 - health_pct as f32);
         // iconP1 = player icon (BF), iconP2 = opponent icon
         self.scripts
             .state
@@ -198,11 +228,35 @@ impl PlayScreen {
         self.scripts
             .state
             .custom_vars
-            .insert("iconP1.alpha".into(), SLV::Float(1.0));
+            .entry("iconP1.alpha".into())
+            .or_insert(SLV::Float(1.0));
         self.scripts
             .state
             .custom_vars
-            .insert("iconP2.alpha".into(), SLV::Float(1.0));
+            .entry("iconP2.alpha".into())
+            .or_insert(SLV::Float(1.0));
+        for (key, value) in [
+            ("bar.leftBar.x", bar_x),
+            ("bar.leftBar.y", bar_y),
+            ("bar.leftBar.width", bar_w),
+            ("bar.leftBar.height", bar_h),
+            ("bar.rightBar.x", bar_x),
+            ("bar.rightBar.y", bar_y),
+            ("bar.rightBar.width", bar_w),
+            ("bar.rightBar.height", bar_h),
+            ("bar.overlay.x", overlay_x),
+            ("bar.overlay.y", overlay_y),
+            ("bar.overlay.width", overlay_w),
+            ("bar.overlay.height", overlay_h),
+            ("iconP1.y", icon_y),
+            ("iconP2.y", icon_y),
+        ] {
+            self.scripts
+                .state
+                .custom_vars
+                .entry(key.into())
+                .or_insert(SLV::Float(value as f64));
+        }
         // Camera follow position
         self.scripts
             .state

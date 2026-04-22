@@ -21,6 +21,8 @@ pub struct Tween {
     pub ease: EaseFunc,
     /// Whether this tween has completed.
     pub finished: bool,
+    /// Optional callback requested by Psych's startTween onComplete option.
+    pub on_complete: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -413,6 +415,8 @@ pub struct TweenManager {
     pub timers: HashMap<String, LuaTimer>,
     /// Completed tween tags + their target vars, to fire onTweenCompleted callbacks.
     pub completed_tweens: Vec<(String, String)>,
+    /// Completed direct callback names requested by startTween options.
+    pub completed_callbacks: Vec<String>,
     /// Completed timer ticks: (tag, loops_done, loops_remaining).
     pub completed_timers: Vec<(String, i32, i32)>,
     /// Tags of tweens that finished on the previous frame, pending removal.
@@ -427,6 +431,7 @@ impl TweenManager {
             tweens: HashMap::new(),
             timers: HashMap::new(),
             completed_tweens: Vec::new(),
+            completed_callbacks: Vec::new(),
             completed_timers: Vec::new(),
             pending_removal: Vec::new(),
         }
@@ -469,6 +474,9 @@ impl TweenManager {
                 self.pending_removal.push(tag.clone());
                 self.completed_tweens
                     .push((tag.clone(), tween.target.clone()));
+                if let Some(callback) = tween.on_complete.clone() {
+                    self.completed_callbacks.push(callback);
+                }
             }
         }
 

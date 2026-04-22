@@ -1445,6 +1445,9 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 | "isCameraOnForcedPos"
                 | "health" => {
                     g.set(prop.as_str(), value.clone()).ok();
+                    if prop == "health" {
+                        g.set("__health", value.clone()).ok();
+                    }
                 }
                 "opponentCameraOffset.x" => {
                     g.set("__opponent_camera_offset_x", value.clone()).ok();
@@ -1979,6 +1982,9 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     .unwrap_or(LuaValue::Number(1.0))),
                 "healthGainMult" => Ok(LuaValue::Number(1.0)),
                 "healthLossMult" => Ok(LuaValue::Number(1.0)),
+                "health" => Ok(g
+                    .get::<LuaValue>("__health")
+                    .unwrap_or(LuaValue::Number(1.0))),
                 "playbackRate" => Ok(LuaValue::Number(1.0)),
                 "songLength" => Ok(LuaValue::Number(0.0)),
                 "crochet" => Ok(g

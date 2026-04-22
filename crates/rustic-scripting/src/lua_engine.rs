@@ -1096,6 +1096,17 @@ impl LuaScript {
                                 Some(crate::script_state::LuaValue::Int(i)) => *i as f32,
                                 _ => 0.0,
                             }
+                        } else if let Some(value) =
+                            state.custom_vars.get(&format!("{target}.{property}"))
+                        {
+                            match value {
+                                crate::script_state::LuaValue::Float(f) => *f as f32,
+                                crate::script_state::LuaValue::Int(i) => *i as f32,
+                                crate::script_state::LuaValue::String(s) => {
+                                    s.parse::<f32>().unwrap_or(0.0)
+                                }
+                                _ => 0.0,
+                            }
                         } else if matches!(
                             target.as_str(),
                             "dad" | "dadGroup" | "boyfriend" | "boyfriendGroup" | "gf" | "gfGroup"
@@ -1161,6 +1172,7 @@ impl LuaScript {
                             elapsed: 0.0,
                             ease: crate::tweens::EaseFunc::from_string(&ease),
                             finished: false,
+                            on_complete: tbl.get::<String>("onComplete").ok(),
                         };
                         state.tweens.add_tween(tween);
                     }

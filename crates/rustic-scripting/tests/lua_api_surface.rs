@@ -469,6 +469,44 @@ fn dynamic_callbacks_and_frame_reload_are_backed_by_state() {
 }
 
 #[test]
+fn psych_tween_on_complete_and_health_aliases_work() {
+    let script = write_tmp(
+        "tween_complete_and_health.lua",
+        r#"
+        function onCreate()
+            makeLuaSprite('scythe', nil, 0, 0)
+            makeGraphic('scythe', 2, 2, 'FFFFFF')
+            addLuaSprite('scythe', true)
+            setProperty('health', 1.25)
+            setVar('healthAliasOk', getHealth() == 1.25 and getProperty('health') == 1.25)
+            startTween('swing', 'scythe', {x = 12}, 0.01, {ease = 'linear', onComplete = 'afterSwing'})
+        end
+
+        function afterSwing()
+            setVar('tweenCallbackOk', getProperty('scythe.x') == 12)
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&script);
+    assert!(
+        mgr.has_scripts(),
+        "tween/health smoke script failed to load"
+    );
+    mgr.call("onCreate");
+    mgr.update_tweens(0.02);
+    assert!(matches!(
+        mgr.state.custom_vars.get("tweenCallbackOk"),
+        Some(LuaValue::Bool(true))
+    ));
+    assert!(matches!(
+        mgr.state.custom_vars.get("healthAliasOk"),
+        Some(LuaValue::Bool(true))
+    ));
+}
+
+#[test]
 fn reflection_and_substate_aliases_route_to_existing_systems() {
     let script = write_tmp(
         "reflection_aliases.lua",

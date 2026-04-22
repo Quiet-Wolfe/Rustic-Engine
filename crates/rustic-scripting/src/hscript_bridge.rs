@@ -975,6 +975,7 @@ fn add_tween(state: &mut ScriptState, args: &[HValue], property: TweenProperty) 
         elapsed: 0.0,
         ease,
         finished: false,
+        on_complete: None,
     });
 }
 
