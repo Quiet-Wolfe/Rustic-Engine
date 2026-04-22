@@ -181,7 +181,7 @@ impl PlayState {
                 combo: self.score.combo,
                 score: 0,
                 note_type: type_str,
-                is_sustain: self.notes[idx].sustain_length > 0.0,
+                is_sustain: false,
                 members_index: idx,
                 hit_causes_miss: true,
             });
@@ -205,7 +205,7 @@ impl PlayState {
                 combo: self.score.combo,
                 score: judgment.score,
                 note_type: type_str,
-                is_sustain: self.notes[idx].sustain_length > 0.0,
+                is_sustain: false,
                 members_index: idx,
                 hit_causes_miss: false,
             });
@@ -305,7 +305,7 @@ impl PlayState {
                 self.events.push(GameEvent::OpponentNoteHit {
                     lane: self.notes[i].lane,
                     note_type: type_str,
-                    is_sustain: self.notes[i].sustain_length > 0.0,
+                    is_sustain: false,
                     members_index: i,
                     hit_causes_miss,
                 });
@@ -562,6 +562,8 @@ impl PlayState {
 mod tests {
     use rustic_core::note::{NoteData, NoteKind};
 
+    use crate::events::GameEvent;
+
     use super::PlayState;
 
     fn hold_note(strum_time: f64, sustain_length: f64) -> NoteData {
@@ -620,5 +622,45 @@ mod tests {
         assert!((health_after_miss - 0.92).abs() < 0.0001);
         assert!((state.score.health - health_after_miss).abs() < f32::EPSILON);
         assert_eq!(state.score.misses, 1);
+    }
+
+    #[test]
+    fn playable_hold_head_callback_is_not_sustain() {
+        let mut state = PlayState::new(120.0);
+        state.song_started = true;
+        state.notes.push(hold_note(1000.0, 1000.0));
+        state.conductor.song_position = 1000.0;
+
+        state.key_press(0);
+
+        let events = state.drain_events();
+        let Some(GameEvent::NoteHit { is_sustain, .. }) = events
+            .iter()
+            .find(|event| matches!(event, GameEvent::NoteHit { .. }))
+        else {
+            panic!("expected hold head note hit event");
+        };
+        assert!(!is_sustain);
+    }
+
+    #[test]
+    fn opponent_hold_head_callback_is_not_sustain() {
+        let mut state = PlayState::new(120.0);
+        state.song_started = true;
+        state
+            .notes
+            .push(NoteData::new(1000.0, 0, 1000.0, false, NoteKind::Normal));
+        state.conductor.song_position = 1000.0;
+
+        state.update(0.0, None, false);
+
+        let events = state.drain_events();
+        let Some(GameEvent::OpponentNoteHit { is_sustain, .. }) = events
+            .iter()
+            .find(|event| matches!(event, GameEvent::OpponentNoteHit { .. }))
+        else {
+            panic!("expected opponent hold head note hit event");
+        };
+        assert!(!is_sustain);
     }
 }
