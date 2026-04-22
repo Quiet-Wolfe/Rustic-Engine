@@ -265,7 +265,12 @@ impl CharacterSprite {
             None => return,
         };
 
-        let (sx, sy) = cam.world_to_screen(world_x, world_y, GAME_W, GAME_H);
+        let scroll_x = cam.x - GAME_W / 2.0;
+        let scroll_y = cam.y - GAME_H / 2.0;
+        let buf_x = world_x - scroll_x * self.scroll_x;
+        let buf_y = world_y - scroll_y * self.scroll_y;
+        let sx = (buf_x - GAME_W / 2.0) * cam.zoom + GAME_W / 2.0;
+        let sy = (buf_y - GAME_H / 2.0) * cam.zoom + GAME_H / 2.0;
         let scale = self.scale * cam.zoom;
 
         gpu.draw_sprite_frame(

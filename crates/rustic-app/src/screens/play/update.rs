@@ -45,6 +45,16 @@ fn parse_hex_color(hex: &str) -> [f32; 4] {
 }
 
 impl PlayScreen {
+    fn apply_camera_zoom_bump(&mut self, game_zoom: f32, hud_zoom: f32) {
+        if self.disable_zooming || self.camera.zoom >= 1.35 {
+            return;
+        }
+
+        let mult = self.cam_zooming_mult;
+        self.camera.zoom += game_zoom * mult;
+        self.hud_zoom += hud_zoom * mult;
+    }
+
     pub(super) fn update_inner(&mut self, dt: f32) {
         self.last_dt = dt;
         let dt_ms = dt as f64 * 1000.0;
@@ -381,10 +391,7 @@ impl PlayScreen {
                 "Add Camera Zoom" => {
                     let game_zoom: f32 = v1.parse().unwrap_or(0.015);
                     let hud_zoom: f32 = v2.parse().unwrap_or(0.03);
-                    if !self.disable_zooming && self.camera.zoom < 1.35 {
-                        self.camera.zoom += game_zoom;
-                        self.hud_zoom += hud_zoom;
-                    }
+                    self.apply_camera_zoom_bump(game_zoom, hud_zoom);
                 }
                 "Change Scroll Speed" => {
                     let multiplier: f64 = v1.parse().unwrap_or(1.0);
@@ -757,9 +764,8 @@ impl PlayScreen {
                         let target = if must_hit { self.cam_bf } else { self.cam_dad };
                         self.camera.follow(target[0], target[1]);
                     }
-                    if self.cam_zooming && !self.disable_zooming && self.camera.zoom < 1.35 {
-                        self.camera.zoom += 0.015;
-                        self.hud_zoom += 0.03;
+                    if self.cam_zooming {
+                        self.apply_camera_zoom_bump(0.015, 0.03);
                     }
                     // Lua: onSectionHit
                     if self.scripts.has_scripts() {
@@ -922,14 +928,13 @@ impl PlayScreen {
         let zoom_before = self.camera.zoom;
         self.camera.update(dt);
         if self.cam_zooming {
-            let zoom_lerp = (-dt * 3.125).exp();
+            let zoom_lerp = (-dt * 3.125 * self.cam_zooming_decay).exp();
             self.camera.zoom =
                 self.default_cam_zoom + (zoom_before - self.default_cam_zoom) * zoom_lerp;
-        }
 
-        // HUD zoom decay
-        let hud_lerp = (-dt * 3.125).exp();
-        self.hud_zoom = 1.0 + (self.hud_zoom - 1.0) * hud_lerp;
+            let hud_lerp = (-dt * 3.125 * self.cam_zooming_decay).exp();
+            self.hud_zoom = 1.0 + (self.hud_zoom - 1.0) * hud_lerp;
+        }
 
         // Lua: onUpdatePost (after all game logic)
         if self.scripts.has_scripts() {
@@ -1016,10 +1021,7 @@ impl PlayScreen {
                 "Add Camera Zoom" => {
                     let game_zoom: f32 = v1.parse().unwrap_or(0.015);
                     let hud_zoom: f32 = v2.parse().unwrap_or(0.03);
-                    if !self.disable_zooming && self.camera.zoom < 1.35 {
-                        self.camera.zoom += game_zoom;
-                        self.hud_zoom += hud_zoom;
-                    }
+                    self.apply_camera_zoom_bump(game_zoom, hud_zoom);
                 }
                 "Change Scroll Speed" => {
                     let multiplier: f64 = v1.parse().unwrap_or(1.0);

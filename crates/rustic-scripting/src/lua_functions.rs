@@ -318,6 +318,9 @@ pub fn register_all(lua: &Lua) -> LuaResult<()> {
     g.set("noResetButton", false)?;
     g.set("defaultCamZoom", 0.9)?;
     g.set("cameraSpeed", 1.0)?;
+    g.set("camZoomingMult", 1.0)?;
+    g.set("camZoomingDecay", 1.0)?;
+    g.set("gameZoomingDecay", 1.0)?;
     g.set("score", 0)?;
     g.set("misses", 0)?;
     g.set("hits", 0)?;

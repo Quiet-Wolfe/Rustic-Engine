@@ -366,6 +366,8 @@ pub struct PlayScreen {
     pub(super) hb_color_dad: [f32; 4],
     pub(super) default_cam_zoom: f32,
     pub(super) cam_zooming: bool,
+    pub(super) cam_zooming_mult: f32,
+    pub(super) cam_zooming_decay: f32,
     pub(super) disable_zooming: bool,
     /// When true, camera follows camFollow position instead of character targets.
     pub(super) camera_forced_pos: bool,
@@ -502,6 +504,8 @@ impl PlayScreen {
             hb_color_dad: [0.8, 0.1, 0.1, 1.0],
             default_cam_zoom: 0.9,
             cam_zooming: false,
+            cam_zooming_mult: 1.0,
+            cam_zooming_decay: 1.0,
             disable_zooming: false,
             camera_forced_pos: false,
             chart_events: Vec::new(),
@@ -1653,6 +1657,16 @@ impl PlayScreen {
                 "camZooming" => {
                     if let LuaValue::Bool(b) = &val {
                         self.cam_zooming = *b;
+                    }
+                }
+                "camZoomingMult" => {
+                    if let Some(v) = as_f32 {
+                        self.cam_zooming_mult = v;
+                    }
+                }
+                "camZoomingDecay" | "gameZoomingDecay" => {
+                    if let Some(v) = as_f32 {
+                        self.cam_zooming_decay = v.max(0.0);
                     }
                 }
                 "camGame.zoom" => {
