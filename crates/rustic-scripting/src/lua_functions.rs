@@ -970,8 +970,8 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 let pending: LuaTable = lua.globals().get("__pending_props")?;
                 let tbl = lua.create_table()?;
                 let prop = format!(
-                    "__charPlayAnim{}{}",
-                    if forced { "" } else { "Soft." },
+                    "__charPlayAnim{}.{}",
+                    if forced { "" } else { "Soft" },
                     char_type
                 );
                 tbl.set("prop", prop)?;

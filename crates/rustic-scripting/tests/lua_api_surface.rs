@@ -347,6 +347,42 @@ fn psych_stage_positions_are_visible_to_lua_callbacks() {
 }
 
 #[test]
+fn forced_character_play_anim_queues_app_property_name() {
+    let script = write_tmp(
+        "character_play_anim.lua",
+        r#"
+        function onCreate()
+            characterPlayAnim('dad', 'singLEFT-NICE', true)
+            characterPlayAnim('boyfriend', 'idle', false)
+        end
+        "#,
+    );
+
+    let mut mgr = ScriptManager::new();
+    mgr.load_script(&script);
+    mgr.call("onCreate");
+
+    assert!(
+        mgr.state
+            .property_writes
+            .iter()
+            .any(|(prop, value)| prop == "__charPlayAnim.dad"
+                && matches!(value, LuaValue::String(anim) if anim == "singLEFT-NICE")),
+        "property writes: {:?}",
+        mgr.state.property_writes
+    );
+    assert!(
+        mgr.state
+            .property_writes
+            .iter()
+            .any(|(prop, value)| prop == "__charPlayAnimSoft.boyfriend"
+                && matches!(value, LuaValue::String(anim) if anim == "idle")),
+        "property writes: {:?}",
+        mgr.state.property_writes
+    );
+}
+
+#[test]
 fn psych_mod_settings_and_remove_var_work() {
     let root = std::env::temp_dir()
         .join("rustic-lua-api-tests")
