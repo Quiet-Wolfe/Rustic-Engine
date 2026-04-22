@@ -407,6 +407,11 @@ pub struct LuaSprite {
     /// Render offset (additive displacement, separate from position).
     pub offset_x: f32,
     pub offset_y: f32,
+    /// HaxeFlixel-style clipRect in local texture pixels.
+    pub clip_x: f32,
+    pub clip_y: f32,
+    pub clip_w: Option<f32>,
+    pub clip_h: Option<f32>,
     /// Custom rotation origin. None = use sprite center (default).
     pub origin_x: Option<f32>,
     pub origin_y: Option<f32>,
@@ -493,6 +498,10 @@ impl LuaSprite {
             anim_finished: false,
             offset_x: 0.0,
             offset_y: 0.0,
+            clip_x: 0.0,
+            clip_y: 0.0,
+            clip_w: None,
+            clip_h: None,
             origin_x: None,
             origin_y: None,
             camera: "camGame".to_string(),

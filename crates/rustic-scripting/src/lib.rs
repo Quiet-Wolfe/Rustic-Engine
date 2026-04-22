@@ -187,7 +187,7 @@ impl ScriptManager {
     }
 
     /// Call a note-hit callback with Psych Engine's standard arguments.
-    /// HScript side receives them as four positional args in the same order.
+    /// Some forks pass a fifth `isSecondDad` flag for dual-opponent songs.
     pub fn call_note_hit(
         &mut self,
         callback: &str,
@@ -195,6 +195,7 @@ impl ScriptManager {
         note_data: usize,
         note_type: &str,
         is_sustain: bool,
+        is_second_dad: bool,
     ) {
         self.refresh_running_scripts();
         for script in &mut self.scripts {
@@ -206,6 +207,7 @@ impl ScriptManager {
                     note_data,
                     note_type,
                     is_sustain,
+                    is_second_dad,
                 ),
                 Script::HScript(s) => s.call_callback_values(
                     callback,
@@ -215,6 +217,7 @@ impl ScriptManager {
                         LuaValue::Int(note_data as i64),
                         LuaValue::String(note_type.to_string()),
                         LuaValue::Bool(is_sustain),
+                        LuaValue::Bool(is_second_dad),
                     ],
                 ),
             };

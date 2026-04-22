@@ -1042,11 +1042,20 @@ impl PlayScreen {
             return;
         }
 
-        // Static sprite: draw full texture
-        let w = tex.width as f32 * sprite.scale_x;
-        let h = tex.height as f32 * sprite.scale_y;
-        let buf_x = sprite.x - sprite.offset_x - scroll_x * sprite.scroll_x;
-        let buf_y = sprite.y - sprite.offset_y - scroll_y * sprite.scroll_y;
+        // Static sprite: draw full texture or HaxeFlixel-style clipRect region.
+        let tex_w = tex.width as f32;
+        let tex_h = tex.height as f32;
+        let sx = sprite.clip_x.min(tex_w).max(0.0);
+        let sy = sprite.clip_y.min(tex_h).max(0.0);
+        let sw = sprite.clip_w.unwrap_or(tex_w - sx).min(tex_w - sx).max(0.0);
+        let sh = sprite.clip_h.unwrap_or(tex_h - sy).min(tex_h - sy).max(0.0);
+        if sw <= 0.0 || sh <= 0.0 {
+            return;
+        }
+        let w = sw * sprite.scale_x;
+        let h = sh * sprite.scale_y;
+        let buf_x = sprite.x - sprite.offset_x + sx * sprite.scale_x - scroll_x * sprite.scroll_x;
+        let buf_y = sprite.y - sprite.offset_y + sy * sprite.scale_y - scroll_y * sprite.scroll_y;
         let dx = (buf_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
         let dy = (buf_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
         let dw = w * zoom;
@@ -1071,12 +1080,12 @@ impl PlayScreen {
             );
         } else {
             gpu.push_texture_region(
-                tex.width as f32,
-                tex.height as f32,
-                0.0,
-                0.0,
-                tex.width as f32,
-                tex.height as f32,
+                tex_w,
+                tex_h,
+                sx,
+                sy,
+                sw,
+                sh,
                 dx,
                 dy,
                 dw,
@@ -1149,19 +1158,30 @@ impl PlayScreen {
             }
 
             // Static sprite
-            let w = tex.width as f32 * sprite.scale_x;
-            let h = tex.height as f32 * sprite.scale_y;
-            let dx = (sprite.x - sprite.offset_x - GAME_W / 2.0) * zoom + GAME_W / 2.0;
-            let dy = (sprite.y - sprite.offset_y - GAME_H / 2.0) * zoom + GAME_H / 2.0;
+            let tex_w = tex.width as f32;
+            let tex_h = tex.height as f32;
+            let sx = sprite.clip_x.min(tex_w).max(0.0);
+            let sy = sprite.clip_y.min(tex_h).max(0.0);
+            let sw = sprite.clip_w.unwrap_or(tex_w - sx).min(tex_w - sx).max(0.0);
+            let sh = sprite.clip_h.unwrap_or(tex_h - sy).min(tex_h - sy).max(0.0);
+            if sw <= 0.0 || sh <= 0.0 {
+                continue;
+            }
+            let w = sw * sprite.scale_x;
+            let h = sh * sprite.scale_y;
+            let dx = (sprite.x - sprite.offset_x + sx * sprite.scale_x - GAME_W / 2.0) * zoom
+                + GAME_W / 2.0;
+            let dy = (sprite.y - sprite.offset_y + sy * sprite.scale_y - GAME_H / 2.0) * zoom
+                + GAME_H / 2.0;
             let dw = w * zoom;
             let dh = h * zoom;
             gpu.push_texture_region(
-                tex.width as f32,
-                tex.height as f32,
-                0.0,
-                0.0,
-                tex.width as f32,
-                tex.height as f32,
+                tex_w,
+                tex_h,
+                sx,
+                sy,
+                sw,
+                sh,
                 dx,
                 dy,
                 dw,

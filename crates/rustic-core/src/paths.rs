@@ -94,6 +94,15 @@ impl AssetPaths {
         self.find(&format!("characters/{name}.json"))
     }
 
+    /// Discover scripts attached to a character.
+    /// Psych mods commonly place character behavior next to the character JSON.
+    pub fn character_scripts(&self, name: &str) -> Vec<PathBuf> {
+        ["lua", "hx", "hscript"]
+            .iter()
+            .filter_map(|ext| self.find(&format!("characters/{name}.{ext}")))
+            .collect()
+    }
+
     /// Find character sprite atlas (png + xml). Returns the directory containing them.
     pub fn character_atlas_dir(&self, image_field: &str) -> Option<PathBuf> {
         // Check images/{image}.png in each root

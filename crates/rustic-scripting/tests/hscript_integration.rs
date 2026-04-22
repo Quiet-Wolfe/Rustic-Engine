@@ -203,7 +203,7 @@ fn hscript_callbacks_preserve_mixed_argument_types() {
 
     let mut mgr = ScriptManager::new();
     mgr.load_script(&path);
-    mgr.call_note_hit("goodNoteHit", 4, 2, "Hurt Note", true);
+    mgr.call_note_hit("goodNoteHit", 4, 2, "Hurt Note", true, false);
 
     assert!(matches!(
         mgr.state.custom_vars.get("noteId"),

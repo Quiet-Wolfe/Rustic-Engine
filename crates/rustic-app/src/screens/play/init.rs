@@ -321,6 +321,25 @@ impl PlayScreen {
             self.scripts.load_script(&script_path);
         }
 
+        // Character scripts (characters/{name}.lua/.hx) define per-character callbacks.
+        let mut loaded_character_scripts = std::collections::HashSet::new();
+        for character in [
+            parsed.song.player1.as_str(),
+            parsed.song.player2.as_str(),
+            parsed.song.gf_version.as_str(),
+        ] {
+            for script_path in paths.character_scripts(character) {
+                if loaded_character_scripts.insert(script_path.clone()) {
+                    log::info!(
+                        "Loading character script '{}': {:?}",
+                        character,
+                        script_path
+                    );
+                    self.scripts.load_script(&script_path);
+                }
+            }
+        }
+
         // Custom event scripts used by this chart
         let mut loaded_events = std::collections::HashSet::new();
         let custom_events = paths.custom_event_scripts();

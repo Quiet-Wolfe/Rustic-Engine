@@ -690,7 +690,8 @@ impl LuaScript {
         Ok(())
     }
 
-    /// Call a note-hit-style callback: (membersIndex, noteData, noteType, isSustainNote).
+    /// Call a note-hit-style callback:
+    /// (membersIndex, noteData, noteType, isSustainNote, isSecondDad).
     pub fn call_note_callback(
         &mut self,
         name: &str,
@@ -699,6 +700,7 @@ impl LuaScript {
         note_data: usize,
         note_type: &str,
         is_sustain: bool,
+        is_second_dad: bool,
     ) -> Result<(), String> {
         if self.closed {
             return Ok(());
@@ -720,6 +722,7 @@ impl LuaScript {
                 .map_err(|e| e.to_string())?,
         ));
         multi.push_back(mlua::Value::Boolean(is_sustain));
+        multi.push_back(mlua::Value::Boolean(is_second_dad));
         func.call::<()>(multi)
             .map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
 
@@ -1903,6 +1906,14 @@ impl LuaScript {
                     sprite.offset_y = v;
                 }
             }
+            if let Ok(v) = tbl.get::<f32>("clip_x") {
+                sprite.clip_x = v.max(0.0);
+            }
+            if let Ok(v) = tbl.get::<f32>("clip_y") {
+                sprite.clip_y = v.max(0.0);
+            }
+            sprite.clip_w = tbl.get::<f32>("clip_w").ok().filter(|v| *v > 0.0);
+            sprite.clip_h = tbl.get::<f32>("clip_h").ok().filter(|v| *v > 0.0);
             if let Ok(v) = tbl.get::<f32>("origin_x") {
                 sprite.origin_x = Some(v);
             }

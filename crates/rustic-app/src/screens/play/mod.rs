@@ -1837,6 +1837,16 @@ impl PlayScreen {
                         }
                     }
                 }
+                "dad.holdTimer"
+                | "dad.hold_timer"
+                | "opponent.holdTimer"
+                | "opponent.hold_timer" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.set_hold_timer(v as f64);
+                        }
+                    }
+                }
                 "boyfriend.animation.curAnim.curFrame" | "bf.animation.curAnim.curFrame" => {
                     if let Some(v) = as_f32 {
                         if let Some(bf) = &mut self.char_bf {
@@ -1844,10 +1854,30 @@ impl PlayScreen {
                         }
                     }
                 }
+                "boyfriend.holdTimer"
+                | "boyfriend.hold_timer"
+                | "bf.holdTimer"
+                | "bf.hold_timer" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.set_hold_timer(v as f64);
+                        }
+                    }
+                }
                 "gf.animation.curAnim.curFrame" | "girlfriend.animation.curAnim.curFrame" => {
                     if let Some(v) = as_f32 {
                         if let Some(gf) = &mut self.char_gf {
                             gf.set_anim_frame_index(v.max(0.0) as usize);
+                        }
+                    }
+                }
+                "gf.holdTimer"
+                | "gf.hold_timer"
+                | "girlfriend.holdTimer"
+                | "girlfriend.hold_timer" => {
+                    if let Some(v) = as_f32 {
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.set_hold_timer(v as f64);
                         }
                     }
                 }

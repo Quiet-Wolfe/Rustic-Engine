@@ -517,6 +517,7 @@ impl PlayScreen {
                             lane,
                             &note_type,
                             is_sustain,
+                            false,
                         );
                     }
                 }
@@ -554,6 +555,7 @@ impl PlayScreen {
                             lane,
                             &note_type,
                             false,
+                            false,
                         );
                     }
                 }
@@ -589,6 +591,7 @@ impl PlayScreen {
                             lane,
                             &note_type,
                             is_sustain,
+                            false,
                         );
                     }
                 }

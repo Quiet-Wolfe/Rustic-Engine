@@ -76,6 +76,88 @@ fn normalize_lua_camera_name(camera: &str) -> String {
     }
 }
 
+fn table_arg_string(args: &Option<LuaTable>, idx: i64) -> Option<String> {
+    args.as_ref()
+        .and_then(|t| t.get::<LuaValue>(idx).ok())
+        .and_then(|v| match v {
+            LuaValue::String(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+}
+
+fn table_arg_f32(args: &Option<LuaTable>, idx: i64, default: f32) -> f32 {
+    args.as_ref()
+        .and_then(|t| t.get::<LuaValue>(idx).ok())
+        .and_then(|v| match v {
+            LuaValue::Number(n) => Some(n as f32),
+            LuaValue::Integer(i) => Some(i as f32),
+            LuaValue::String(s) => s.to_string_lossy().trim().parse::<f32>().ok(),
+            _ => None,
+        })
+        .unwrap_or(default)
+}
+
+fn apply_haxe_clip_rect(
+    lua: &Lua,
+    args: &Option<LuaTable>,
+    clip_right_side: bool,
+) -> LuaResult<()> {
+    let Some(tag) = table_arg_string(args, 1) else {
+        return Ok(());
+    };
+    let off_x = table_arg_f32(args, 2, 0.0);
+    let mult = table_arg_f32(args, 3, 1.0);
+    let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+    let custom: LuaTable = lua.globals().get("__custom_vars")?;
+    let divider_tag = custom
+        .get::<String>("__clip_rect_divider_tag")
+        .unwrap_or_default();
+    if divider_tag.is_empty() {
+        return Ok(());
+    }
+    let divider: LuaTable = match sprite_data.get(divider_tag.as_str()) {
+        Ok(tbl) => tbl,
+        Err(_) => return Ok(()),
+    };
+    let sprite: LuaTable = match sprite_data.get(tag.as_str()) {
+        Ok(tbl) => tbl,
+        Err(_) => return Ok(()),
+    };
+
+    let divider_x = divider.get::<f32>("x").unwrap_or(0.0);
+    let cam_scroll_x = lua
+        .globals()
+        .get::<LuaValue>("__cam_game_scroll_x")
+        .ok()
+        .and_then(|v| lua_val_to_f32(&v))
+        .unwrap_or(0.0);
+    let scroll_x = sprite.get::<f32>("scroll_x").unwrap_or(1.0);
+    let scale_x = sprite.get::<f32>("scale_x").unwrap_or(1.0);
+    let frame_w = sprite
+        .get::<f32>("frame_w")
+        .or_else(|_| sprite.get::<f32>("tex_w"))
+        .unwrap_or(0.0);
+    let frame_h = sprite
+        .get::<f32>("frame_h")
+        .or_else(|_| sprite.get::<f32>("tex_h"))
+        .unwrap_or(0.0);
+    if frame_w <= 0.0 || frame_h <= 0.0 {
+        return Ok(());
+    }
+
+    let value = (divider_x - cam_scroll_x * scroll_x * scale_x * mult + off_x).clamp(0.0, frame_w);
+    sprite.set("clip_y", 0.0)?;
+    sprite.set("clip_h", frame_h)?;
+    if clip_right_side {
+        sprite.set("clip_x", value)?;
+        sprite.set("clip_w", (frame_w - value).max(0.0))?;
+    } else {
+        sprite.set("clip_x", 0.0)?;
+        sprite.set("clip_w", value)?;
+    }
+    Ok(())
+}
+
 fn extract_quoted_argument<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
     let after_marker = text.find(marker)? + marker.len();
     let rel = &text[after_marker..];
@@ -1616,24 +1698,30 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                 match prop.as_str() {
                     "dad.animation.name"
                     | "dad.animation.curAnim.name"
+                    | "dad.lastPlayedAnim"
                     | "opponent.animation.name"
-                    | "opponent.animation.curAnim.name" => {
+                    | "opponent.animation.curAnim.name"
+                    | "opponent.lastPlayedAnim" => {
                         return Ok(g
                             .get::<LuaValue>("__dad_anim_name")
                             .unwrap_or(LuaValue::String(lua.create_string("")?)))
                     }
                     "boyfriend.animation.name"
                     | "boyfriend.animation.curAnim.name"
+                    | "boyfriend.lastPlayedAnim"
                     | "bf.animation.name"
-                    | "bf.animation.curAnim.name" => {
+                    | "bf.animation.curAnim.name"
+                    | "bf.lastPlayedAnim" => {
                         return Ok(g
                             .get::<LuaValue>("__bf_anim_name")
                             .unwrap_or(LuaValue::String(lua.create_string("")?)))
                     }
                     "gf.animation.name"
                     | "gf.animation.curAnim.name"
+                    | "gf.lastPlayedAnim"
                     | "girlfriend.animation.name"
-                    | "girlfriend.animation.curAnim.name" => {
+                    | "girlfriend.animation.curAnim.name"
+                    | "girlfriend.lastPlayedAnim" => {
                         return Ok(g
                             .get::<LuaValue>("__gf_anim_name")
                             .unwrap_or(LuaValue::String(lua.create_string("")?)))
@@ -2286,6 +2374,16 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
         lua.create_function(|lua, code: String| -> LuaResult<LuaValue> {
             let code = code.trim();
 
+            // Preserve simple captured sprite references used by Haxe helper functions.
+            if code.contains("function fixClipRect") {
+                if let Some(tag) =
+                    extract_quoted_argument(code, "var divider = game.modchartSprites.get(")
+                {
+                    let custom: LuaTable = lua.globals().get("__custom_vars")?;
+                    custom.set("__clip_rect_divider_tag", tag)?;
+                }
+            }
+
             // Pattern: game.moveCameraSection(N)
             if let Some(inner) = code.strip_prefix("game.moveCameraSection(") {
                 if let Some(num_str) = inner.split(')').next() {
@@ -2577,6 +2675,12 @@ fn register_utility_functions(lua: &Lua) -> LuaResult<()> {
                         // Store flag so engine knows to re-enable dad dancing after anim finishes
                         let custom: LuaTable = lua.globals().get("__custom_vars")?;
                         custom.set("dadAnimCallback", true)?;
+                    }
+                    "fixClipRect" => {
+                        apply_haxe_clip_rect(lua, &args, true)?;
+                    }
+                    "fixClipRect2" => {
+                        apply_haxe_clip_rect(lua, &args, false)?;
                     }
                     _ => {
                         log::debug!("runHaxeFunction: unhandled function '{}'", name);
