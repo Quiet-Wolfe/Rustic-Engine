@@ -285,6 +285,7 @@ impl PlayScreen {
             }
 
             if !loaded_stage_art && stage_scripts.is_empty() {
+                let mut fallback_count = 0usize;
                 for image in paths.images_in_dir(stage_name) {
                     if paths.image_xml(&image).is_some() {
                         continue;
@@ -295,7 +296,15 @@ impl PlayScreen {
                         let idx = self.stage_bg.len();
                         self.stage_bg.push(bg);
                         self.draw_order.push(DrawLayer::StageBg(idx));
+                        fallback_count += 1;
                     }
+                }
+                if fallback_count > 0 {
+                    log::info!(
+                        "Loaded {} fallback stage sprites from images/{}",
+                        fallback_count,
+                        stage_name
+                    );
                 }
             }
             // Default character order for legacy stages
@@ -586,19 +595,22 @@ impl PlayScreen {
         }
 
         // Load GF
-        if !stage.hide_girlfriend {
-            if let Some((json_path, char_def)) = parse_char(&paths, &parsed.song.gf_version) {
-                self.char_gf = load_char_sprite(
-                    &paths,
-                    gpu,
-                    &json_path,
-                    &char_def,
-                    stage.girlfriend[0],
-                    stage.girlfriend[1],
-                    false,
-                    stage_name,
-                );
-            }
+        let gf_def = if !stage.hide_girlfriend {
+            parse_char(&paths, &parsed.song.gf_version)
+        } else {
+            None
+        };
+        if let Some((json_path, char_def)) = &gf_def {
+            self.char_gf = load_char_sprite(
+                &paths,
+                gpu,
+                json_path,
+                char_def,
+                stage.girlfriend[0],
+                stage.girlfriend[1],
+                false,
+                stage_name,
+            );
         }
 
         // Load note skins: chart arrowSkinDAD/arrowSkinBF take priority, then character JSON skin field
@@ -688,6 +700,16 @@ impl PlayScreen {
         } else {
             [0.0, 0.0]
         };
+        self.gf_cam_off = if let Some((_, char_def)) = &gf_def {
+            let off = char_def
+                .stage_camera
+                .get(stage_name)
+                .copied()
+                .unwrap_or(char_def.camera_position);
+            [off[0] as f32, off[1] as f32]
+        } else {
+            [0.0, 0.0]
+        };
         self.stage_cam_bf = [
             stage.camera_boyfriend[0] as f32,
             stage.camera_boyfriend[1] as f32,
@@ -695,6 +717,10 @@ impl PlayScreen {
         self.stage_cam_dad = [
             stage.camera_opponent[0] as f32,
             stage.camera_opponent[1] as f32,
+        ];
+        self.stage_cam_gf = [
+            stage.camera_girlfriend[0] as f32,
+            stage.camera_girlfriend[1] as f32,
         ];
 
         self.sync_character_script_state();

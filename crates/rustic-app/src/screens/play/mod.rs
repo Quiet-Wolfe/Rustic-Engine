@@ -151,6 +151,13 @@ pub(super) enum DrawLayer {
     LuaCharacter(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CameraTargetSlot {
+    Bf,
+    Dad,
+    Gf,
+}
+
 pub(super) struct LuaCharacterInstance {
     pub character: Character,
     pub visible: bool,
@@ -357,11 +364,14 @@ pub struct PlayScreen {
     pub(super) camera: GameCamera,
     pub(super) cam_bf: [f32; 2],
     pub(super) cam_dad: [f32; 2],
+    pub(super) cam_gf: [f32; 2],
     // Camera offsets for dynamic recomputation at section changes
     pub(super) bf_cam_off: [f32; 2],
     pub(super) dad_cam_off: [f32; 2],
+    pub(super) gf_cam_off: [f32; 2],
     pub(super) stage_cam_bf: [f32; 2],
     pub(super) stage_cam_dad: [f32; 2],
+    pub(super) stage_cam_gf: [f32; 2],
     pub(super) hb_color_bf: [f32; 4],
     pub(super) hb_color_dad: [f32; 4],
     pub(super) default_cam_zoom: f32,
@@ -496,10 +506,13 @@ impl PlayScreen {
             camera: GameCamera::new(0.9),
             cam_bf: [0.0; 2],
             cam_dad: [0.0; 2],
+            cam_gf: [0.0; 2],
             bf_cam_off: [0.0; 2],
             dad_cam_off: [0.0; 2],
+            gf_cam_off: [0.0; 2],
             stage_cam_bf: [0.0; 2],
             stage_cam_dad: [0.0; 2],
+            stage_cam_gf: [0.0; 2],
             hb_color_bf: [0.2, 0.8, 0.2, 1.0],
             hb_color_dad: [0.8, 0.1, 0.1, 1.0],
             default_cam_zoom: 0.9,
@@ -1367,17 +1380,27 @@ impl PlayScreen {
             };
 
             if let Some(ch) = new_char {
+                let camera_offset = char_def
+                    .stage_camera
+                    .get(&self.stage_name)
+                    .copied()
+                    .unwrap_or(char_def.camera_position);
+                let camera_offset = [camera_offset[0] as f32, camera_offset[1] as f32];
+
                 match target_key.as_str() {
                     "bf" | "boyfriend" | "0" => {
                         self.scripts.set_str_on_all("boyfriendName", &char_name);
+                        self.bf_cam_off = camera_offset;
                         self.char_bf = Some(ch);
                     }
                     "gf" | "girlfriend" | "2" => {
                         self.scripts.set_str_on_all("gfName", &char_name);
+                        self.gf_cam_off = camera_offset;
                         self.char_gf = Some(ch);
                     }
                     _ => {
                         self.scripts.set_str_on_all("dadName", &char_name);
+                        self.dad_cam_off = camera_offset;
                         self.char_dad = Some(ch);
                     }
                 }
@@ -1407,6 +1430,60 @@ impl PlayScreen {
                 my - 100.0 + self.dad_cam_off[1] + lua_offset.1 + self.stage_cam_dad[1],
             ];
         }
+        if let Some(gf) = &self.char_gf {
+            let (mx, my) = gf.midpoint();
+            self.cam_gf = [
+                mx + self.gf_cam_off[0] + self.stage_cam_gf[0],
+                my + self.gf_cam_off[1] + self.stage_cam_gf[1],
+            ];
+        }
+    }
+
+    pub(super) fn camera_target_slot(target: &str) -> CameraTargetSlot {
+        match target.trim().to_ascii_lowercase().as_str() {
+            "dad" | "opponent" | "d" | "1" | "dadgroup" => CameraTargetSlot::Dad,
+            "gf" | "girlfriend" | "g" | "2" | "gfgroup" => CameraTargetSlot::Gf,
+            _ => CameraTargetSlot::Bf,
+        }
+    }
+
+    pub(super) fn follow_camera_target(&mut self, target: &str, snap: bool) {
+        self.camera_forced_pos = false;
+        self.recompute_camera_targets();
+
+        let follow = match Self::camera_target_slot(target) {
+            CameraTargetSlot::Bf => Some(self.cam_bf),
+            CameraTargetSlot::Dad => Some(self.cam_dad),
+            CameraTargetSlot::Gf => self.char_gf.as_ref().map(|_| self.cam_gf),
+        };
+
+        if let Some([x, y]) = follow {
+            if snap {
+                self.camera.snap_to(x, y);
+            } else {
+                self.camera.follow(x, y);
+            }
+        }
+    }
+
+    pub(super) fn apply_camera_follow_pos_event(&mut self, x: &str, y: &str) {
+        let x = x.trim().parse::<f32>().ok();
+        let y = y.trim().parse::<f32>().ok();
+        if x.is_none() && y.is_none() {
+            self.camera_forced_pos = false;
+            self.recompute_camera_targets();
+            let must_hit = self
+                .game
+                .sections
+                .get(self.game.cur_section)
+                .is_some_and(|section| section.must_hit);
+            let target = if must_hit { self.cam_bf } else { self.cam_dad };
+            self.camera.follow(target[0], target[1]);
+            return;
+        }
+
+        self.camera_forced_pos = true;
+        self.camera.follow(x.unwrap_or(0.0), y.unwrap_or(0.0));
     }
 
     pub(super) fn sync_character_script_state(&mut self) {

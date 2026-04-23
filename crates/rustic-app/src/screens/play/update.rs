@@ -406,6 +406,12 @@ impl PlayScreen {
                     // v1 = frequency (1 = every beat, 2 = every 2 beats)
                     self.gf_dance_freq = v1.parse::<i32>().unwrap_or(0);
                 }
+                "Camera Set Target" => {
+                    self.follow_camera_target(&v1, false);
+                }
+                "Camera Follow Pos" => {
+                    self.apply_camera_follow_pos_event(&v1, &v2);
+                }
                 "Play Animation" => {
                     // v1 = animation name, v2 = character (empty = dad)
                     let target = if v2.is_empty() { "dad" } else { v2.as_str() };
@@ -984,32 +990,7 @@ impl PlayScreen {
                 .strip_prefix("__snap:")
                 .map(|target| (target, true))
                 .unwrap_or((raw_target, false));
-            let mut follow_target = None;
-            match target.to_lowercase().as_str() {
-                "dad" | "opponent" => {
-                    self.recompute_camera_targets();
-                    follow_target = Some((self.cam_dad[0], self.cam_dad[1]));
-                }
-                "gf" | "girlfriend" => {
-                    // GF camera: use GF midpoint if available, otherwise dad position
-                    if let Some(gf) = &self.char_gf {
-                        let (mx, my) = gf.midpoint();
-                        follow_target = Some((mx, my));
-                    }
-                }
-                _ => {
-                    // Default = boyfriend
-                    self.recompute_camera_targets();
-                    follow_target = Some((self.cam_bf[0], self.cam_bf[1]));
-                }
-            }
-            if let Some((x, y)) = follow_target {
-                if snap {
-                    self.camera.snap_to(x, y);
-                } else {
-                    self.camera.follow(x, y);
-                }
-            }
+            self.follow_camera_target(target, snap);
         }
 
         // Process triggered events from Lua (triggerEvent)
@@ -1033,6 +1014,12 @@ impl PlayScreen {
                 }
                 "Set GF Speed" => {
                     self.gf_dance_freq = v1.parse::<i32>().unwrap_or(0);
+                }
+                "Camera Set Target" => {
+                    self.follow_camera_target(&v1, false);
+                }
+                "Camera Follow Pos" => {
+                    self.apply_camera_follow_pos_event(&v1, &v2);
                 }
                 "Play Animation" => {
                     let target = if v2.is_empty() { "dad" } else { v2.as_str() };
