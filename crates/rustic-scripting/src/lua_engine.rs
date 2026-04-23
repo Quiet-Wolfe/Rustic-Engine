@@ -2221,6 +2221,23 @@ fn tbl_to_lua_value(tbl: &LuaTable, key: &str) -> crate::script_state::LuaValue 
         Ok(LuaValue::String(s)) => {
             crate::script_state::LuaValue::String(s.to_string_lossy().to_string())
         }
+        Ok(LuaValue::Table(t)) => {
+            let len = t.len().unwrap_or(0);
+            let mut values = Vec::with_capacity(len as usize);
+            for i in 1..=len {
+                let value = match t.get::<LuaValue>(i) {
+                    Ok(LuaValue::Integer(n)) => crate::script_state::LuaValue::Int(n),
+                    Ok(LuaValue::Number(n)) => crate::script_state::LuaValue::Float(n),
+                    Ok(LuaValue::Boolean(b)) => crate::script_state::LuaValue::Bool(b),
+                    Ok(LuaValue::String(s)) => {
+                        crate::script_state::LuaValue::String(s.to_string_lossy().to_string())
+                    }
+                    _ => crate::script_state::LuaValue::Nil,
+                };
+                values.push(value);
+            }
+            crate::script_state::LuaValue::Array(values)
+        }
         _ => crate::script_state::LuaValue::Nil,
     }
 }

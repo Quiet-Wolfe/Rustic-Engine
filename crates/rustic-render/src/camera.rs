@@ -9,6 +9,8 @@ pub struct GameCamera {
     pub target_zoom: f32,
     /// Stage-defined camera speed multiplier (default 1.0).
     pub camera_speed: f32,
+    /// Optional direct followLerp override from scripts. Values above 1 snap.
+    pub follow_lerp: Option<f32>,
     /// Camera shake state: (intensity, remaining_duration).
     pub shake: Option<(f32, f32)>,
     /// Camera flash/fade state: (r, g, b, alpha, remaining, total, fade_in).
@@ -27,6 +29,7 @@ impl GameCamera {
             target_y: 0.0,
             target_zoom: zoom,
             camera_speed: 1.0,
+            follow_lerp: None,
             shake: None,
             flash: None,
             shake_offset: (0.0, 0.0),
@@ -36,7 +39,10 @@ impl GameCamera {
     /// Smoothly interpolate toward target using Psych Engine's exact formula:
     /// `lerp = 1 - exp(-dt * 2.4 * cameraSpeed)`
     pub fn update(&mut self, dt_secs: f32) {
-        let lerp = 1.0 - (-dt_secs * 2.4 * self.camera_speed).exp();
+        let lerp = self
+            .follow_lerp
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or_else(|| 1.0 - (-dt_secs * 2.4 * self.camera_speed).exp());
         self.x += (self.target_x - self.x) * lerp;
         self.y += (self.target_y - self.y) * lerp;
         self.zoom += (self.target_zoom - self.zoom) * lerp;

@@ -14,6 +14,14 @@ use super::{
     STRUM_Y, STRUM_Y_DOWN,
 };
 
+fn audio_song_id_from_chart_name(name: &str) -> String {
+    name.trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 impl PlayScreen {
     pub(super) fn init_inner(&mut self, gpu: &GpuState) {
         let paths = AssetPaths::platform_default();
@@ -110,6 +118,15 @@ impl PlayScreen {
         let chart_json = std::fs::read_to_string(&chart_file)
             .unwrap_or_else(|e| panic!("Failed to read chart {:?}: {}", chart_file, e));
         let parsed = chart::parse_chart(&chart_json).expect("Failed to parse chart");
+        let chart_audio_id = audio_song_id_from_chart_name(&parsed.song.song);
+        let audio_song_name = if !chart_audio_id.is_empty()
+            && chart_audio_id != self.song_name
+            && paths.song_audio(&chart_audio_id, "Inst.ogg").is_some()
+        {
+            chart_audio_id
+        } else {
+            self.song_name.clone()
+        };
 
         // Initialize PlayState with chart data
         let play_as_opponent = self.game.play_as_opponent;
@@ -201,6 +218,9 @@ impl PlayScreen {
         self.stage_pos_bf = [stage.boyfriend[0], stage.boyfriend[1]];
         self.stage_pos_dad = [stage.opponent[0], stage.opponent[1]];
         self.stage_pos_gf = [stage.girlfriend[0], stage.girlfriend[1]];
+        self.char_scroll_bf = (1.0, 1.0);
+        self.char_scroll_dad = (1.0, 1.0);
+        self.char_scroll_gf = (1.0, 1.0);
         self.scripts.state.bf_group_pos =
             (self.stage_pos_bf[0] as f32, self.stage_pos_bf[1] as f32);
         self.scripts.state.dad_group_pos =
@@ -612,6 +632,7 @@ impl PlayScreen {
                 stage_name,
             );
         }
+        self.apply_character_scroll_factors();
 
         // Load note skins: chart arrowSkinDAD/arrowSkinBF take priority, then character JSON skin field
         if !parsed.song.arrow_skin_dad.is_empty() {
@@ -773,21 +794,21 @@ impl PlayScreen {
         // Load audio
         let mut audio = AudioEngine::new();
         let mut song_length_ms = 0.0;
-        if let Some(inst) = paths.song_audio(&self.song_name, "Inst.ogg") {
+        if let Some(inst) = paths.song_audio(&audio_song_name, "Inst.ogg") {
             audio.load_inst(&inst);
             song_length_ms = AudioEngine::sound_duration_ms(&inst).unwrap_or(0.0);
         }
         // Try split vocals first (Psych Engine format), then single Voices.ogg
-        if let Some(vp) = paths.song_audio(&self.song_name, "Voices-Player.ogg") {
+        if let Some(vp) = paths.song_audio(&audio_song_name, "Voices-Player.ogg") {
             audio.load_vocals(&vp);
-        } else if let Some(vp) = paths.song_audio(&self.song_name, "VoicesPlayable.ogg") {
+        } else if let Some(vp) = paths.song_audio(&audio_song_name, "VoicesPlayable.ogg") {
             audio.load_vocals(&vp);
-        } else if let Some(v) = paths.song_audio(&self.song_name, "Voices.ogg") {
+        } else if let Some(v) = paths.song_audio(&audio_song_name, "Voices.ogg") {
             audio.load_vocals(&v);
         }
-        if let Some(vo) = paths.song_audio(&self.song_name, "Voices-Opponent.ogg") {
+        if let Some(vo) = paths.song_audio(&audio_song_name, "Voices-Opponent.ogg") {
             audio.load_opponent_vocals(&vo);
-        } else if let Some(v) = paths.song_audio(&self.song_name, "Voices.ogg") {
+        } else if let Some(v) = paths.song_audio(&audio_song_name, "Voices.ogg") {
             // If no split opponent vocals, use combined Voices.ogg as opponent too
             audio.load_opponent_vocals(&v);
         }

@@ -433,6 +433,9 @@ pub struct PlayScreen {
     pub(super) stage_pos_bf: [f64; 2],
     pub(super) stage_pos_dad: [f64; 2],
     pub(super) stage_pos_gf: [f64; 2],
+    pub(super) char_scroll_bf: (f32, f32),
+    pub(super) char_scroll_dad: (f32, f32),
+    pub(super) char_scroll_gf: (f32, f32),
     pub(super) stage_name: String,
     pub(super) lane_keys: [KeyCode; 4],
 
@@ -548,6 +551,9 @@ impl PlayScreen {
             stage_pos_bf: [0.0; 2],
             stage_pos_dad: [0.0; 2],
             stage_pos_gf: [0.0; 2],
+            char_scroll_bf: (1.0, 1.0),
+            char_scroll_dad: (1.0, 1.0),
+            char_scroll_gf: (1.0, 1.0),
             stage_name: String::new(),
             lane_keys: lane_keys_from_prefs(&prefs),
             last_dt: 1.0 / 60.0,
@@ -1392,16 +1398,25 @@ impl PlayScreen {
                         self.scripts.set_str_on_all("boyfriendName", &char_name);
                         self.bf_cam_off = camera_offset;
                         self.char_bf = Some(ch);
+                        if let Some(bf) = &mut self.char_bf {
+                            bf.set_scroll_factor(self.char_scroll_bf.0, self.char_scroll_bf.1);
+                        }
                     }
                     "gf" | "girlfriend" | "2" => {
                         self.scripts.set_str_on_all("gfName", &char_name);
                         self.gf_cam_off = camera_offset;
                         self.char_gf = Some(ch);
+                        if let Some(gf) = &mut self.char_gf {
+                            gf.set_scroll_factor(self.char_scroll_gf.0, self.char_scroll_gf.1);
+                        }
                     }
                     _ => {
                         self.scripts.set_str_on_all("dadName", &char_name);
                         self.dad_cam_off = camera_offset;
                         self.char_dad = Some(ch);
+                        if let Some(dad) = &mut self.char_dad {
+                            dad.set_scroll_factor(self.char_scroll_dad.0, self.char_scroll_dad.1);
+                        }
                     }
                 }
                 // Recompute camera targets with new character
@@ -1593,6 +1608,42 @@ impl PlayScreen {
         }
     }
 
+    fn set_character_scroll_factor(&mut self, tag: &str, sx: f32, sy: f32) {
+        match tag {
+            "boyfriendGroup" | "bf" | "boyfriend" => {
+                self.char_scroll_bf = (sx, sy);
+                if let Some(bf) = &mut self.char_bf {
+                    bf.set_scroll_factor(sx, sy);
+                }
+            }
+            "dadGroup" | "dad" | "opponent" => {
+                self.char_scroll_dad = (sx, sy);
+                if let Some(dad) = &mut self.char_dad {
+                    dad.set_scroll_factor(sx, sy);
+                }
+            }
+            "gfGroup" | "gf" | "girlfriend" => {
+                self.char_scroll_gf = (sx, sy);
+                if let Some(gf) = &mut self.char_gf {
+                    gf.set_scroll_factor(sx, sy);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn apply_character_scroll_factors(&mut self) {
+        if let Some(bf) = &mut self.char_bf {
+            bf.set_scroll_factor(self.char_scroll_bf.0, self.char_scroll_bf.1);
+        }
+        if let Some(dad) = &mut self.char_dad {
+            dad.set_scroll_factor(self.char_scroll_dad.0, self.char_scroll_dad.1);
+        }
+        if let Some(gf) = &mut self.char_gf {
+            gf.set_scroll_factor(self.char_scroll_gf.0, self.char_scroll_gf.1);
+        }
+    }
+
     /// Process game-level property writes from Lua (defaultCamZoom, cameraSpeed, etc.).
     pub(super) fn process_property_writes(&mut self) {
         use rustic_scripting::LuaValue;
@@ -1660,9 +1711,7 @@ impl PlayScreen {
                 }
                 "camGame.followLerp" | "camera.followLerp" => {
                     if let Some(v) = as_f32 {
-                        // PsychCamera uses followLerp = 0.04 * cameraSpeed; scripts
-                        // sometimes write followLerp directly for instant camera moves.
-                        self.camera.camera_speed = if v <= 0.0 { 0.0 } else { v / 0.04 };
+                        self.camera.follow_lerp = Some(v);
                     }
                 }
                 "camera.zoom" => {
@@ -1777,20 +1826,18 @@ impl PlayScreen {
                     let tag = &prop["__charScroll.".len()..];
                     if let LuaValue::Array(arr) = &val {
                         if arr.len() == 2 {
-                            if let (LuaValue::Float(x), LuaValue::Float(y)) = (&arr[0], &arr[1]) {
-                                if tag == "boyfriendGroup" || tag == "bf" || tag == "boyfriend" {
-                                    if let Some(bf) = &mut self.char_bf {
-                                        bf.set_scroll_factor(*x as f32, *y as f32);
-                                    }
-                                } else if tag == "dadGroup" || tag == "dad" || tag == "opponent" {
-                                    if let Some(dad) = &mut self.char_dad {
-                                        dad.set_scroll_factor(*x as f32, *y as f32);
-                                    }
-                                } else if tag == "gfGroup" || tag == "gf" || tag == "girlfriend" {
-                                    if let Some(gf) = &mut self.char_gf {
-                                        gf.set_scroll_factor(*x as f32, *y as f32);
-                                    }
-                                }
+                            let x = match &arr[0] {
+                                LuaValue::Float(v) => Some(*v as f32),
+                                LuaValue::Int(v) => Some(*v as f32),
+                                _ => None,
+                            };
+                            let y = match &arr[1] {
+                                LuaValue::Float(v) => Some(*v as f32),
+                                LuaValue::Int(v) => Some(*v as f32),
+                                _ => None,
+                            };
+                            if let (Some(x), Some(y)) = (x, y) {
+                                self.set_character_scroll_factor(tag, x, y);
                             }
                         }
                     }
