@@ -232,6 +232,7 @@ impl PlayScreen {
         };
 
         let stage_dir = &stage.directory;
+        let stage_scripts = paths.stage_scripts(stage_name);
 
         if !stage.objects.is_empty() {
             // Data-driven: load sprites and character markers from objects array
@@ -271,6 +272,7 @@ impl PlayScreen {
                 ],
                 _ => &[],
             };
+            let mut loaded_stage_art = false;
             for &(image, x, y, scale, sx, sy) in hardcoded {
                 if let Some(bg) =
                     load_stage_sprite(gpu, &paths, image, stage_dir, x, y, scale, sx, sy, false)
@@ -278,6 +280,22 @@ impl PlayScreen {
                     let idx = self.stage_bg.len();
                     self.stage_bg.push(bg);
                     self.draw_order.push(DrawLayer::StageBg(idx));
+                    loaded_stage_art = true;
+                }
+            }
+
+            if !loaded_stage_art && stage_scripts.is_empty() {
+                for image in paths.images_in_dir(stage_name) {
+                    if paths.image_xml(&image).is_some() {
+                        continue;
+                    }
+                    if let Some(bg) = load_stage_sprite(
+                        gpu, &paths, &image, stage_dir, -1200.0, -200.0, 1.0, 1.0, 1.0, false,
+                    ) {
+                        let idx = self.stage_bg.len();
+                        self.stage_bg.push(bg);
+                        self.draw_order.push(DrawLayer::StageBg(idx));
+                    }
                 }
             }
             // Default character order for legacy stages
@@ -312,7 +330,7 @@ impl PlayScreen {
         );
 
         // Stage scripts (loaded first — builds stage visuals)
-        for script_path in paths.stage_scripts(stage_name) {
+        for script_path in stage_scripts {
             self.scripts.load_script(&script_path);
         }
 
@@ -855,6 +873,8 @@ impl PlayScreen {
             self.sync_character_script_state();
             self.recompute_camera_targets();
         }
+
+        self.sync_draw_order_to_lua();
 
         #[cfg(feature = "rl")]
         self.attach_rl_harness();

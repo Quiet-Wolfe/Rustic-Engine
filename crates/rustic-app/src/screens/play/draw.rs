@@ -1,6 +1,6 @@
 use rustic_core::note::NoteData;
 use rustic_core::rating;
-use rustic_render::gpu::GpuState;
+use rustic_render::gpu::{GpuState, GpuTexture};
 
 use crate::screens::video::VideoPlayer;
 
@@ -40,6 +40,14 @@ fn lua_camera_is_game(camera: &str) -> bool {
     camera.is_empty()
         || camera.eq_ignore_ascii_case("camGame")
         || camera.eq_ignore_ascii_case("game")
+}
+
+fn health_icon_frame(icon: &GpuTexture, losing: bool) -> (f32, f32, f32) {
+    let height = icon.height.max(1) as f32;
+    let frames = ((icon.width as f32 / height).round() as usize).max(1);
+    let frame_w = icon.width as f32 / frames as f32;
+    let src_x = if losing && frames > 1 { frame_w } else { 0.0 };
+    (src_x, frame_w, height)
 }
 
 impl PlayScreen {
@@ -589,14 +597,14 @@ impl PlayScreen {
                         - icon_size / 2.0;
                     let icon_y = hud_y(hud_prop("iconP2.y", default_icon_y));
                     let icon_x = hud_x(hud_prop("iconP2.x", cut_x - draw_size + icon_spacing));
-                    let src_x = if dad_losing { 150.0 } else { 0.0 };
+                    let (src_x, src_w, src_h) = health_icon_frame(icon, dad_losing);
                     gpu.push_texture_region(
                         icon.width as f32,
                         icon.height as f32,
                         src_x,
                         0.0,
-                        150.0,
-                        150.0,
+                        src_w,
+                        src_h,
                         icon_x,
                         icon_y,
                         draw_size,
@@ -620,14 +628,14 @@ impl PlayScreen {
                         - icon_size / 2.0;
                     let icon_y = hud_y(hud_prop("iconP1.y", default_icon_y));
                     let icon_x = hud_x(hud_prop("iconP1.x", cut_x - icon_spacing));
-                    let src_x = if bf_losing { 150.0 } else { 0.0 };
+                    let (src_x, src_w, src_h) = health_icon_frame(icon, bf_losing);
                     gpu.push_texture_region(
                         icon.width as f32,
                         icon.height as f32,
                         src_x,
                         0.0,
-                        150.0,
-                        150.0,
+                        src_w,
+                        src_h,
                         icon_x,
                         icon_y,
                         draw_size,
@@ -696,53 +704,49 @@ impl PlayScreen {
             let icon_size = 150.0 * 0.75;
             let white = [1.0, 1.0, 1.0, 1.0];
 
-            let draw_left_icon = |gpu: &mut GpuState,
-                                  icon: &rustic_render::gpu::GpuTexture,
-                                  scale: f32,
-                                  losing: bool| {
-                let draw_size = hud_s(icon_size) * scale;
-                let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
-                let src_x = if losing { 150.0 } else { 0.0 };
-                gpu.push_texture_region(
-                    icon.width as f32,
-                    icon.height as f32,
-                    src_x,
-                    0.0,
-                    150.0,
-                    150.0,
-                    divider_x - draw_size + 15.0,
-                    icon_y,
-                    draw_size,
-                    draw_size,
-                    false,
-                    white,
-                );
-                gpu.draw_batch(Some(icon));
-            };
+            let draw_left_icon =
+                |gpu: &mut GpuState, icon: &GpuTexture, scale: f32, losing: bool| {
+                    let draw_size = hud_s(icon_size) * scale;
+                    let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
+                    let (src_x, src_w, src_h) = health_icon_frame(icon, losing);
+                    gpu.push_texture_region(
+                        icon.width as f32,
+                        icon.height as f32,
+                        src_x,
+                        0.0,
+                        src_w,
+                        src_h,
+                        divider_x - draw_size + 15.0,
+                        icon_y,
+                        draw_size,
+                        draw_size,
+                        false,
+                        white,
+                    );
+                    gpu.draw_batch(Some(icon));
+                };
 
-            let draw_right_icon = |gpu: &mut GpuState,
-                                   icon: &rustic_render::gpu::GpuTexture,
-                                   scale: f32,
-                                   losing: bool| {
-                let draw_size = hud_s(icon_size) * scale;
-                let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
-                let src_x = if losing { 150.0 } else { 0.0 };
-                gpu.push_texture_region(
-                    icon.width as f32,
-                    icon.height as f32,
-                    src_x,
-                    0.0,
-                    150.0,
-                    150.0,
-                    divider_x - 15.0,
-                    icon_y,
-                    draw_size,
-                    draw_size,
-                    true,
-                    white,
-                );
-                gpu.draw_batch(Some(icon));
-            };
+            let draw_right_icon =
+                |gpu: &mut GpuState, icon: &GpuTexture, scale: f32, losing: bool| {
+                    let draw_size = hud_s(icon_size) * scale;
+                    let icon_y = hby + hbh / 2.0 - draw_size / 2.0;
+                    let (src_x, src_w, src_h) = health_icon_frame(icon, losing);
+                    gpu.push_texture_region(
+                        icon.width as f32,
+                        icon.height as f32,
+                        src_x,
+                        0.0,
+                        src_w,
+                        src_h,
+                        divider_x - 15.0,
+                        icon_y,
+                        draw_size,
+                        draw_size,
+                        true,
+                        white,
+                    );
+                    gpu.draw_batch(Some(icon));
+                };
 
             if self.game.play_as_opponent {
                 if let Some(icon) = &self.icon_bf {
