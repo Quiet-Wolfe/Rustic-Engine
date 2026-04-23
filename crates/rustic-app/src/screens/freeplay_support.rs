@@ -6,6 +6,7 @@ pub(super) struct FreeplaySong {
     pub name: String,
     pub song_id: String,
     pub character: String,
+    pub difficulties: Vec<String>,
     pub color: [f32; 3],
     pub icon: Option<HealthIcon>,
 }

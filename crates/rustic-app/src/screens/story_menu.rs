@@ -11,6 +11,7 @@ use winit::keyboard::KeyCode;
 
 use crate::screen::Screen;
 
+use super::difficulties::is_standard_difficulty;
 use super::gameplay_changers::GameplayChangersState;
 use super::loading::LoadingScreen;
 use super::reset_score::{ResetScoreAction, ResetScoreModal};
@@ -134,13 +135,14 @@ impl StoryMenuScreen {
             StoryMenuCharacter::load(gpu, &self.paths, slot, &week.week_characters[slot])
         });
 
-        self.current_difficulty_texture = self
-            .paths
-            .find(&format!(
-                "images/menudifficulties/{}.png",
-                self.available_difficulties[self.selected_difficulty]
-            ))
-            .map(|path| gpu.load_texture_from_path(&path));
+        let difficulty = &self.available_difficulties[self.selected_difficulty];
+        self.current_difficulty_texture = if is_standard_difficulty(difficulty) {
+            self.paths
+                .find(&format!("images/menudifficulties/{difficulty}.png"))
+                .map(|path| gpu.load_texture_from_path(&path))
+        } else {
+            None
+        };
 
         self.pending_selection_assets = false;
     }

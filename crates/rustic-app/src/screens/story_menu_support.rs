@@ -7,7 +7,7 @@ use rustic_core::week::{self, WeekData};
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::sprites::{AnimationController, SpriteAtlas};
 
-pub const STORY_DIFFICULTIES: [&str; 3] = ["easy", "normal", "hard"];
+use super::difficulties::{detected_song_difficulties, sorted_difficulties, STANDARD_DIFFICULTIES};
 
 #[derive(Debug, Clone)]
 pub struct StoryWeekEntry {
@@ -166,7 +166,7 @@ pub fn load_story_weeks(paths: &AssetPaths, highscores: &HighscoreStore) -> Vec<
 }
 
 pub fn week_is_completed(week_name: &str, highscores: &HighscoreStore) -> bool {
-    STORY_DIFFICULTIES
+    STANDARD_DIFFICULTIES
         .iter()
         .any(|difficulty| highscores.get_week_score(week_name, difficulty) > 0)
 }
@@ -178,16 +178,31 @@ pub fn is_week_locked(week: &WeekData, highscores: &HighscoreStore) -> bool {
 }
 
 pub fn available_difficulties(paths: &AssetPaths, week: &WeekData) -> Vec<String> {
+    let mut common: Option<Vec<String>> = None;
+    for song in &week.songs {
+        let song_difficulties = detected_song_difficulties(paths, &song_id(&song.name));
+        common = Some(match common.take() {
+            Some(mut existing) => {
+                existing.retain(|difficulty| song_difficulties.contains(difficulty));
+                existing
+            }
+            None => song_difficulties,
+        });
+    }
+
+    let common = sorted_difficulties(common.unwrap_or_default());
     let mut difficulties = Vec::new();
-    for difficulty in STORY_DIFFICULTIES {
-        let all_songs_have_chart = week
-            .songs
-            .iter()
-            .all(|song| paths.chart(&song_id(&song.name), difficulty).is_some());
-        if all_songs_have_chart {
-            difficulties.push(difficulty.to_string());
+    for difficulty in &week.difficulties {
+        if common.contains(difficulty) && !difficulties.contains(difficulty) {
+            difficulties.push(difficulty.clone());
         }
     }
+    for difficulty in common {
+        if !difficulties.contains(&difficulty) {
+            difficulties.push(difficulty);
+        }
+    }
+
     if difficulties.is_empty() {
         difficulties.push("normal".to_string());
     }

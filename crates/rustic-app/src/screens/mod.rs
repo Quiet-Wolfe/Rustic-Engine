@@ -1,4 +1,5 @@
 pub mod characters;
+pub(crate) mod difficulties;
 pub mod freeplay;
 pub(crate) mod freeplay_support;
 pub mod gameplay_changers;

@@ -13,6 +13,7 @@ use rustic_core::week;
 use rustic_render::gpu::{GpuState, GpuTexture};
 use rustic_render::health_icon::{HealthIcon, IconState};
 
+use super::difficulties::detected_song_difficulties_or_normal;
 use super::freeplay_support::{key_to_char, srgb_to_linear, FreeplaySong};
 use super::gameplay_changers::GameplayChangersState;
 use super::loading::LoadingScreen;
@@ -22,8 +23,6 @@ use crate::screen::Screen;
 const GAME_W: f32 = 1280.0;
 const GAME_H: f32 = 720.0;
 
-const DIFFICULTIES: [&str; 3] = ["easy", "normal", "hard"];
-
 pub struct FreeplayScreen {
     audio: Option<AudioEngine>,
     bg_tex: Option<GpuTexture>,
@@ -31,7 +30,7 @@ pub struct FreeplayScreen {
     filtered: Vec<usize>, // indices into songs matching search
     search: String,
     cur_selected: usize,   // index into filtered
-    cur_difficulty: usize, // index into DIFFICULTIES
+    cur_difficulty: usize, // index into the selected song's detected difficulties
     lerp_selected: f32,
     bg_color: [f32; 3],
     bg_color_target: [f32; 3],
@@ -105,11 +104,12 @@ impl Screen for FreeplayScreen {
                 continue;
             }
             for song in &w.songs {
-                let key = song.name.to_lowercase().replace(' ', "-");
-                seen_songs.insert(key);
+                let song_id = song.name.to_lowercase().replace(' ', "-");
+                seen_songs.insert(song_id.clone());
                 self.songs.push(FreeplaySong {
                     name: song.name.clone(),
-                    song_id: song.name.to_lowercase().replace(' ', "-"),
+                    difficulties: detected_song_difficulties_or_normal(&paths, &song_id),
+                    song_id,
                     character: song.character.clone(),
                     color: [
                         srgb_to_linear(song.color[0] as f32 / 255.0),
@@ -128,6 +128,7 @@ impl Screen for FreeplayScreen {
             seen_songs.insert(song_name.clone());
             self.songs.push(FreeplaySong {
                 name: song_name.clone(),
+                difficulties: detected_song_difficulties_or_normal(&paths, &song_name),
                 song_id: song_name,
                 character: String::new(),
                 color: [146, 113, 253].map(|c| srgb_to_linear(c as f32 / 255.0)),
@@ -153,6 +154,7 @@ impl Screen for FreeplayScreen {
             self.bg_color = self.songs[song_idx].color;
             self.funkin_ui
                 .set_selected_song(&self.songs[song_idx].song_id);
+            self.sync_difficulty_for_selection(None);
         }
         self.lerp_selected = self.cur_selected as f32;
         self.refresh_score_target();
@@ -213,7 +215,7 @@ impl Screen for FreeplayScreen {
                     self.reset_modal = Some(ResetScoreModal::song(
                         song.song_id.clone(),
                         song.name.clone(),
-                        DIFFICULTIES[self.cur_difficulty].to_string(),
+                        self.current_difficulty().to_string(),
                         song.character.clone(),
                     ));
                 }
@@ -231,10 +233,10 @@ impl Screen for FreeplayScreen {
                     }
                     let song_idx = self.filtered[self.cur_selected];
                     let song = &self.songs[song_idx];
-                    let diff = DIFFICULTIES[self.cur_difficulty];
+                    let diff = self.current_difficulty().to_string();
                     self.next = Some(Box::new(LoadingScreen::song(
                         song.song_id.clone(),
-                        diff.to_string(),
+                        diff,
                         self.play_as_opponent,
                         self.practice_mode,
                         self.botplay,

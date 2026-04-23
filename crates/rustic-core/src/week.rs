@@ -21,6 +21,7 @@ pub struct WeekData {
     pub hide_story_mode: bool,
     pub hide_freeplay: bool,
     pub hidden_until_unlocked: bool,
+    pub difficulties: Vec<String>,
     /// File stem used for ordering (e.g. "week1", "week2").
     pub file_name: String,
 }
@@ -46,6 +47,8 @@ struct RawWeek {
     hide_freeplay: bool,
     #[serde(default, rename = "hiddenUntilUnlocked")]
     hidden_until_unlocked: bool,
+    #[serde(default)]
+    difficulties: String,
 }
 
 impl WeekData {
@@ -95,9 +98,23 @@ impl WeekData {
             hide_story_mode: raw.hide_story_mode,
             hide_freeplay: raw.hide_freeplay,
             hidden_until_unlocked: raw.hidden_until_unlocked,
+            difficulties: parse_difficulties(&raw.difficulties),
             file_name: file_name.to_string(),
         })
     }
+}
+
+fn parse_difficulties(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .filter_map(|difficulty| {
+            let trimmed = difficulty.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_ascii_lowercase())
+            }
+        })
+        .collect()
 }
 
 /// Load all weeks from a directory, sorted by filename.

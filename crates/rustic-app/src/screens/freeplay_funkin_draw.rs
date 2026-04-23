@@ -1,7 +1,7 @@
 use rustic_render::gpu::GpuState;
 use rustic_render::health_icon::IconState;
 
-use super::super::{FreeplayScreen, DIFFICULTIES, GAME_H, GAME_W};
+use super::super::{FreeplayScreen, GAME_H, GAME_W};
 use super::freeplay_funkin_assets::{CAPSULE_SELECTED, CAPSULE_UNSELECTED};
 use super::freeplay_funkin_layout::{
     capsule_x, draw_backing_text_flow, draw_difficulty_dots, draw_transition_wedge,
@@ -317,7 +317,7 @@ impl FreeplayScreen {
         gpu.push_colored_quad(0.0, overhang_y, GAME_W, 164.0, [0.0, 0.0, 0.0, 1.0]);
         gpu.draw_batch(None);
 
-        let diff = DIFFICULTIES[self.cur_difficulty];
+        let diff = self.current_difficulty();
         let diff_x = 118.0;
         let diff_y = 104.0 - 64.0 * (1.0 - hud);
         if let Some(tex) = self.funkin_ui.difficulty_texture(diff) {
@@ -433,7 +433,7 @@ impl FreeplayScreen {
             gpu,
             self.funkin_ui.difficulty_dot.as_ref(),
             self.cur_difficulty,
-            DIFFICULTIES.len(),
+            self.current_difficulty_count(),
             hud,
         );
     }
