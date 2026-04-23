@@ -1506,10 +1506,18 @@ impl PlayScreen {
             (self.camera.x - GAME_W / 2.0, self.camera.y - GAME_H / 2.0);
         self.scripts.state.custom_vars.insert(
             "camFollow.x".into(),
-            rustic_scripting::LuaValue::Float(self.camera.x as f64),
+            rustic_scripting::LuaValue::Float(self.camera.target_x as f64),
         );
         self.scripts.state.custom_vars.insert(
             "camFollow.y".into(),
+            rustic_scripting::LuaValue::Float(self.camera.target_y as f64),
+        );
+        self.scripts.state.custom_vars.insert(
+            "camFollowPos.x".into(),
+            rustic_scripting::LuaValue::Float(self.camera.x as f64),
+        );
+        self.scripts.state.custom_vars.insert(
+            "camFollowPos.y".into(),
             rustic_scripting::LuaValue::Float(self.camera.y as f64),
         );
         self.scripts.state.bf_group_pos =
@@ -1767,14 +1775,24 @@ impl PlayScreen {
                         self.camera_forced_pos = *b;
                     }
                 }
-                "camFollow.x" | "camFollowPos.x" => {
+                "camFollow.x" => {
                     if let Some(v) = as_f32 {
-                        self.camera.follow(v, self.camera.y);
+                        self.camera.follow(v, self.camera.target_y);
                     }
                 }
-                "camFollow.y" | "camFollowPos.y" => {
+                "camFollow.y" => {
                     if let Some(v) = as_f32 {
-                        self.camera.follow(self.camera.x, v);
+                        self.camera.follow(self.camera.target_x, v);
+                    }
+                }
+                "camFollowPos.x" => {
+                    if let Some(v) = as_f32 {
+                        self.camera.x = v;
+                    }
+                }
+                "camFollowPos.y" => {
+                    if let Some(v) = as_f32 {
+                        self.camera.y = v;
                     }
                 }
                 "camGame.scroll.x" => {

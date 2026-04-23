@@ -271,15 +271,24 @@ impl PlayScreen {
                 .entry(key.into())
                 .or_insert(SLV::Float(value as f64));
         }
-        // Camera follow position
+        // Psych exposes camFollow as the target point and camFollowPos as the
+        // currently lerped camera point.
+        self.scripts.state.custom_vars.insert(
+            "camFollow.x".into(),
+            SLV::Float(self.camera.target_x as f64),
+        );
+        self.scripts.state.custom_vars.insert(
+            "camFollow.y".into(),
+            SLV::Float(self.camera.target_y as f64),
+        );
         self.scripts
             .state
             .custom_vars
-            .insert("camFollow.x".into(), SLV::Float(self.camera.x as f64));
+            .insert("camFollowPos.x".into(), SLV::Float(self.camera.x as f64));
         self.scripts
             .state
             .custom_vars
-            .insert("camFollow.y".into(), SLV::Float(self.camera.y as f64));
+            .insert("camFollowPos.y".into(), SLV::Float(self.camera.y as f64));
         // Unspawn notes length (approximate — total notes remaining)
         self.scripts.state.custom_vars.insert(
             "unspawnNotes.length".into(),
