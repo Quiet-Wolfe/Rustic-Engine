@@ -7,43 +7,6 @@ use super::{
     SPLASH_FPS, SPLASH_FRAMES,
 };
 
-/// Convert an sRGB component (0..1) to linear space.
-fn srgb_to_linear(s: f32) -> f32 {
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// Convert an sRGB [R,G,B,A] color to linear space (alpha unchanged).
-fn srgb_color(r: f32, g: f32, b: f32) -> [f32; 4] {
-    [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), 1.0]
-}
-
-/// Parse a hex color string (e.g., "CCCCCC", "FB002D") to [R,G,B,A] floats in linear space.
-fn parse_hex_color(hex: &str) -> [f32; 4] {
-    let hex = hex
-        .trim_start_matches('#')
-        .trim_start_matches("0x")
-        .trim_start_matches("0X");
-    let hex = if hex.len() > 6 {
-        &hex[hex.len() - 6..]
-    } else {
-        hex
-    };
-    if hex.len() == 6 {
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            u8::from_str_radix(&hex[0..2], 16),
-            u8::from_str_radix(&hex[2..4], 16),
-            u8::from_str_radix(&hex[4..6], 16),
-        ) {
-            return srgb_color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-        }
-    }
-    srgb_color(0.8, 0.8, 0.8) // fallback: CCCCCC
-}
-
 impl PlayScreen {
     fn apply_camera_zoom_bump(&mut self, game_zoom: f32, hud_zoom: f32) {
         if self.disable_zooming || self.camera.zoom >= 1.35 {
@@ -450,52 +413,12 @@ impl PlayScreen {
                         self.char_change_requests.push((v1.clone(), v2.clone()));
                     }
                 }
-                // Stage color events (data-driven from events.json, use generic overlay)
-                "Nightflaid color tween" => {
-                    let color = parse_hex_color(&v1);
-                    let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.stage_color_both(color, dur);
-                }
-                "Nightflaid color tween left-only" => {
-                    let color = parse_hex_color(&v1);
-                    let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.stage_color_left(color, dur);
-                }
-                "Nightflaid color tween right-only" => {
-                    let color = parse_hex_color(&v1);
-                    let dur: f32 = v2.parse().unwrap_or(1.0);
-                    self.stage_color_right(color, dur);
-                }
-                "Nightflaid swap sides" => {
-                    let dur: f32 = v1.parse().unwrap_or(0.15);
-                    let old_left = self.stage_overlay.color_left;
-                    let old_right = self.stage_overlay.color_right;
-                    self.stage_color_left(old_right, dur);
-                    self.stage_color_right(old_left, dur);
-                }
-                "Nightflaid lightings" => {
-                    let on = matches!(v1.to_lowercase().as_str(), "on" | "1" | "");
-                    self.stage_overlay.lights_on = on;
-                }
                 "Wildcard" => {
                     // VS Retrospecter custom event: calls Lua function by name.
                     // v1 = function name, v2 = argument
                     if self.scripts.has_scripts() {
                         self.scripts.call_lua_function(&v1, &v2);
                         self.process_property_writes();
-                    }
-                    // setOppAnimation: set the opponent's animation suffix
-                    if v1 == "setOppAnimation" {
-                        if let Some(dad) = &mut self.char_dad {
-                            let suffix = if v2.is_empty() {
-                                String::new()
-                            } else {
-                                format!("-{}", v2)
-                            };
-                            log::info!("Setting opponent anim suffix to '{}'", suffix);
-                            dad.set_anim_suffix(&suffix);
-                        }
-                        // Health bar colors are handled by rustic/rustic_ext.lua via setHealthBarColor
                     }
                 }
                 "Midsong Video" => {

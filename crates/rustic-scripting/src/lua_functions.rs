@@ -76,6 +76,23 @@ fn normalize_lua_camera_name(camera: &str) -> String {
     }
 }
 
+fn resolve_table_key_case_insensitive(table: &LuaTable, key: &str) -> Option<String> {
+    if table.contains_key(key).ok()? {
+        return Some(key.to_string());
+    }
+
+    let wanted = key.to_ascii_lowercase();
+    for pair in table.clone().pairs::<String, LuaValue>() {
+        let Ok((candidate, _)) = pair else {
+            continue;
+        };
+        if candidate.to_ascii_lowercase() == wanted {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn table_arg_string(args: &Option<LuaTable>, idx: i64) -> Option<String> {
     args.as_ref()
         .and_then(|t| t.get::<LuaValue>(idx).ok())
@@ -482,7 +499,9 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "makeGraphic",
         lua.create_function(
-            |lua, (tag, width, height, color): (String, i32, i32, Option<String>)| {
+            |lua, (tag, width, height, color): (String, LuaValue, LuaValue, Option<String>)| {
+                let width = lua_val_to_f32(&width).unwrap_or(1.0).round().max(1.0) as i32;
+                let height = lua_val_to_f32(&height).unwrap_or(1.0).round().max(1.0) as i32;
                 let color = color.unwrap_or_else(|| "FFFFFF".to_string());
                 let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
                 if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
@@ -693,7 +712,9 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
         "setObjectOrder",
         lua.create_function(|lua, (tag, order): (String, i32)| {
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
-            if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
+            let resolved_tag =
+                resolve_table_key_case_insensitive(&sprite_data, &tag).unwrap_or(tag);
+            if let Ok(tbl) = sprite_data.get::<LuaTable>(resolved_tag.clone()) {
                 tbl.set("order", order)?;
             }
 
@@ -701,7 +722,7 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
             let pending: LuaTable = lua.globals().get("__pending_props")?;
             let len = pending.len()? as i64;
             let tbl = lua.create_table()?;
-            tbl.set("prop", format!("__object_order.{}", tag))?;
+            tbl.set("prop", format!("__object_order.{}", resolved_tag))?;
             tbl.set("value", order)?;
             pending.set(len + 1, tbl)?;
             Ok(())
@@ -718,11 +739,18 @@ fn register_sprite_functions(lua: &Lua) -> LuaResult<()> {
                 }
             }
             let sprite_data: LuaTable = lua.globals().get("__sprite_data")?;
+            if let Some(resolved_tag) = resolve_table_key_case_insensitive(&sprite_data, &tag) {
+                if let Ok(tbl) = sprite_data.get::<LuaTable>(resolved_tag) {
+                    return Ok(tbl.get::<i32>("order").unwrap_or(0));
+                }
+            }
             if let Ok(tbl) = sprite_data.get::<LuaTable>(tag.clone()) {
                 return Ok(tbl.get::<i32>("order").unwrap_or(0));
             }
             let character_instances: LuaTable = lua.globals().get("__character_instances")?;
-            if let Ok(tbl) = character_instances.get::<LuaTable>(tag) {
+            let resolved_tag =
+                resolve_table_key_case_insensitive(&character_instances, &tag).unwrap_or(tag);
+            if let Ok(tbl) = character_instances.get::<LuaTable>(resolved_tag) {
                 return Ok(tbl.get::<i32>("order").unwrap_or(0));
             }
             Ok(0)

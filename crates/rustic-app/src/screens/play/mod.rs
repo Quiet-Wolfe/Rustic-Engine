@@ -1879,7 +1879,7 @@ impl PlayScreen {
 
                         self.draw_order.retain(|l| l != &layer);
                         let max_idx = self.draw_order.len();
-                        let idx = (order_f32 as usize).min(max_idx);
+                        let idx = order_f32.round().clamp(0.0, max_idx as f32) as usize;
                         self.draw_order.insert(idx, layer);
                         self.sync_draw_order_to_lua();
                     }

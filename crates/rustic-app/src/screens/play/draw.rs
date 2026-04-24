@@ -50,6 +50,31 @@ fn health_icon_frame(icon: &GpuTexture, losing: bool) -> (f32, f32, f32) {
     (src_x, frame_w, height)
 }
 
+fn draw_stage_color_overlay(gpu: &mut GpuState, left: [f32; 4], right: [f32; 4]) {
+    let has_left = left[3] > 0.001;
+    let has_right = right[3] > 0.001;
+    if !has_left && !has_right {
+        return;
+    }
+
+    if left != right {
+        if has_left {
+            let c = [left[0], left[1], left[2], left[3] * 0.35];
+            gpu.push_colored_quad(0.0, 0.0, GAME_W / 2.0, GAME_H, c);
+            gpu.draw_batch(None);
+        }
+        if has_right {
+            let c = [right[0], right[1], right[2], right[3] * 0.35];
+            gpu.push_colored_quad(GAME_W / 2.0, 0.0, GAME_W / 2.0, GAME_H, c);
+            gpu.draw_batch(None);
+        }
+    } else {
+        let c = [left[0], left[1], left[2], left[3] * 0.35];
+        gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, c);
+        gpu.draw_batch(None);
+    }
+}
+
 impl PlayScreen {
     pub(super) fn draw_inner(&mut self, gpu: &mut GpuState) {
         let white = [1.0, 1.0, 1.0, 1.0];
@@ -175,32 +200,7 @@ impl PlayScreen {
             }
         }
 
-        // === Stage background color overlay (generic, controlled via setStageColor Lua API) ===
         let is_death = self.death.is_some();
-        if !is_death {
-            let lc = self.stage_overlay.color_left;
-            let rc = self.stage_overlay.color_right;
-            let has_left = lc[3] > 0.001;
-            let has_right = rc[3] > 0.001;
-            if has_left || has_right {
-                if lc != rc {
-                    if has_left {
-                        let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
-                        gpu.push_colored_quad(0.0, 0.0, GAME_W / 2.0, GAME_H, c);
-                        gpu.draw_batch(None);
-                    }
-                    if has_right {
-                        let c = [rc[0], rc[1], rc[2], rc[3] * 0.35];
-                        gpu.push_colored_quad(GAME_W / 2.0, 0.0, GAME_W / 2.0, GAME_H, c);
-                        gpu.draw_batch(None);
-                    }
-                } else {
-                    let c = [lc[0], lc[1], lc[2], lc[3] * 0.35];
-                    gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, c);
-                    gpu.draw_batch(None);
-                }
-            }
-        }
 
         // === Stage & Characters (draw order from stage objects or Lua scripts) ===
         for layer in &self.draw_order {
@@ -271,6 +271,17 @@ impl PlayScreen {
                     }
                 }
             }
+        }
+
+        // === Stage color overlay ===
+        // Draw after game-camera layers so the tint is visible, but before
+        // notes/HUD so gameplay UI remains readable.
+        if !is_death {
+            draw_stage_color_overlay(
+                gpu,
+                self.stage_overlay.color_left,
+                self.stage_overlay.color_right,
+            );
         }
 
         // === Mid-song (non-blocking) video overlay: above stage/characters, below HUD ===
