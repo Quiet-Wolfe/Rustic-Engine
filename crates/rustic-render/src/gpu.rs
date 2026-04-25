@@ -41,6 +41,7 @@ pub struct GpuState {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
+    pipeline_multiply: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     _proj_buffer: wgpu::Buffer,
@@ -348,7 +349,64 @@ impl GpuState {
 
         let postprocess = PostProcessor::new(&device, format, game_w as u32, game_h as u32);
 
+        let pipeline_multiply = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Sprite Pipeline Multiply"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<SpriteVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 8,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 16,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Dst,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent::OVER,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self {
+            pipeline_multiply,
             device,
             queue,
             surface,
@@ -468,6 +526,64 @@ impl GpuState {
         }
     }
 
+    /// Load a 1-bit / grayscale PNG as an alpha mask: luma value becomes alpha, RGB is white.
+    /// Use for pre-multiplied stencil shapes like the freeplay pinkBack card outline.
+    pub fn load_mask_texture_from_path(&self, path: &Path) -> GpuTexture {
+        let src = image::open(path)
+            .unwrap_or_else(|e| panic!("Failed to load image {:?}: {}", path, e))
+            .to_luma8();
+        let (width, height) = src.dimensions();
+        let mut img = image::RgbaImage::new(width, height);
+        for (dst, src_px) in img.pixels_mut().zip(src.pixels()) {
+            let a = src_px.0[0];
+            *dst = image::Rgba([a, a, a, a]);
+        }
+        self.clamp_image_size(&mut img);
+        let (width, height) = img.dimensions();
+
+        let texture = self.device.create_texture_with_data(
+            &self.queue,
+            &wgpu::TextureDescriptor {
+                label: Some(path.to_str().unwrap_or("mask texture")),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &img,
+        );
+
+        let view = texture.create_view(&Default::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Mask Texture Bind Group"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        GpuTexture {
+            bind_group,
+            width,
+            height,
+        }
+    }
+
     /// Load a texture with nearest-neighbor (point) filtering — for pixel art.
     pub fn load_texture_from_path_nearest(&self, path: &Path) -> GpuTexture {
         let mut img = image::open(path)
@@ -525,9 +641,9 @@ impl GpuState {
         }
     }
 
-    /// Create a solid-color texture. `color_hex` is "RRGGBB" or "AARRGGBB".
+    /// Create a solid-color texture. `color_hex` is "RRGGBB" or "AARRGGBB" or "0xAARRGGBB".
     pub fn create_solid_texture(&self, width: u32, height: u32, color_hex: &str) -> GpuTexture {
-        let hex = color_hex.trim_start_matches('#');
+        let hex = color_hex.trim_start_matches('#').trim_start_matches("0x");
         let (r, g, b, a) = if hex.len() >= 8 {
             (
                 u8::from_str_radix(&hex[2..4], 16).unwrap_or(255),
@@ -543,6 +659,7 @@ impl GpuState {
                 255,
             )
         };
+
         // Premultiply
         let af = a as f32 / 255.0;
         let pixel = [
@@ -1062,7 +1179,15 @@ impl GpuState {
     }
 
     /// Draw accumulated vertices with the given texture (or white if None), then clear the batch.
+    pub fn draw_batch_blend(&mut self, texture: Option<&GpuTexture>, blend: &str) {
+        self._draw_batch(texture, blend)
+    }
+
     pub fn draw_batch(&mut self, texture: Option<&GpuTexture>) {
+        self._draw_batch(texture, "NORMAL")
+    }
+
+    fn _draw_batch(&mut self, texture: Option<&GpuTexture>, blend: &str) {
         if self.vertices.is_empty() {
             return;
         }
@@ -1105,7 +1230,11 @@ impl GpuState {
                 ..Default::default()
             });
             pass.set_viewport(vp_x, vp_y, vp_w, vp_h, 0.0, 1.0);
-            pass.set_pipeline(&self.pipeline);
+            if blend.eq_ignore_ascii_case("multiply") {
+                pass.set_pipeline(&self.pipeline_multiply);
+            } else {
+                pass.set_pipeline(&self.pipeline);
+            }
             pass.set_bind_group(0, &self.proj_bind_group, &[]);
             pass.set_bind_group(1, tex_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));

@@ -141,6 +141,23 @@ impl ScriptManager {
     }
 
     /// Call a named callback on all scripts with no arguments.
+    
+    pub fn call_with_return(&mut self, callback: &str) -> i32 {
+        self.refresh_running_scripts();
+        let mut max_result = 0;
+        for script in &mut self.scripts {
+            let result = match script {
+                Script::Lua(s) => s.call_callback_ret(callback, &mut self.state, &[]),
+                Script::HScript(s) => s.call_callback_ret(callback, &mut self.state, &[]),
+            };
+            if let Ok(val) = result {
+                if val > max_result { max_result = val; }
+            }
+        }
+        self.process_script_control_requests();
+        max_result
+    }
+
     pub fn call(&mut self, callback: &str) {
         self.refresh_running_scripts();
         for script in &mut self.scripts {
@@ -465,6 +482,25 @@ impl ScriptManager {
             };
             if let Err(e) = result {
                 log::warn!("Wildcard {}({}): {}", func_name, arg, e);
+            }
+        }
+        self.process_script_control_requests();
+    }
+
+    /// Call a custom substate update function with name and elapsed time
+    pub fn call_custom_substate_update(&mut self, func_name: &str, name: &str, elapsed: f64) {
+        self.refresh_running_scripts();
+        let args = [
+            crate::script_state::LuaValue::String(name.to_string()),
+            crate::script_state::LuaValue::Float(elapsed),
+        ];
+        for script in &mut self.scripts {
+            let result = match script {
+                Script::Lua(s) => s.call_callback_values(func_name, &mut self.state, &args),
+                Script::HScript(s) => s.call_callback_values(func_name, &mut self.state, &args),
+            };
+            if let Err(e) = result {
+                log::warn!("{}({}, {}): {}", func_name, name, elapsed, e);
             }
         }
         self.process_script_control_requests();

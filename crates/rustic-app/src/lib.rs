@@ -189,6 +189,15 @@ fn android_main(app: AndroidApp) {
             .with_tag("RusticV2"),
     );
 
+    if let Some(path) = app.external_data_path() {
+        std::fs::create_dir_all(&path).ok();
+        if let Err(e) = std::env::set_current_dir(&path) {
+            log::error!("Failed to set current dir to {:?}: {}", path, e);
+        } else {
+            log::info!("Set current dir to {:?}", path);
+        }
+    }
+
     log::info!("RusticV2 android_main starting");
 
     use winit::platform::android::EventLoopBuilderExtAndroid;

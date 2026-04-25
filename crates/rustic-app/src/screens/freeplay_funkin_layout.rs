@@ -1,12 +1,13 @@
 use rustic_render::gpu::{GpuState, GpuTexture};
 
 use super::super::{GAME_H, GAME_W};
+use super::CUTOUT_W;
 
 pub(super) fn draw_backing_text_flow(gpu: &mut GpuState, frame: usize, alpha: f32) {
     let messages = ["BIG SHOES", "YEAH", "YES YES YES", "GET IT"];
     let drift = (frame as f32 * 0.62) % 245.0;
-    let text_left = 34.0;
-    let text_right = 500.0;
+    let text_left = 300.0;
+    let text_right = 560.0;
     let spacing = 245.0;
     for row in 0..5 {
         let y = 126.0 + row as f32 * 72.0;
@@ -30,18 +31,28 @@ pub(super) fn draw_backing_text_flow(gpu: &mut GpuState, frame: usize, alpha: f3
     }
 }
 
-pub(super) fn draw_transition_wedge(gpu: &mut GpuState, cutout_w: f32, alpha: f32) {
-    let seam_x = cutout_w * 0.74;
-    let positions = [
-        [seam_x - 2.0, 0.0],
-        [seam_x + 150.0, 0.0],
-        [seam_x - 88.0, GAME_H],
-        [seam_x - 2.0, GAME_H],
-    ];
+pub(super) fn pink_back_right_edge_at(screen_y: f32) -> f32 {
+    // pinkBack image is 524x760; drawn at screen y=-24 scaled to (CUTOUT_W, GAME_H+48).
+    // Its opaque right edge slants from image x=393 at top to x=523 at bottom.
+    let scale_x = CUTOUT_W / 524.0;
+    let image_y = (screen_y + 24.0) * 760.0 / (GAME_H + 48.0);
+    scale_x * (393.0 + (523.0 - 393.0) * image_y / 760.0)
+}
+
+pub(super) fn draw_orange_bar(gpu: &mut GpuState, card_x: f32, color: [f32; 4]) {
+    let top_y = 440.0;
+    let bot_y = 515.0;
+    let top_right = card_x + pink_back_right_edge_at(top_y);
+    let bot_right = card_x + pink_back_right_edge_at(bot_y);
     gpu.push_raw_quad(
-        positions,
+        [
+            [card_x + 84.0, top_y],
+            [top_right, top_y],
+            [bot_right, bot_y],
+            [card_x + 84.0, bot_y],
+        ],
         [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-        [1.0, 0.85, 0.39, alpha],
+        color,
     );
     gpu.draw_batch(None);
 }

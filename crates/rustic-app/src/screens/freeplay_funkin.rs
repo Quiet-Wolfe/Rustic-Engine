@@ -78,7 +78,11 @@ impl FunkinFreeplayUi {
                 self.background = Some(gpu.load_texture_from_path(&path));
             }
         }
-        load_optional_texture(gpu, paths, &mut self.pink_back, "freeplay/pinkBack.png");
+        if self.pink_back.is_none() {
+            if let Some(path) = find_funkin_asset(paths, "freeplay/pinkBack.png") {
+                self.pink_back = Some(gpu.load_mask_texture_from_path(&path));
+            }
+        }
         load_optional_texture(gpu, paths, &mut self.card_glow, "freeplay/cardGlow.png");
         load_optional_texture(
             gpu,

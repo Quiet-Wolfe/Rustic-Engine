@@ -103,28 +103,33 @@ impl GameCamera {
     /// Update shake and flash effects.
     pub fn update_effects(&mut self, dt: f32) {
         // Shake
-        if let Some((intensity, remaining)) = &mut self.shake {
+        if let Some((intensity, ref mut remaining)) = self.shake {
             *remaining -= dt;
             if *remaining <= 0.0 {
                 self.shake = None;
                 self.shake_offset = (0.0, 0.0);
             } else {
-                // Simple random shake using time-based pseudo-random
                 let t = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .subsec_nanos() as f32
                     / 1_000_000_000.0;
-                let scale = *intensity * 100.0; // Psych Engine uses screen-space intensity
+                let scale = intensity * 100.0;
                 self.shake_offset.0 = (t * 7919.0).sin() * scale;
                 self.shake_offset.1 = (t * 6271.0).cos() * scale;
             }
         }
-        // Flash
-        if let Some((_r, _g, _b, _alpha, remaining, _total, _fade_in)) = &mut self.flash {
+        // Flash/Fade
+        if let Some((_, _, _, _, ref mut remaining, _, fade_in)) = self.flash {
             *remaining -= dt;
             if *remaining <= 0.0 {
-                self.flash = None;
+                if fade_in {
+                    // Flash (fade out) finished -> remove
+                    self.flash = None;
+                } else {
+                    // Fade (fade to color) finished -> stay at 0 remaining time
+                    *remaining = 0.0;
+                }
             }
         }
     }

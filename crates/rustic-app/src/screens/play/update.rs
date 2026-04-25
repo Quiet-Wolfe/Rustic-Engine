@@ -21,6 +21,10 @@ impl PlayScreen {
     pub(super) fn update_inner(&mut self, dt: f32) {
         self.last_dt = dt;
         let dt_ms = dt as f64 * 1000.0;
+
+        // Camera must update even when paused so flash/fade/shake effects don't freeze
+        self.camera.update(dt);
+
         let mut blocking_cutscene = false;
         if let Some(super::CutsceneState::Video {
             player,
@@ -45,6 +49,47 @@ impl PlayScreen {
 
         if self.pause_menu.is_some() {
             self.update_pause(dt);
+            return;
+        }
+
+        // Custom substate logic
+        let mut custom_substate_paused = false;
+        let substate_name = self
+            .scripts
+            .state
+            .custom_vars
+            .get("__customSubstate")
+            .cloned();
+        if let Some(rustic_scripting::LuaValue::String(name)) = substate_name {
+            if !name.is_empty() {
+                if let Some(rustic_scripting::LuaValue::Bool(paused)) =
+                    self.scripts.state.custom_vars.get("__customSubstatePaused")
+                {
+                    custom_substate_paused = *paused;
+                }
+                if self.scripts.has_scripts() {
+                    self.scripts.call_custom_substate_update(
+                        "onCustomSubstateUpdate",
+                        &name,
+                        dt as f64,
+                    );
+                    self.scripts.call_custom_substate_update(
+                        "onCustomSubstateUpdatePost",
+                        &name,
+                        dt as f64,
+                    );
+                }
+            }
+        }
+
+        if custom_substate_paused {
+            self.process_audio_requests();
+            self.process_property_writes();
+            self.process_lua_extensions();
+            self.scripts.state.input_just_pressed.clear();
+            self.scripts.state.input_just_released.clear();
+            self.scripts.state.mouse_just_pressed = false;
+            self.scripts.state.mouse_just_released = false;
             return;
         }
 
@@ -115,10 +160,8 @@ impl PlayScreen {
         // Sync game state to scripting layer before callbacks
         self.scripts.state.song_position = self.game.conductor.song_position;
         self.scripts.state.camera_zoom = self.camera.zoom;
-        self.scripts.state.camera_scroll = (
-            self.camera.x - GAME_W / 2.0,
-            self.camera.y - GAME_H / 2.0,
-        );
+        self.scripts.state.camera_scroll =
+            (self.camera.x - GAME_W / 2.0, self.camera.y - GAME_H / 2.0);
         self.scripts.state.default_cam_zoom = self.default_cam_zoom;
         self.scripts.state.camera_speed = self.camera.camera_speed;
         self.scripts.state.health = self.game.score.health;
@@ -766,13 +809,51 @@ impl PlayScreen {
                 }
                 GameEvent::Death => {
                     self.death_counter += 1;
+                    
+                    // Allow scripts to override or completely handle game over
+                    if self.scripts.has_scripts() && self.scripts.call_with_return("onGameOver") == 1 {
+                        self.scripts.call("onGameOverStart");
+                        return;
+                    }
+                    
+                    let mut char_name = self.death_char_name.clone();
+                    let mut sfx_name = self.death_sound_name.clone();
+                    let mut loop_name = self.death_loop_name.clone();
+                    
+                    if let Some(rustic_scripting::LuaValue::String(c)) = self.scripts.state.custom_vars.get("__class_GameOverSubstate_characterName") {
+                        char_name = c.clone();
+                    }
+                    if let Some(rustic_scripting::LuaValue::String(s)) = self.scripts.state.custom_vars.get("__class_GameOverSubstate_deathSoundName") {
+                        sfx_name = s.clone();
+                    }
+                    if let Some(rustic_scripting::LuaValue::String(l)) = self.scripts.state.custom_vars.get("__class_GameOverSubstate_loopSoundName") {
+                        loop_name = l.clone();
+                    }
+                    if let Some(rustic_scripting::LuaValue::String(e)) = self.scripts.state.custom_vars.get("__class_GameOverSubstate_endSoundName") {
+                        self.death_end_name = e.clone();
+                    }
+                    self.death_loop_name = loop_name;
+                    
                     if let Some(audio) = &mut self.audio {
                         audio.pause();
-                        if let Some(sfx) = self.paths.sound(&self.death_sound_name) {
-                            audio.play_sound(&sfx, 1.0);
+                        if !sfx_name.is_empty() {
+                            if let Some(sfx) = self.paths.sound(&sfx_name) {
+                                audio.play_sound(&sfx, 1.0);
+                            }
                         }
                     }
-                    if let Some(mut death_char) = self.death_char_preloaded.take() {
+                    
+                    if char_name.is_empty() {
+                        if let Some(mut death_char) = self.death_char_preloaded.take() {
+                            death_char.set_alpha(0.0);
+                            self.death = Some(DeathState {
+                                character: death_char,
+                                phase: DeathPhase::Loop,
+                                timer: 0.0,
+                                fade_alpha: 0.0,
+                            });
+                        }
+                    } else if let Some(mut death_char) = self.death_char_preloaded.take() {
                         if let Some(bf) = &self.char_bf {
                             death_char.set_x(bf.x());
                             death_char.set_y(bf.y());
@@ -785,6 +866,8 @@ impl PlayScreen {
                             fade_alpha: 0.0,
                         });
                     }
+                    
+                    self.scripts.call("onGameOverStart");
                 }
                 _ => {}
             }
@@ -866,10 +949,8 @@ impl PlayScreen {
             chb.update(dt, health);
         }
 
-        // Camera zoom decay
-        let zoom_before = self.camera.zoom;
-        self.camera.update(dt);
         if self.cam_zooming {
+            let zoom_before = self.camera.zoom;
             let zoom_lerp = (-dt * 3.125 * self.cam_zooming_decay).exp();
             self.camera.zoom =
                 self.default_cam_zoom + (zoom_before - self.default_cam_zoom) * zoom_lerp;

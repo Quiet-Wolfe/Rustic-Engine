@@ -42,6 +42,10 @@ fn lua_camera_is_game(camera: &str) -> bool {
         || camera.eq_ignore_ascii_case("game")
 }
 
+fn lua_camera_is_other(camera: &str) -> bool {
+    camera.trim().eq_ignore_ascii_case("camOther") || camera.trim().eq_ignore_ascii_case("other")
+}
+
 fn health_icon_frame(icon: &GpuTexture, losing: bool) -> (f32, f32, f32) {
     let height = icon.height.max(1) as f32;
     let frames = ((icon.width as f32 / height).round() as usize).max(1);
@@ -874,7 +878,7 @@ impl PlayScreen {
 
         // === Lua sprites on screen-space cameras ===
         if self.hud_visible {
-            self.draw_lua_sprites_screen(gpu);
+            self.draw_lua_sprites_screen(gpu, false);
         }
 
         // === Countdown sprite ===
@@ -897,9 +901,19 @@ impl PlayScreen {
             }
         }
 
+        // === Camera Flash Overlay ===
+        if let Some((color, a)) = self.camera.flash_overlay() {
+            let c = [color[0], color[1], color[2], a];
+            gpu.push_colored_quad(0.0, 0.0, GAME_W, GAME_H, c);
+            gpu.draw_batch(None);
+        }
+
         if self.pause_menu.is_some() {
             self.draw_pause(gpu);
         }
+
+        // Draw camOther sprites on top of EVERYTHING
+        self.draw_lua_sprites_screen(gpu, true);
 
         // === Song results ===
         if self.game.song_ended && self.pause_menu.is_none() {
@@ -1083,7 +1097,7 @@ impl PlayScreen {
                         sprite.flip_x,
                         color,
                     );
-                    gpu.draw_batch(Some(tex));
+                    gpu.draw_batch_blend(Some(tex), &sprite.blend_mode);
                     return;
                 }
             }
@@ -1150,11 +1164,11 @@ impl PlayScreen {
                 color,
             );
         }
-        gpu.draw_batch(Some(tex));
+        gpu.draw_batch_blend(Some(tex), &sprite.blend_mode);
     }
 
     /// Draw Lua sprites assigned to screen-space cameras with HUD zoom.
-    fn draw_lua_sprites_screen(&self, gpu: &mut GpuState) {
+    fn draw_lua_sprites_screen(&self, gpu: &mut GpuState, draw_other: bool) {
         for layer in &self.draw_order {
             let tag = match layer {
                 DrawLayer::LuaSprite(tag) => tag,
@@ -1175,9 +1189,13 @@ impl PlayScreen {
             if lua_camera_is_game(&sprite.camera) {
                 continue;
             }
+            let is_other = lua_camera_is_other(&sprite.camera);
+            if is_other != draw_other {
+                continue;
+            }
 
             let color = lua_sprite_color(sprite);
-            let zoom = self.hud_zoom;
+            let zoom = if is_other { 1.0 } else { self.hud_zoom };
 
             // Animated sprite. If no current animation was explicitly selected,
             // draw the first registered animation frame instead of the full atlas.
@@ -1206,7 +1224,7 @@ impl PlayScreen {
                             sprite.flip_x,
                             color,
                         );
-                        gpu.draw_batch(Some(tex));
+                        gpu.draw_batch_blend(Some(tex), &sprite.blend_mode);
                         continue;
                     }
                 }
@@ -1272,7 +1290,7 @@ impl PlayScreen {
                     color,
                 );
             }
-            gpu.draw_batch(Some(tex));
+            gpu.draw_batch_blend(Some(tex), &sprite.blend_mode);
         }
     }
 

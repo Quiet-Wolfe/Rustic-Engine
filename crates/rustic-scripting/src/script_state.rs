@@ -421,6 +421,7 @@ pub struct LuaSprite {
     pub color_red_offset: f32,
     pub color_green_offset: f32,
     pub color_blue_offset: f32,
+    pub blend_mode: String,
 }
 
 /// A text object created by Lua via makeLuaText.
@@ -508,6 +509,7 @@ impl LuaSprite {
             color_red_offset: 0.0,
             color_green_offset: 0.0,
             color_blue_offset: 0.0,
+            blend_mode: "NORMAL".to_string(),
         }
     }
 }

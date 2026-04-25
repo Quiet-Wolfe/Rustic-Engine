@@ -2068,22 +2068,23 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                     tbl.set(2, g.get::<f64>(y_key).unwrap_or(0.0))?;
                     return Ok(LuaValue::Table(tbl));
                 }
+                "camGame.zoom" | "camera.zoom" => Ok(g.get::<LuaValue>("__camera_zoom").unwrap_or(LuaValue::Number(0.9))),
                 "defaultCamZoom" => Ok(g
                     .get::<LuaValue>("defaultCamZoom")
                     .unwrap_or(LuaValue::Number(0.9))),
                 "cameraSpeed" => Ok(g
                     .get::<LuaValue>("cameraSpeed")
                     .unwrap_or(LuaValue::Number(1.0))),
-                "camGame.followLerp" | "camera.followLerp" => Ok(g
-                    .get::<LuaValue>(prop.as_str())
-                    .unwrap_or_else(|_| {
+                "camGame.followLerp" | "camera.followLerp" => {
+                    Ok(g.get::<LuaValue>(prop.as_str()).unwrap_or_else(|_| {
                         let speed = match g.get::<LuaValue>("cameraSpeed") {
                             Ok(LuaValue::Number(v)) => v,
                             Ok(LuaValue::Integer(v)) => v as f64,
                             _ => 1.0,
                         };
                         LuaValue::Number(speed * 0.04)
-                    })),
+                    }))
+                }
                 "camZooming" | "camZoomingMult" | "camZoomingDecay" | "gameZoomingDecay" => Ok(g
                     .get::<LuaValue>(prop.as_str())
                     .unwrap_or(LuaValue::Number(1.0))),
@@ -2364,8 +2365,8 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "setPropertyFromClass",
         lua.create_function(|lua, (class, var, val): (String, String, LuaValue)| {
+            let custom: LuaTable = lua.globals().get("__custom_vars")?;
             if class.contains("PlayState") {
-                let custom: LuaTable = lua.globals().get("__custom_vars")?;
                 match var.as_str() {
                     "bfVersion" => {
                         if let LuaValue::String(s) = &val {
@@ -2382,6 +2383,9 @@ fn register_property_functions(lua: &Lua) -> LuaResult<()> {
                         custom.set(key, val)?;
                     }
                 }
+            } else {
+                let key = format!("__class_{}_{}", class, var);
+                custom.set(key, val)?;
             }
             Ok(())
         })?,

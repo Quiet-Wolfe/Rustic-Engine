@@ -60,6 +60,29 @@ impl HScriptEngine {
 
     /// Call a callback with numeric args (matches the Lua side's convention
     /// for `onUpdate`, `onBeatHit`, etc.).
+    
+    pub fn call_callback_ret(
+        &mut self,
+        callback: &str,
+        state: &mut ScriptState,
+        args: &[f64],
+    ) -> Result<i32, String> {
+        if !self.interp.has_function(callback) {
+            return Ok(0);
+        }
+        refresh_engine_globals(&mut self.interp, state);
+        let hargs: Vec<HValue> = args.iter().map(|x| HValue::Float(*x)).collect();
+        let mut bridge = ScriptStateBridge { state };
+        let ret = self.interp
+            .call(callback, &hargs, &mut bridge)
+            .map_err(|e| format!("{}: {}: {e}", self.name, callback))?;
+        match ret {
+            Some(HValue::Int(i)) => Ok(i as i32),
+            Some(HValue::Float(f)) => Ok(f as i32),
+            _ => Ok(0),
+        }
+    }
+
     pub fn call_callback(
         &mut self,
         callback: &str,

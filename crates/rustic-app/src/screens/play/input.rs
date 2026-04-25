@@ -56,6 +56,9 @@ impl PlayScreen {
         // Pause toggle (Enter or Escape when not paused)
         if key == KeyCode::Escape || key == KeyCode::Enter {
             if self.game.song_started || self.game.countdown_timer > 0.0 {
+                if self.scripts.has_scripts() && self.scripts.call_with_return("onPause") == 1 {
+                    return; // Script handles the pause
+                }
                 self.enter_pause();
                 return;
             }

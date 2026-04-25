@@ -39,6 +39,9 @@ default = []
 # REINFORCE trainer, BC pretrainer) — the minimum for live in-engine training.
 rl = ["dep:rustic-rl", "rustic-rl/rl-train"]
 
+[target.'cfg(not(target_os = "android"))'.dependencies]
+ffmpeg-next = { workspace = true }
+
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6.0", features = ["native-activity"] }
 android_logger = "0.14"

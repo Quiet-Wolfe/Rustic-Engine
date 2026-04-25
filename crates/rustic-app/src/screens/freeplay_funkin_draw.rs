@@ -4,8 +4,8 @@ use rustic_render::health_icon::IconState;
 use super::super::{FreeplayScreen, GAME_H, GAME_W};
 use super::freeplay_funkin_assets::{CAPSULE_SELECTED, CAPSULE_UNSELECTED};
 use super::freeplay_funkin_layout::{
-    capsule_x, draw_backing_text_flow, draw_difficulty_dots, draw_transition_wedge,
-    stable_capsule_frame, truncate_for_capsule,
+    capsule_x, draw_backing_text_flow, draw_difficulty_dots, draw_orange_bar, stable_capsule_frame,
+    truncate_for_capsule,
 };
 use super::{CUTOUT_W, DJ_X, DJ_Y};
 
@@ -61,9 +61,9 @@ impl FreeplayScreen {
         } else {
             gpu.push_colored_quad(card_x, 0.0, CUTOUT_W, GAME_H, card_color);
         }
-        gpu.push_colored_quad(card_x + 84.0, 440.0, CUTOUT_W, 75.0, card_color);
         gpu.push_colored_quad(card_x, 440.0, 100.0, 75.0, card_color);
         gpu.draw_batch(None);
+        draw_orange_bar(gpu, card_x, card_color);
         draw_backing_text_flow(gpu, self.funkin_ui.capsule_frame, intro);
 
         if let Some(bg) = &self.funkin_ui.background {
@@ -112,8 +112,6 @@ impl FreeplayScreen {
             );
             gpu.draw_batch(Some(bg));
         }
-        draw_transition_wedge(gpu, CUTOUT_W, intro);
-
         if let Some(glow) = &self.funkin_ui.card_glow {
             let alpha = ((1.0 - intro) * 0.7 + confirm * 0.65).clamp(0.0, 0.7);
             if alpha > 0.01 {

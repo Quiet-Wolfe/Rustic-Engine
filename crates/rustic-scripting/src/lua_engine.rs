@@ -308,6 +308,7 @@ impl LuaScript {
     fn sync_shared_state(&self, state: &ScriptState) {
         let globals = self.lua.globals();
         globals.set("curBeat", state.cur_beat).ok();
+globals.set("__camera_zoom", state.camera_zoom as f64).ok();
         globals.set("curStep", state.cur_step).ok();
         globals.set("curSection", state.cur_section).ok();
         globals.set("__songPosition", state.song_position).ok();
@@ -531,6 +532,39 @@ impl LuaScript {
                 }
             }
         }
+    }
+
+    
+    pub fn call_callback_ret(
+        &mut self,
+        name: &str,
+        state: &mut ScriptState,
+        args: &[f64],
+    ) -> Result<i32, String> {
+        if self.closed {
+            return Ok(0);
+        }
+        self.sync_shared_state(state);
+        let globals = self.lua.globals();
+        let func: Option<mlua::Function> = globals.get(name).ok();
+        let func = match func {
+            Some(f) => f,
+            None => return Ok(0),
+        };
+        let mut multi = mlua::MultiValue::new();
+        for &v in args {
+            multi.push_back(mlua::Value::Number(v));
+        }
+        let ret: Option<i32> = func.call(multi)
+            .map_err(|e| format!("Lua callback '{}' error: {}", name, e))?;
+        if let Ok(closed) = globals.get::<bool>("__script_closed") {
+            if closed {
+                self.closed = true;
+            }
+        }
+        self.drain_sprite_ops(state);
+        self.sync_sprite_data(state);
+        Ok(ret.unwrap_or(0))
     }
 
     pub fn call_callback(
@@ -865,6 +899,9 @@ impl LuaScript {
                         }
                         if let Ok(v) = tbl.get::<f32>("ct_blue") {
                             sprite.color_blue_offset = v;
+                        }
+                        if let Ok(blend) = tbl.get::<String>("_prop_blendMode") {
+                            sprite.blend_mode = blend;
                         }
                         if let Ok(color) = tbl.get::<String>("color") {
                             sprite.color = parse_lua_color(&color);
@@ -1947,6 +1984,9 @@ impl LuaScript {
                 if let Ok(v) = tbl.get::<f32>("ct_blue") {
                     sprite.color_blue_offset = v;
                 }
+            }
+            if let Ok(blend) = tbl.get::<String>("_prop_blendMode") {
+                sprite.blend_mode = blend;
             }
             if let Ok(color) = tbl.get::<String>("color") {
                 sprite.color = parse_lua_color(&color);
